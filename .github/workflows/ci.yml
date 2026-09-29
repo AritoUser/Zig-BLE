@@ -8,16 +8,20 @@ on:
 
 jobs:
   test-linux:
-    name: Linux Native (Pure Zig 0.16.0+)
+    name: Linux Native (Pure Zig 0.16.0)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Setup Zig
-        uses: mlugg/setup-zig@v1
-        with:
-          version: 0.16.0
+      - name: Setup Zig 0.16.0
+        run: |
+          curl -sLO https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz
+          tar -xf zig-x86_64-linux-0.16.0.tar.xz
+          echo "$PWD/zig-x86_64-linux-0.16.0" >> $GITHUB_PATH
+
+      - name: Verify Zig Version
+        run: zig version
 
       - name: Run Unit Tests
         run: zig build test --summary all
@@ -48,10 +52,23 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Setup Zig
-        uses: mlugg/setup-zig@v1
-        with:
-          version: 0.16.0
+      - name: Setup Zig 0.16.0 (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          curl -sLO https://ziglang.org/download/0.16.0/zig-aarch64-macos-0.16.0.tar.xz
+          tar -xf zig-aarch64-macos-0.16.0.tar.xz
+          echo "$PWD/zig-aarch64-macos-0.16.0" >> $GITHUB_PATH
+
+      - name: Setup Zig 0.16.0 (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          curl -sLO https://ziglang.org/download/0.16.0/zig-x86_64-windows-0.16.0.zip
+          unzip -q zig-x86_64-windows-0.16.0.zip
+          echo "$PWD/zig-x86_64-windows-0.16.0" >> $GITHUB_PATH
+
+      - name: Verify Zig Version
+        run: zig version
 
       - name: Test Core Library
         run: zig build test --summary all
