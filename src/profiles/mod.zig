@@ -4,6 +4,11 @@
 //! profiles and industry-standard beacons:
 //! - Heart Rate Profile (HRP)
 //! - Battery Service (BAS)
+//! - Device Information Service (DIS)
+//! - Current Time Service (CTS)
+//! - Health Thermometer Service (HTS)
+//! - Blood Pressure Service (BLS)
+//! - Human Interface Device Profile (HOGP / HID)
 //! - Environmental Sensing Service (ESS)
 //! - Nordic Semiconductor UART Service (NUS)
 //! - Apple iBeacon & Google Eddystone
@@ -15,6 +20,21 @@ pub const BodySensorLocation = heart_rate.BodySensorLocation;
 
 pub const battery = @import("battery.zig");
 pub const BatteryService = battery.BatteryService;
+
+pub const device_information = @import("device_information.zig");
+pub const DeviceInformationService = device_information.DeviceInformationService;
+
+pub const current_time = @import("current_time.zig");
+pub const CurrentTimeService = current_time.CurrentTimeService;
+
+pub const health_thermometer = @import("health_thermometer.zig");
+pub const HealthThermometerService = health_thermometer.HealthThermometerService;
+
+pub const blood_pressure = @import("blood_pressure.zig");
+pub const BloodPressureService = blood_pressure.BloodPressureService;
+
+pub const hid = @import("hid.zig");
+pub const HidService = hid.HidService;
 
 pub const environmental = @import("environmental.zig");
 pub const EnvironmentalSensing = environmental.EnvironmentalSensing;
@@ -36,6 +56,11 @@ test {
     std.testing.refAllDecls(@This());
     _ = heart_rate;
     _ = battery;
+    _ = device_information;
+    _ = current_time;
+    _ = health_thermometer;
+    _ = blood_pressure;
+    _ = hid;
     _ = environmental;
     _ = nordic_uart;
     _ = beacon;

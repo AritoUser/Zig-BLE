@@ -20,10 +20,28 @@ Supports both **Central (Client)** and **Peripheral (Server & Broadcaster)** rol
 ## Features
 
 - **Zero-Allocation Critical Paths**: Bounded buffers, stack allocations, and fixed-capacity structures. No dynamic heap allocations during packet parsing, discovery streaming, or notification dispatching.
-- **Pre-Built GATT Standard Profiles (`src/profiles/`)**:
-  - **Heart Rate Service (HRP v1.0)**: Flags, 8-bit & 16-bit BPM, Sensor Contact status, Energy Expended, RR-intervals.
-  - **Battery Service (BAS v1.0)**: Standard percentage (0–100%) encoder and decoder.
-  - **Environmental Sensing (ESS v1.0)**: Temperature (0.01 °C fixed-point), Humidity (0.01 %), Pressure (0.1 Pa).
+- **Complete Zero-Copy Attribute Protocol (ATT) Engine (`src/core/att.zig`)**:
+  - Full support for all 20 standard ATT PDUs (`ErrorResponse`, `ExchangeMtu`, `FindInformation`, `FindByTypeValue`, `ReadByType`, `Read`, `ReadBlob`, `ReadMultiple`, `ReadByGroupType`, `Write`, `WriteCommand`, `SignedWriteCommand`, `PrepareWrite`, `ExecuteWrite`, `HandleValueNotification`, `HandleValueIndication`, `HandleValueConfirmation`).
+  - All 19 standard Bluetooth Core Spec ATT error codes (`invalid_handle`, `read_not_permitted`, `write_not_permitted`, `insufficient_authentication`, `database_out_of_sync`, etc.).
+  - Zero-allocation typed iterators (`InformationIterator`, `ReadByTypeIterator`, `ReadByGroupTypeIterator`) for zero-copy service and characteristic discovery.
+- **BLE Cryptographic Toolbox & Security Manager Protocol (`src/crypto/`)**:
+  - 100% Pure Zig cryptography using `std.crypto` (AES-128 & AES-CMAC), verified bit-for-bit against official Bluetooth SIG Core Spec test vectors.
+  - Resolvable Private Address (RPA) resolution & generation (`ah(irk, prand)`).
+  - Legacy Pairing primitives: `c1` confirm value generation and `s1` Short Term Key (STK) derivation.
+  - LE Secure Connections (LE SC) primitives: `f4` confirm, `f5` key derivation (LTK & MacKey), `f6` DHKey check, and `g2` 6-digit numeric comparison computation.
+  - ATT Signed Writes: `signAtt` 12-byte MAC generation and `verifyAttSign` verification.
+  - Bluetooth 5.1+ Database Hash Characteristic calculation (`gattHash`, UUID `0x2B2A`).
+  - Coordinated Set Identification Profile (CSIP for LE Audio): `sih` and Resolvable Set Identifier (`generateRsi`).
+  - Complete zero-copy SMP PDU codec (L2CAP CID `0x0006`) for Pairing Requests, Responses, Public Keys, Confirmations, and Randoms.
+- **Pre-Built Bluetooth SIG GATT Standard Profiles (`src/profiles/`)**:
+  - **Device Information Service (DIS v1.1 - 0x180A)**: Manufacturer, Model, Serial, Hardware, Firmware, Software strings, `SystemId` (40-bit manufacturer ID + 24-bit OUI), and `PnpId` (USB/SIG Vendor ID, Product ID, Version).
+  - **Current Time Service (CTS v1.1 - 0x1805)**: Binary time synchronization, Day of Week, Fractions256, `AdjustReason` bitfield, and `LocalTimeInfo` (UTC timezone offset & DST mode).
+  - **Health Thermometer Profile (HTP v1.0 / HTS v1.0 - 0x1809)**: Medical temperature telemetry using IEEE-11073 32-bit `Float32`, °C / °F units, timestamps, and `TemperatureType` body locations.
+  - **Blood Pressure Profile (BLP v1.1 / BLS v1.1 - 0x1810)**: IEEE-11073 16-bit `Sfloat` Systolic, Diastolic, Mean Arterial Pressure (MAP), Pulse Rate, and `MeasurementStatus` bitfield.
+  - **Human Interface Device Profile (HOGP v1.0 / HID v1.0 - 0x1812)**: `HidInfo`, `ReportReference`, `BootKeyboardInput` (modifiers + 6 keycodes), and `BootMouseInput` (buttons + X/Y/wheel).
+  - **Heart Rate Service (HRP v1.0 - 0x180D)**: Flags, 8-bit & 16-bit BPM, Sensor Contact status, Energy Expended, RR-intervals.
+  - **Battery Service (BAS v1.0 - 0x180F)**: Standard percentage (0–100%) encoder and decoder.
+  - **Environmental Sensing (ESS v1.0 - 0x181A)**: Temperature (0.01 °C fixed-point), Humidity (0.01 %), Pressure (0.1 Pa).
   - **Nordic UART Service (NUS)**: Standard 128-bit RX/TX UUIDs with zero-alloc `PacketChunker` for automatic payload slicing across BLE MTU bounds.
   - **Apple iBeacon & Google Eddystone**: Complete 23-byte Apple iBeacon builder (Proximity UUID, Major, Minor, Measured Power) and Eddystone frames (UID, URL with scheme compression, TLM telemetry).
 - **Bluetooth 5.0+ Extended Advertising & LE Coded PHY (Long Range)**:
@@ -33,7 +51,7 @@ Supports both **Central (Client)** and **Peripheral (Server & Broadcaster)** rol
 - **Bluetooth Core Spec 5.4/6.0 Native Types**:
   - Full 16-bit, 32-bit, and 128-bit Little-Endian `UUID` support with canonical string formatting and parse verification.
   - Standard EUI-48 `Address` handling with automatic classification (Public, Random Static, Resolvable Private, Non-Resolvable Private).
-  - Bluetooth SIG Assigned Numbers registry for Services (`heart_rate`, `battery_service`, `environmental_sensing`, `current_time`, `nordic_uart`), Characteristics, Descriptors, and Company Identifiers.
+  - Bluetooth SIG Assigned Numbers registry for Services, Characteristics, Descriptors, and Company Identifiers.
   - Zero-copy Advertising Packet Parser (`AdvertisingReport`, `AdIterator`) for AD types (`Flags`, `LocalName`, `Appearance`, `ManufacturerData`, `ServiceUUIDs`).
 - **Complete Central (GATT Client) Role**:
   - Adapter enumeration, power management, and discovery filters.

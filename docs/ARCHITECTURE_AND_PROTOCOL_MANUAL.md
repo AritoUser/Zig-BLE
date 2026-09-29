@@ -457,13 +457,163 @@ Both GATT Client (`GattCharacteristic`) and GATT Server (`ServerCharacteristic`)
 
 ---
 
-## 7. References & Standards Compliance
+## 7. Zero-Copy Attribute Protocol (ATT) Engine
 
-1. **Bluetooth SIG**: *Bluetooth Core Specification v5.4 & v6.0*, Volume 3: Core System Architecture, Part F (Attribute Protocol) & Part G (Generic Attribute Profile).
+`Zig-BLE` implements a complete, zero-allocation Attribute Protocol (ATT) PDU codec strictly conforming to **Bluetooth Core Specification v5.4 / v6.0, Vol 3, Part F**.
+
+### 7.1 Supported ATT Opcode Matrix
+
+The engine provides zero-copy parsers and serializers for all 20 standard ATT PDUs:
+
+| Opcode | Command / Request / Response PDU | Zero-Copy Parser / Iterator |
+| :--- | :--- | :--- |
+| `0x01` | **ATT_ERROR_RSP** | `ErrorResponse.parse(raw)` |
+| `0x02` | **ATT_EXCHANGE_MTU_REQ** | `ExchangeMtuRequest.parse(raw)` |
+| `0x03` | **ATT_EXCHANGE_MTU_RSP** | `ExchangeMtuResponse.parse(raw)` |
+| `0x04` | **ATT_FIND_INFO_REQ** | `FindInformationRequest.parse(raw)` |
+| `0x05` | **ATT_FIND_INFO_RSP** | `FindInformationResponse` with zero-allocation `InformationIterator` |
+| `0x06` | **ATT_FIND_BY_TYPE_VALUE_REQ** | `FindByTypeValueRequest.parse(raw)` |
+| `0x07` | **ATT_FIND_BY_TYPE_VALUE_RSP** | `FindByTypeValueResponse` with `HandlesInformationIterator` |
+| `0x08` | **ATT_READ_BY_TYPE_REQ** | `ReadByTypeRequest.parse(raw)` |
+| `0x09` | **ATT_READ_BY_TYPE_RSP** | `ReadByTypeResponse` with `ReadByTypeIterator` |
+| `0x0A` | **ATT_READ_REQ** | `ReadRequest.parse(raw)` |
+| `0x0B` | **ATT_READ_RSP** | `ReadResponse.parse(raw)` |
+| `0x0C` | **ATT_READ_BLOB_REQ** | `ReadBlobRequest.parse(raw)` |
+| `0x0D` | **ATT_READ_BLOB_RSP** | `ReadBlobResponse.parse(raw)` |
+| `0x0E` | **ATT_READ_MULTIPLE_REQ** | `ReadMultipleRequest.parse(raw)` with `HandlesIterator` |
+| `0x0F` | **ATT_READ_MULTIPLE_RSP** | `ReadMultipleResponse.parse(raw)` |
+| `0x10` | **ATT_READ_BY_GROUP_TYPE_REQ** | `ReadByGroupTypeRequest.parse(raw)` |
+| `0x11` | **ATT_READ_BY_GROUP_TYPE_RSP** | `ReadByGroupTypeResponse` with `ReadByGroupTypeIterator` |
+| `0x12` | **ATT_WRITE_REQ** | `WriteRequest.parse(raw)` |
+| `0x13` | **ATT_WRITE_RSP** | `WriteResponse.parse(raw)` |
+| `0x52` | **ATT_WRITE_CMD** | `WriteCommand.parse(raw)` |
+| `0xD2` | **ATT_SIGNED_WRITE_CMD** | `SignedWriteCommand.parse(raw)` (with 12-byte MAC signature verification) |
+| `0x16` | **ATT_PREPARE_WRITE_REQ** | `PrepareWriteRequest.parse(raw)` |
+| `0x17` | **ATT_PREPARE_WRITE_RSP** | `PrepareWriteResponse.parse(raw)` |
+| `0x18` | **ATT_EXECUTE_WRITE_REQ** | `ExecuteWriteRequest.parse(raw)` |
+| `0x19` | **ATT_EXECUTE_WRITE_RSP** | `ExecuteWriteResponse.parse(raw)` |
+| `0x1B` | **ATT_HANDLE_VALUE_NTF** | `HandleValueNotification.parse(raw)` |
+| `0x1D` | **ATT_HANDLE_VALUE_IND** | `HandleValueIndication.parse(raw)` |
+| `0x1E` | **ATT_HANDLE_VALUE_CFM** | `HandleValueConfirmation.parse(raw)` |
+
+### 7.2 Zero-Allocation Iterator Pattern
+
+ATT discovery responses (e.g. `ATT_READ_BY_GROUP_TYPE_RSP` for service discovery or `ATT_READ_BY_TYPE_RSP` for characteristic discovery) return packed variable-length arrays. The engine uses typed zero-allocation iterators:
+
+```zig
+var iter = try rsp.iterator();
+while (iter.next()) |item| {
+    std.debug.print("Attribute Handle: 0x{X:0>4}, End: 0x{X:0>4}, UUID: {}\n", .{
+        item.attribute_handle,
+        item.end_group_handle,
+        item.uuid,
+    });
+}
+```
+
+---
+
+## 8. BLE Cryptographic Toolbox & Security Manager Protocol (SMP)
+
+Compliant with **Bluetooth Core Specification v5.4 / v6.0, Vol 3, Part H**.
+
+### 8.1 Cryptographic Primitives Matrix
+
+All cryptographic functions are implemented in 100% pure Zig using `std.crypto` (AES-128 and AES-CMAC), verified bit-for-bit against official Bluetooth SIG test vectors:
+
+| Function | Specification | Purpose | Algorithm |
+| :--- | :--- | :--- | :--- |
+| `e(key, plaintext)` | Vol 3, Part H §2.2.1 | Security function *e* | AES-128 ECB |
+| `ah(irk, prand)` | Vol 3, Part H §2.2.2 | Random address hash for RPA | $e(\text{irk}, r') \pmod{2^{24}}$ |
+| `c1(k, r, pres, preq, ...)` | Vol 3, Part H §2.2.3 | Legacy pairing confirm value generation | AES-128 multistage |
+| `s1(k, r1, r2)` | Vol 3, Part H §2.2.4 | Legacy STK generation | AES-128 |
+| `f4(u, v, x, z)` | Vol 3, Part H §2.2.5 | LE Secure Connections confirm generation | AES-CMAC-128 |
+| `f5(w, n1, n2, a1, a2)` | Vol 3, Part H §2.2.6 | LE Secure Connections LTK & MacKey | AES-CMAC-128 |
+| `f6(w, n1, n2, r, ...)` | Vol 3, Part H §2.2.7 | LE Secure Connections check value | AES-CMAC-128 |
+| `g2(u, v, x, y)` | Vol 3, Part H §2.2.8 | 6-digit numeric comparison computation | $\text{AES-CMAC}_x \pmod{10^6}$ |
+| `h6(w, keyid)` | Vol 3, Part H §2.2.9 | Link Key conversion function | AES-CMAC-128 |
+| `signAtt(csrk, msg, cnt)` | Vol 3, Part C §10.4.1 | ATT Signed Write authentication (12-byte MAC) | AES-CMAC-128 |
+| `gattHash(db_chunks)` | Bluetooth 5.1+ §2B2A | Database Hash Characteristic calculation | AES-CMAC-128 with key $0^{128}$ |
+| `sih(sirk, prand)` | CSIP / LE Audio | Set Identity Resolving Key hash | $e(\text{sirk}, r') \pmod{2^{24}}$ |
+| `generateRsi(sirk)` | CSIP / LE Audio | Resolvable Set Identifier generation | 6-byte coordinated set tag |
+
+### 8.2 Resolvable Private Address (RPA) Resolution & Generation
+
+```zig
+// 1. Resolve an incoming RPA MAC address against a bonded Identity Resolving Key (IRK):
+const matches = Zig_BLE.resolveRpa(irk, peer_address);
+
+// 2. Generate a new Resolvable Private Address (RPA):
+const rpa = Zig_BLE.generateRpa(my_irk, null);
+std.debug.print("Rotated MAC: {s}\n", .{rpa.toString()});
+```
+
+### 8.3 Security Manager Protocol (SMP) PDU Engine (L2CAP CID 0x0006)
+
+Complete zero-copy representation of all standard SMP packets:
+- `PairingRequest` & `PairingResponse` (`AuthReq`, `IoCapability`, `KeyDistribution`)
+- `PairingConfirm` & `PairingRandom`
+- `PairingFailed` (`PairingFailedReason`)
+- `EncryptionInformation` (LTK)
+- `MasterIdentification` (EDIV, Rand)
+- `IdentityInformation` (IRK)
+- `IdentityAddressInformation` (BD_ADDR, AddressType)
+- `SigningInformation` (CSRK)
+- `SecurityRequest`
+- `PairingPublicKey` (P-256 Public Key coordinates)
+- `PairingDhKeyCheck`
+- `PairingKeypressNotification`
+
+---
+
+## 9. Standard Bluetooth SIG Profile Ecosystem
+
+All standard profiles are located in `src/profiles/` and feature zero dynamic allocations and IEEE-11073-20601 format compliance:
+
+### 9.1 Device Information Service (DIS - UUID 0x180A)
+Exposes manufacturer name, model, serial, hardware, firmware, and software revision strings, along with structured `SystemId` (40-bit manufacturer ID + 24-bit OUI) and `PnpId` (Vendor ID Source, Vendor ID, Product ID, Product Version).
+
+### 9.2 Current Time Service (CTS - UUID 0x1805)
+Standardized binary time synchronization containing year, month, day, hours, minutes, seconds, day of week, fractions256, and `AdjustReason` bitfield, as well as `LocalTimeInfo` (UTC 15-minute offset and DST mode).
+
+### 9.3 Health Thermometer Service (HTS - UUID 0x1809)
+Medical temperature telemetry utilizing IEEE-11073 32-bit `Float32`, temperature unit conversion (°C / °F), optional DateTime timestamps, and `TemperatureType` body location enumeration.
+
+### 9.4 Blood Pressure Service (BLS - UUID 0x1810)
+Standard blood pressure measurements utilizing IEEE-11073 16-bit `Sfloat` for Systolic, Diastolic, Mean Arterial Pressure (MAP), Pulse Rate, and `MeasurementStatus` bitfield (movement, cuff loose, irregular pulse detection).
+
+### 9.5 Human Interface Device over GATT (HOGP / HID - UUID 0x1812)
+Full HID over GATT specification support including `HidInfo`, `ReportReference`, `BootKeyboardInput` (modifiers + 6 keycodes), and `BootMouseInput` (buttons + relative X/Y/wheel displacement).
+
+### 9.6 Heart Rate Profile (HRS - UUID 0x180D)
+Complete Heart Rate Measurement parser and serializer with 8-bit/16-bit BPM modes, Sensor Contact Status, Energy Expended, and RR-Interval arrays.
+
+### 9.7 Battery Service (BAS - UUID 0x180F) & Environmental Sensing (ESS - UUID 0x181A)
+Standard 0-100% battery level telemetry and high-precision temperature, relative humidity, and barometric pressure environmental sensing.
+
+---
+
+## 10. References & Standards Compliance
+
+1. **Bluetooth SIG**: *Bluetooth Core Specification v5.4 & v6.0*, Volume 3: Core System Architecture:
+   - Part A: Logical Link Control and Adaptation Protocol (L2CAP) Specification.
+   - Part C: Generic Access Profile (GAP).
+   - Part F: Attribute Protocol (ATT).
+   - Part G: Generic Attribute Profile (GATT).
+   - Part H: Security Manager Specification (SMP & Cryptographic Toolbox).
 2. **Bluetooth SIG**: *GATT Specification Supplement (GSS)*, Part 3: Characteristic Presentation Format & Assigned Numbers for Units.
-3. **IEEE Std 11073-20601**: *Health informatics - Personal health device communication - Application profile - Optimized exchange protocol*.
-4. **freedesktop.org**: *D-Bus Specification*, Version 0.30+, [https://dbus.freedesktop.org/doc/dbus-specification.html](https://dbus.freedesktop.org/doc/dbus-specification.html).
-5. **Linux Foundation**: *BlueZ Linux Bluetooth Subsystem API Documentation*, `doc/adapter-api.txt`, `doc/device-api.txt`, `doc/gatt-api.txt`.
-6. **POSIX IEEE Std 1003.1-2017**: Standard for Information Technology—Portable Operating System Interface (POSIX), UNIX Domain Sockets & `SCM_RIGHTS`.
-7. **The Zig Software Foundation**: *The Zig Language Specification (0.16.0)*, Memory Safety, Comptime, and Alignment Guarantees.
+3. **Bluetooth SIG**: *Standard Profile Specifications*:
+   - Device Information Service (DIS v1.1)
+   - Current Time Service (CTS v1.1)
+   - Health Thermometer Profile (HTP v1.0 / HTS v1.0)
+   - Blood Pressure Profile (BLP v1.1.1 / BLS v1.1.1)
+   - Human Interface Device Profile (HOGP v1.0 / HID v1.0)
+   - Heart Rate Profile (HRP v1.0 / HRS v1.0)
+   - Battery Service (BAS v1.0)
+   - Environmental Sensing Service (ESS v1.0)
+4. **IEEE Std 11073-20601**: *Health informatics - Personal health device communication - Application profile - Optimized exchange protocol*.
+5. **freedesktop.org**: *D-Bus Specification*, Version 0.30+, [https://dbus.freedesktop.org/doc/dbus-specification.html](https://dbus.freedesktop.org/doc/dbus-specification.html).
+6. **Linux Foundation**: *BlueZ Linux Bluetooth Subsystem API Documentation*, `doc/adapter-api.txt`, `doc/device-api.txt`, `doc/gatt-api.txt`.
+7. **POSIX IEEE Std 1003.1-2017**: Standard for Information Technology—Portable Operating System Interface (POSIX), UNIX Domain Sockets & `SCM_RIGHTS`.
+8. **The Zig Software Foundation**: *The Zig Language Specification (0.16.0)*, Memory Safety, Comptime, and Alignment Guarantees.
 

@@ -454,6 +454,11 @@ pub const HeartRateMeasurement = profiles.HeartRateMeasurement;
 pub const SensorContactStatus = profiles.SensorContactStatus;
 pub const BodySensorLocation = profiles.BodySensorLocation;
 pub const BatteryService = profiles.BatteryService;
+pub const DeviceInformationService = profiles.DeviceInformationService;
+pub const CurrentTimeService = profiles.CurrentTimeService;
+pub const HealthThermometerService = profiles.HealthThermometerService;
+pub const BloodPressureService = profiles.BloodPressureService;
+pub const HidService = profiles.HidService;
 pub const EnvironmentalSensing = profiles.EnvironmentalSensing;
 pub const NordicUart = profiles.NordicUart;
 pub const Beacon = profiles.Beacon;
@@ -476,6 +481,20 @@ pub const HciController = hci.HciController;
 pub const HciFilter = hci.HciFilter;
 pub const HciScanConfig = hci.HciScanConfig;
 
+// Bluetooth Cryptography & Security Manager Protocol (SMP)
+pub const crypto = @import("crypto/mod.zig");
+pub const smp = crypto.smp;
+pub const resolveRpa = crypto.resolveRpa;
+pub const generateRpa = crypto.generateRpa;
+pub const signAtt = crypto.signAtt;
+pub const verifyAttSign = crypto.verifyAttSign;
+pub const gattHash = crypto.gattHash;
+pub const SmpPdu = crypto.SmpPdu;
+pub const SmpOpcode = crypto.SmpOpcode;
+pub const IoCapability = crypto.IoCapability;
+pub const AuthReq = crypto.AuthReq;
+pub const PairingFailedReason = crypto.PairingFailedReason;
+
 test {
     std.testing.refAllDecls(@This());
     _ = core;
@@ -483,6 +502,7 @@ test {
     _ = l2cap;
     _ = bluez;
     _ = hci;
+    _ = crypto;
     if (builtin.os.tag == .linux) {
         _ = dbus;
         _ = gatt_client;

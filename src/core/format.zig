@@ -27,6 +27,11 @@ pub const Sfloat = struct {
     pub const not_at_this_resolution: Sfloat = .{ .raw = 0x0800 };
     pub const reserved: Sfloat = .{ .raw = 0x0801 };
 
+    /// Constructs an Sfloat from a raw 16-bit integer.
+    pub inline fn fromRaw(raw_val: u16) Sfloat {
+        return .{ .raw = raw_val };
+    }
+
     /// Checks if this Sfloat represents Not-a-Number (NaN).
     pub inline fn isNan(self: Sfloat) bool {
         return (self.raw & 0x0FFF) == 0x07FF;
@@ -137,6 +142,16 @@ pub const Sfloat = struct {
         return fromParts(best_mant, best_exp);
     }
 
+    /// Convenience helper: converts `f32` to Sfloat.
+    pub inline fn fromFloat(val: f32) Sfloat {
+        return fromF32(val);
+    }
+
+    /// Convenience helper: decodes Sfloat to optional `f32` (returns null on NaN, NRes, or Reserved).
+    pub inline fn toFloat(self: Sfloat) ?f32 {
+        return self.toF32() catch null;
+    }
+
     /// Encodes an `f32` with a specified fixed base-10 exponent.
     pub fn fromF32WithExponent(val: f32, exp: i4) !Sfloat {
         if (std.math.isNan(val)) return nan;
@@ -198,6 +213,11 @@ pub const Float32 = struct {
     pub const negative_infinity: Float32 = .{ .raw = 0x00800002 };
     pub const not_at_this_resolution: Float32 = .{ .raw = 0x00800000 };
     pub const reserved: Float32 = .{ .raw = 0x00800001 };
+
+    /// Constructs a Float32 from a raw 32-bit integer.
+    pub inline fn fromRaw(raw_val: u32) Float32 {
+        return .{ .raw = raw_val };
+    }
 
     /// Checks if this Float32 represents Not-a-Number (NaN).
     pub inline fn isNan(self: Float32) bool {
@@ -311,6 +331,16 @@ pub const Float32 = struct {
     /// Encodes an `f32` value into an IEEE-11073 32-bit FLOAT.
     pub fn fromF32(val: f32) Float32 {
         return fromF64(@floatCast(val));
+    }
+
+    /// Convenience helper: converts any float type to Float32.
+    pub inline fn fromFloat(val: anytype) Float32 {
+        return fromF64(@floatCast(val));
+    }
+
+    /// Convenience helper: decodes Float32 to optional `f32` (returns null on NaN, NRes, or Reserved).
+    pub inline fn toFloat(self: Float32) ?f32 {
+        return self.toF32() catch null;
     }
 
     /// Encodes an `f64` with a specified fixed base-10 exponent.
