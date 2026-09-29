@@ -149,13 +149,19 @@ pub const Adapter = struct {
 
     /// Fetches the current adapter properties.
     pub fn getInfo(self: *Adapter) !AdapterInfo {
-        var reply = try self.conn.callMethod(
+        if (builtin.os.tag != .linux) return error.NotSupported;
+        var msg = try Connection.createMethodCall(
             BlueZ.service_name,
             self.getObjectPath(),
             BlueZ.Properties.interface_name,
             BlueZ.Properties.Methods.GetAll,
-            5000,
         );
+        defer msg.deinit();
+
+        var b = msg.builder();
+        try b.appendString(BlueZ.Adapter1.interface_name);
+
+        var reply = try self.conn.sendMessage(&msg, 5000);
         defer reply.deinit();
 
         var it = reply.iterator();
