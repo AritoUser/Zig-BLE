@@ -94,6 +94,11 @@ pub const Opcode = struct {
     pub const le_add_device_to_filter_accept_list: u16 = makeOpcode(Ogf.le_controller, 0x0011);
     pub const le_remove_device_from_filter_accept_list: u16 = makeOpcode(Ogf.le_controller, 0x0012);
     pub const le_set_data_length: u16 = makeOpcode(Ogf.le_controller, 0x0022);
+    pub const le_read_suggested_default_data_length: u16 = makeOpcode(Ogf.le_controller, 0x0023);
+    pub const le_write_suggested_default_data_length: u16 = makeOpcode(Ogf.le_controller, 0x0024);
+    pub const le_read_local_p256_public_key: u16 = makeOpcode(Ogf.le_controller, 0x0025);
+    pub const le_generate_dhkey: u16 = makeOpcode(Ogf.le_controller, 0x0026);
+    pub const le_read_maximum_data_length: u16 = makeOpcode(Ogf.le_controller, 0x002F);
     pub const le_read_phy: u16 = makeOpcode(Ogf.le_controller, 0x0030);
     pub const le_set_default_phy: u16 = makeOpcode(Ogf.le_controller, 0x0031);
     pub const le_set_phy: u16 = makeOpcode(Ogf.le_controller, 0x0032);
@@ -101,8 +106,15 @@ pub const Opcode = struct {
     pub const le_set_ext_advertising_data: u16 = makeOpcode(Ogf.le_controller, 0x0037);
     pub const le_set_ext_scan_response_data: u16 = makeOpcode(Ogf.le_controller, 0x0038);
     pub const le_set_ext_advertise_enable: u16 = makeOpcode(Ogf.le_controller, 0x0039);
+    pub const le_set_periodic_advertising_parameters: u16 = makeOpcode(Ogf.le_controller, 0x003E);
+    pub const le_set_periodic_advertising_data: u16 = makeOpcode(Ogf.le_controller, 0x003F);
+    pub const le_set_periodic_advertising_enable: u16 = makeOpcode(Ogf.le_controller, 0x0040);
     pub const le_set_ext_scan_parameters: u16 = makeOpcode(Ogf.le_controller, 0x0041);
     pub const le_set_ext_scan_enable: u16 = makeOpcode(Ogf.le_controller, 0x0042);
+    pub const le_extended_create_connection: u16 = makeOpcode(Ogf.le_controller, 0x0043);
+    pub const le_periodic_advertising_create_sync: u16 = makeOpcode(Ogf.le_controller, 0x0044);
+    pub const le_periodic_advertising_terminate_sync: u16 = makeOpcode(Ogf.le_controller, 0x0046);
+    pub const le_generate_dhkey_v2: u16 = makeOpcode(Ogf.le_controller, 0x005E);
 };
 
 /// HCI Event Codes
@@ -131,6 +143,8 @@ pub const LeSubevent = struct {
     pub const long_term_key_request: u8 = 0x05;
     pub const remote_connection_parameter_request: u8 = 0x06;
     pub const data_length_change: u8 = 0x07;
+    pub const read_local_p256_public_key_complete: u8 = 0x08;
+    pub const generate_dhkey_complete: u8 = 0x09;
     pub const phy_update_complete: u8 = 0x0C;
     pub const extended_advertising_report: u8 = 0x0D;
     pub const periodic_advertising_sync_established: u8 = 0x0E;

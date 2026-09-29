@@ -50,6 +50,11 @@ Supports both **Central (Client)** and **Peripheral (Server & Broadcaster)** rol
   - Direct Linux kernel streaming socket over `AF_BLUETOOTH` / `BTPROTO_L2CAP` (`L2capSocket`, `sockaddr_l2`) with `accept`, `setSecurityLevel`, `getPeerAddress`, `getLocalAddress`, `getOptions`/`setOptions`, and non-blocking I/O.
   - Zero-allocation LE L2CAP Signaling PDU Engine (`CID 0x0005`): `CommandRejectRsp`, `DisconnectionReq`/`Rsp`, `ConnParamUpdateReq`/`Rsp`, `LeCreditBasedConnReq`/`Rsp`, `LeFlowControlCredit`, Enhanced Credit-Based Connection (`0x17`/`0x18`, BT 5.2+), and dynamic Reconfiguration (`0x19`/`0x1A`).
   - L2CAP B-frame encapsulation and decapsulation helpers (`encodeFrame`, `decodeFrame`).
+- **Raw HCI Subsystem (Zero-Daemon / Embedded Mode) (`src/hci/`)**:
+  - Direct hardware communication over Linux `AF_BLUETOOTH` / `BTPROTO_HCI` (`HciSocket`, `HciController`, `HciFilter`) with zero D-Bus and zero daemon dependencies.
+  - Complete command builders: Bluetooth 5.0+ PHY renegotiation (`LE_Set_PHY`, `LE_Read_PHY`), Data Length Extension (`LE_Set_Data_Length` up to 251 bytes), Extended Advertising (`LE_Set_Extended_Advertising_Parameters`, Data, Enable), and Silicon Hardware Crypto Offload (`LE_Read_Local_P256_Public_Key`, `LE_Generate_DHKey`).
+  - Zero-allocation event deserializer (`HciEvent`): `le_advertising_report`, `le_extended_advertising_report`, `le_connection_complete`, `le_phy_update_complete`, `le_data_length_change`, and controller crypto completion events.
+
 
 - **Bluetooth Core Spec 5.4/6.0 Native Types**:
   - Full 16-bit, 32-bit, and 128-bit Little-Endian `UUID` support with canonical string formatting and parse verification.

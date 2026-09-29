@@ -488,6 +488,11 @@ pub const HciSocket = hci.HciSocket;
 pub const HciController = hci.HciController;
 pub const HciFilter = hci.HciFilter;
 pub const HciScanConfig = hci.HciScanConfig;
+pub const HciEvent = hci.HciEvent;
+pub const HciAdvertisingReport = hci.HciAdvertisingReport;
+pub const HciExtAdvertisingReport = hci.HciExtAdvertisingReport;
+pub const ExtAdvParams = hci.ExtAdvParams;
+
 
 // Bluetooth Cryptography & Security Manager Protocol (SMP)
 pub const crypto = @import("crypto/mod.zig");

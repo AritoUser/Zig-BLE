@@ -29,9 +29,14 @@ pub const ScanType = commands.ScanType;
 pub const AddressType = commands.AddressType;
 pub const ScanFilterPolicy = commands.ScanFilterPolicy;
 pub const AdvType = commands.AdvType;
+pub const ExtAdvProperties = commands.ExtAdvProperties;
+pub const ExtAdvParams = commands.ExtAdvParams;
+pub const ExtAdvDataCommand = commands.ExtAdvDataCommand;
 pub const HciEvent = events.HciEvent;
 pub const HciAdvertisingReport = events.HciAdvertisingReport;
 pub const AdvertisingReportIterator = events.AdvertisingReportIterator;
+pub const HciExtAdvertisingReport = events.HciExtAdvertisingReport;
+pub const ExtAdvertisingReportIterator = events.ExtAdvertisingReportIterator;
 pub const EventParseError = events.EventParseError;
 
 pub const PacketType = constants.PacketType;

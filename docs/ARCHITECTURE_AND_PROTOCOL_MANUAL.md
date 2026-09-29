@@ -621,7 +621,49 @@ All signaling commands on the fixed LE Signaling Channel (`CID 0x0005`) are mode
 
 ---
 
-## 11. References & Standards Compliance
+## 11. Raw HCI Subsystem (Zero-Daemon / Embedded Mode)
+
+Compliant with Bluetooth Core Specification v5.4 / v6.0, Volume 4, Part E (HCI Functional Specification).
+
+Designed for bare-metal embedded Linux gateways and deterministic real-time systems where `bluetoothd` (BlueZ daemon), D-Bus IPC, and systemd are omitted to achieve sub-microsecond packet latency and zero heap allocations.
+
+### 11.1 Low-Level Architecture & Packet Framing
+- **Transport**: Communicates directly with the Linux Bluetooth subsystem via `AF_BLUETOOTH` and `BTPROTO_HCI` (`HciSocket`).
+- **Framing**: Operates on raw HCI transport packets (`HCI_COMMAND_PKT = 0x01`, `HCI_ACLDATA_PKT = 0x02`, `HCI_EVENT_PKT = 0x04`, `HCI_ISODATA_PKT = 0x05`).
+- **Socket Filtering**: Configures hardware event filters via `SOL_HCI` / `HCI_FILTER` (`HciFilter`).
+
+### 11.2 HCI Commands Specification
+- **Baseband & Informational**: `reset`, `readBdAddr`, `setEventMask`, `leSetEventMask`.
+- **Legacy Scanning & Advertising**: `leSetScanParameters`, `leSetScanEnable`, `leSetAdvertisingParameters`, `leSetAdvertisingData`, `leSetScanResponseData`, `leSetAdvertiseEnable`.
+- **PHY & Speed Management (Bluetooth 5.0+)**:
+  - `leReadPhy(handle)`: Query connection active PHY (LE 1M, LE 2M, LE Coded).
+  - `leSetDefaultPhy(all_phys, tx_phys, rx_phys)`: Set global controller PHY preference.
+  - `leSetPhy(handle, all_phys, tx_phys, rx_phys, phy_options)`: Trigger dynamic PHY renegotiation (including S=2 and S=8 coded preferences).
+- **Data Length Extension (DLE - Bluetooth 4.2+)**:
+  - `leSetDataLength(handle, tx_octets, tx_time)`: Expand maximum PDU payload from 27 bytes up to 251 bytes (TX time up to 17,040 µs).
+  - `leReadSuggestedDefaultDataLength()`, `leWriteSuggestedDefaultDataLength()`, `leReadMaximumDataLength()`.
+- **Controller Hardware Crypto Offload**:
+  - `leReadLocalP256PublicKey()`: Offload ECDH P-256 public key generation directly to controller hardware.
+  - `leGenerateDhKey(public_key)` & `leGenerateDhKeyV2(public_key, key_type)`: Compute Diffie-Hellman shared secrets on silicon.
+- **Extended Advertising & Periodic Sync (Bluetooth 5.0+)**:
+  - `leSetExtAdvertisingParameters(params: ExtAdvParams)`: 24-bit advertising intervals, Coded PHY primary/secondary channels, dynamic TxPower.
+  - `leSetExtAdvertisingData()` & `leSetExtScanResponseData()`: Zero-alloc payloads up to 251 bytes per HCI command.
+  - `leSetExtAdvertiseEnable()`, `leSetExtScanEnable()`, `leSetPeriodicAdvertisingParameters()`, `leSetPeriodicAdvertisingEnable()`.
+
+### 11.3 Zero-Allocation Event Deserializer (`HciEvent`)
+Parses incoming controller events directly from network buffers:
+- `command_complete` & `command_status`: Operation results and parameter return buffers.
+- `disconnection_complete`: Connection handle and termination reason.
+- `le_advertising_report`: Zero-alloc iterator for legacy BLE advertisements (`AdvertisingReportIterator`).
+- `le_extended_advertising_report`: Zero-alloc iterator for Bluetooth 5.0+ extended advertisements (`ExtAdvertisingReportIterator`, `HciExtAdvertisingReport`).
+- `le_connection_complete` & `le_connection_update_complete`: Connection parameters, latency, and clock accuracy.
+- `le_phy_update_complete`: Live confirmation of PHY switches (1M <-> 2M <-> Coded).
+- `le_data_length_change`: Live confirmation of DLE negotiation (TX/RX octets and timing).
+- `le_read_local_p256_public_key_complete` & `le_generate_dhkey_complete`: Hardware crypto acceleration results.
+
+---
+
+## 12. References & Standards Compliance
 
 1. **Bluetooth SIG**: *Bluetooth Core Specification v5.4 & v6.0*, Volume 3: Core System Architecture:
    - Part A: Logical Link Control and Adaptation Protocol (L2CAP) Specification.
