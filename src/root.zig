@@ -37,6 +37,16 @@ pub const Characteristics = core.Characteristics;
 pub const Descriptors = core.Descriptors;
 pub const CompanyId = core.CompanyId;
 pub const Appearance = core.Appearance;
+pub const Units = core.Units;
+
+// GATT typing and deserialization engine
+pub const format = core.format;
+pub const Sfloat = core.Sfloat;
+pub const Float32 = core.Float32;
+pub const FormatType = core.FormatType;
+pub const CharacteristicPresentationFormat = core.CharacteristicPresentationFormat;
+pub const serialize = core.serialize;
+pub const deserialize = core.deserialize;
 
 // GATT attributes & properties
 pub const gatt = core.gatt;

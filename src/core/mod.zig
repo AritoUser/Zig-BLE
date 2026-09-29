@@ -5,6 +5,7 @@ pub const types = @import("types.zig");
 pub const assigned_numbers = @import("assigned_numbers.zig");
 pub const gatt = @import("gatt.zig");
 pub const advertising = @import("advertising.zig");
+pub const format = @import("format.zig");
 
 // Re-export primary types for ergonomic access
 pub const Address = types.Address;
@@ -17,6 +18,7 @@ pub const Characteristics = assigned_numbers.Characteristics;
 pub const Descriptors = assigned_numbers.Descriptors;
 pub const CompanyId = assigned_numbers.CompanyId;
 pub const Appearance = assigned_numbers.Appearance;
+pub const Units = assigned_numbers.Units;
 
 pub const CharacteristicProperties = gatt.CharacteristicProperties;
 pub const CharacteristicProps = gatt.CharacteristicProps;
@@ -43,10 +45,18 @@ pub const AdvertisingReport = advertising.AdvertisingReport;
 pub const PhyType = advertising.PhyType;
 pub const SecondaryChannel = advertising.SecondaryChannel;
 
+pub const Sfloat = format.Sfloat;
+pub const Float32 = format.Float32;
+pub const FormatType = format.FormatType;
+pub const CharacteristicPresentationFormat = format.CharacteristicPresentationFormat;
+pub const serialize = format.serialize;
+pub const deserialize = format.deserialize;
+
 test {
     std.testing.refAllDecls(@This());
     _ = types;
     _ = assigned_numbers;
     _ = gatt;
     _ = advertising;
+    _ = format;
 }

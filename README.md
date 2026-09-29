@@ -45,6 +45,10 @@ Supports both **Central (Client)** and **Peripheral (Server & Broadcaster)** rol
   - Full GATT Server via BlueZ `GattManager1` (Services, Characteristics with Read/Write/Notify flags, `0x2901` Characteristic User Description Descriptors).
   - Built-in Pairing Agent (`Agent1`) with `"NoInputNoOutput"` auto-accept to handle secure connections effortlessly without permission errors.
   - Unified `Peripheral` engine with background event loop (`peripheral.startBackground()`) running in a dedicated `std.Thread`.
+- **GATT Data Typing & Serialization Engine (`src/core/format.zig`)**:
+  - IEEE-11073-20601 16-bit `Sfloat` and 32-bit `Float32` decoders/encoders with mantissa/exponent scaling, boundary validation, and special value support (NaN, NRes, $\pm\infty$, Reserved).
+  - Bluetooth SIG `CharacteristicPresentationFormat` (`0x2904`) parser/encoder and `Units` registry (`0x2700..0x27BA`) with human-readable formatting and symbol resolution (`°C`, `%`, `bpm`, `Pa`, `bar`, `V`, `W`).
+  - Strongly-typed GATT client & server primitives: `char.readTyped(T)`, `char.writeTyped(val)`, `server_char.setTyped(val)`, `server_char.getTyped(T)`, and `server_char.notifyTyped(conn, val)` supporting primitives, floats, enums, and packed/extern structs.
 - **Cross-Platform Pure Core**: The `src/core/` domain model is 100% pure Zig with zero external dependencies and compiles for all platforms (Windows, macOS, Linux, bare metal / embedded).
 
 ---

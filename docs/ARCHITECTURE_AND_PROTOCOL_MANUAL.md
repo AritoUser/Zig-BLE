@@ -389,10 +389,81 @@ mdbook serve docs
 
 ---
 
-## 6. References & Standards Compliance
+## 6. GATT Data Typing & Format Engine (IEEE-11073-20601 & 0x2904)
+
+Standardized Bluetooth Low Energy profiles (e.g., Health Thermometer `0x1809`, Pulse Oximeter `0x1822`, Environmental Sensing `0x181A`, Weight Scale `0x181D`) mandate binary floating-point encodings adhering to the **IEEE-11073-20601 Medical Device Communication Standard**.
+
+Zig-BLE provides zero-allocation, mathematically verified decoders and encoders for these types, directly integrated into the client and server GATT pipelines.
+
+### 6.1 IEEE-11073-20601 16-Bit SFLOAT & 32-Bit FLOAT
+
+An IEEE-11073 floating-point number is expressed as a signed two's-complement mantissa scaled by an integer power of 10:
+
+$$\text{Value} = \text{Mantissa} \times 10^{\text{Exponent}}$$
+
+#### Bit Layout & Boundary Characteristics
+
+| Type | Total Width | Mantissa Width | Mantissa Range | Exponent Width | Exponent Range | Decimal Precision |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **SFLOAT** | 16 bits | 12 bits (bits 0..11) | $-2048 \dots +2047$ | 4 bits (bits 12..15) | $-8 \dots +7$ | $\approx 3.3$ digits |
+| **FLOAT** | 32 bits | 24 bits (bits 0..23) | $-8,388,608 \dots +8,388,607$ | 8 bits (bits 24..31) | $-128 \dots +127$ | $\approx 6.9$ digits |
+
+#### Special Value Encoding
+
+The standard reserves specific mantissa values to signal out-of-band physiological and hardware states:
+
+| State | SFLOAT (16-bit) Mantissa | FLOAT (32-bit) Mantissa | Mathematical Interpretation |
+| :--- | :--- | :--- | :--- |
+| **+INFINITY** | `0x07FE` (+2046) | `0x007FFFFE` (+8388606) | Positive overflow |
+| **NaN** (Not a Number) | `0x07FF` (+2047) | `0x007FFFFF` (+8388607) | Undefined / mathematical error |
+| **NRes** (Not at this Res) | `0x0800` (-2048) | `0x00800000` (-8388608) | Sensor resolution exceeded |
+| **Reserved** | `0x0801` (-2047) | `0x00800001` (-8388607) | Reserved for future standardization |
+| **-INFINITY** | `0x0802` (-2046) | `0x00800002` (-8388606) | Negative overflow |
+
+In Zig-BLE, these types are represented by `core.Sfloat` and `core.Float32` with full bidirectional conversions to Zig `f32`/`f64` and formatting via `std.fmt`.
+
+### 6.2 Characteristic Presentation Format (UUID 0x2904)
+
+The Bluetooth SIG Characteristic Presentation Format Descriptor (`0x2904`) defines a 7-byte metadata structure attached to characteristics:
+
+```text
++--------+----------+-----------------+-----------+-----------------+
+| Byte 0 |  Byte 1  |    Bytes 2..3   |   Byte 4  |    Bytes 5..6   |
+| Format | Exponent | Unit (UUID16)   | Namespace | Description ID  |
+|  (u8)  |   (i8)   | (little-endian) |  (0x01)   | (little-endian) |
++--------+----------+-----------------+-----------+-----------------+
+```
+
+The engine provides automatic presentation decoding:
+```zig
+const cpf = CharacteristicPresentationFormat{
+    .format = .sfloat,
+    .exponent = 0,
+    .unit = Units.celsius,
+};
+var buf: [64]u8 = undefined;
+const text = try cpf.formatValue(raw_bytes, &buf); // "37.2 °C"
+```
+
+### 6.3 Strongly-Typed GATT I/O API
+
+Both GATT Client (`GattCharacteristic`) and GATT Server (`ServerCharacteristic`) support direct typed serialization:
+- `char.readTyped(comptime T: type) !T`
+- `char.writeTyped(val: anytype, write_type: WriteType) !void`
+- `server_char.setTyped(val: anytype) !void`
+- `server_char.getTyped(comptime T: type) !T`
+- `server_char.notifyTyped(conn: *Connection, val: anytype) !void`
+- `server_char.setPresentationFormat(format: CharacteristicPresentationFormat) !*ServerDescriptor`
+
+---
+
+## 7. References & Standards Compliance
 
 1. **Bluetooth SIG**: *Bluetooth Core Specification v5.4 & v6.0*, Volume 3: Core System Architecture, Part F (Attribute Protocol) & Part G (Generic Attribute Profile).
-2. **freedesktop.org**: *D-Bus Specification*, Version 0.30+, [https://dbus.freedesktop.org/doc/dbus-specification.html](https://dbus.freedesktop.org/doc/dbus-specification.html).
-3. **Linux Foundation**: *BlueZ Linux Bluetooth Subsystem API Documentation*, `doc/adapter-api.txt`, `doc/device-api.txt`, `doc/gatt-api.txt`.
-4. **POSIX IEEE Std 1003.1-2017**: Standard for Information Technology—Portable Operating System Interface (POSIX), UNIX Domain Sockets & `SCM_RIGHTS`.
-5. **The Zig Software Foundation**: *The Zig Language Specification (0.16.0)*, Memory Safety, Comptime, and Alignment Guarantees.
+2. **Bluetooth SIG**: *GATT Specification Supplement (GSS)*, Part 3: Characteristic Presentation Format & Assigned Numbers for Units.
+3. **IEEE Std 11073-20601**: *Health informatics - Personal health device communication - Application profile - Optimized exchange protocol*.
+4. **freedesktop.org**: *D-Bus Specification*, Version 0.30+, [https://dbus.freedesktop.org/doc/dbus-specification.html](https://dbus.freedesktop.org/doc/dbus-specification.html).
+5. **Linux Foundation**: *BlueZ Linux Bluetooth Subsystem API Documentation*, `doc/adapter-api.txt`, `doc/device-api.txt`, `doc/gatt-api.txt`.
+6. **POSIX IEEE Std 1003.1-2017**: Standard for Information Technology—Portable Operating System Interface (POSIX), UNIX Domain Sockets & `SCM_RIGHTS`.
+7. **The Zig Software Foundation**: *The Zig Language Specification (0.16.0)*, Memory Safety, Comptime, and Alignment Guarantees.
+

@@ -207,6 +207,193 @@ pub const Descriptors = struct {
     }
 };
 
+/// Bluetooth SIG Assigned Numbers for Units (GATT Specification Supplement Part 3).
+/// Standardized 16-bit UUIDs for physical units in Characteristic Presentation Format (0x2904).
+pub const Units = struct {
+    pub const unitless: u16 = 0x2700;
+    pub const metre: u16 = 0x2701;
+    pub const kilogram: u16 = 0x2702;
+    pub const second: u16 = 0x2703;
+    pub const ampere: u16 = 0x2704;
+    pub const kelvin: u16 = 0x2705;
+    pub const mole: u16 = 0x2706;
+    pub const candela: u16 = 0x2707;
+    pub const area_square_metres: u16 = 0x2710;
+    pub const volume_cubic_metres: u16 = 0x2711;
+    pub const velocity_metres_per_second: u16 = 0x2712;
+    pub const acceleration_metres_per_second_squared: u16 = 0x2713;
+    pub const density_kilogram_per_cubic_metre: u16 = 0x2715;
+    pub const plane_angle_radian: u16 = 0x2720;
+    pub const solid_angle_steradian: u16 = 0x2721;
+    pub const frequency_hertz: u16 = 0x2722;
+    pub const force_newton: u16 = 0x2723;
+    pub const pressure_pascal: u16 = 0x2724;
+    pub const energy_joule: u16 = 0x2725;
+    pub const power_watt: u16 = 0x2726;
+    pub const electric_charge_coulomb: u16 = 0x2727;
+    pub const electric_potential_volt: u16 = 0x2728;
+    pub const capacitance_farad: u16 = 0x2729;
+    pub const electric_resistance_ohm: u16 = 0x272A;
+    pub const electric_conductance_siemens: u16 = 0x272B;
+    pub const magnetic_flux_weber: u16 = 0x272C;
+    pub const magnetic_flux_density_tesla: u16 = 0x272D;
+    pub const inductance_henry: u16 = 0x272E;
+    pub const degree_celsius: u16 = 0x272F;
+    pub const luminous_flux_lumen: u16 = 0x2730;
+    pub const illuminance_lux: u16 = 0x2731;
+    pub const degree_fahrenheit: u16 = 0x2744;
+    pub const minute: u16 = 0x2760;
+    pub const hour: u16 = 0x2761;
+    pub const day: u16 = 0x2762;
+    pub const degree_plane_angle: u16 = 0x2763;
+    pub const kilometre_per_hour: u16 = 0x2780;
+    pub const mile_per_hour: u16 = 0x2781;
+    pub const revolutions_per_minute: u16 = 0x27A0;
+    pub const period_beats_per_minute: u16 = 0x27A1;
+    pub const beats_per_minute: u16 = 0x27A2;
+    pub const percentage: u16 = 0x27AD;
+    pub const per_mille: u16 = 0x27AE;
+    pub const parts_per_million: u16 = 0x27B0;
+    pub const parts_per_billion: u16 = 0x27B1;
+    pub const decibel: u16 = 0x27B4;
+    pub const pressure_bar: u16 = 0x27B5;
+    pub const pressure_millibar: u16 = 0x27B6;
+    pub const pressure_millimetre_of_mercury: u16 = 0x27B7;
+    pub const energy_kilocalorie: u16 = 0x27B8;
+    pub const energy_joule_alt: u16 = 0x27B9;
+    pub const energy_kilowatt_hour: u16 = 0x27BA;
+
+    // Ergonomic aliases
+    pub const celsius = degree_celsius;
+    pub const fahrenheit = degree_fahrenheit;
+    pub const percent = percentage;
+    pub const bpm = beats_per_minute;
+    pub const rpm = revolutions_per_minute;
+    pub const pascal = pressure_pascal;
+    pub const bar = pressure_bar;
+    pub const mbar = pressure_millibar;
+    pub const volt = electric_potential_volt;
+    pub const watt = power_watt;
+    pub const hertz = frequency_hertz;
+    pub const lux = illuminance_lux;
+    pub const lumen = luminous_flux_lumen;
+    pub const ppm = parts_per_million;
+    pub const ppb = parts_per_billion;
+
+    pub fn getName(unit: u16) ?[]const u8 {
+        return switch (unit) {
+            unitless => "unitless",
+            metre => "metre",
+            kilogram => "kilogram",
+            second => "second",
+            ampere => "ampere",
+            kelvin => "kelvin",
+            mole => "mole",
+            candela => "candela",
+            area_square_metres => "square metre",
+            volume_cubic_metres => "cubic metre",
+            velocity_metres_per_second => "metre per second",
+            acceleration_metres_per_second_squared => "metre per second squared",
+            density_kilogram_per_cubic_metre => "kilogram per cubic metre",
+            plane_angle_radian => "radian",
+            solid_angle_steradian => "steradian",
+            frequency_hertz => "hertz",
+            force_newton => "newton",
+            pressure_pascal => "pascal",
+            energy_joule => "joule",
+            power_watt => "watt",
+            electric_charge_coulomb => "coulomb",
+            electric_potential_volt => "volt",
+            capacitance_farad => "farad",
+            electric_resistance_ohm => "ohm",
+            electric_conductance_siemens => "siemens",
+            magnetic_flux_weber => "weber",
+            magnetic_flux_density_tesla => "tesla",
+            inductance_henry => "henry",
+            degree_celsius => "degree Celsius",
+            luminous_flux_lumen => "lumen",
+            illuminance_lux => "lux",
+            degree_fahrenheit => "degree Fahrenheit",
+            minute => "minute",
+            hour => "hour",
+            day => "day",
+            degree_plane_angle => "degree",
+            kilometre_per_hour => "kilometre per hour",
+            mile_per_hour => "mile per hour",
+            revolutions_per_minute => "revolution per minute",
+            period_beats_per_minute => "period beats per minute",
+            beats_per_minute => "beats per minute",
+            percentage => "percentage",
+            per_mille => "per mille",
+            parts_per_million => "parts per million",
+            parts_per_billion => "parts per billion",
+            decibel => "decibel",
+            pressure_bar => "bar",
+            pressure_millibar => "millibar",
+            pressure_millimetre_of_mercury => "millimetre of mercury",
+            energy_kilocalorie => "kilocalorie",
+            energy_kilowatt_hour => "kilowatt hour",
+            else => null,
+        };
+    }
+
+    pub fn getSymbol(unit: u16) ?[]const u8 {
+        return switch (unit) {
+            unitless => "",
+            metre => "m",
+            kilogram => "kg",
+            second => "s",
+            ampere => "A",
+            kelvin => "K",
+            mole => "mol",
+            candela => "cd",
+            area_square_metres => "m²",
+            volume_cubic_metres => "m³",
+            velocity_metres_per_second => "m/s",
+            acceleration_metres_per_second_squared => "m/s²",
+            density_kilogram_per_cubic_metre => "kg/m³",
+            plane_angle_radian => "rad",
+            solid_angle_steradian => "sr",
+            frequency_hertz => "Hz",
+            force_newton => "N",
+            pressure_pascal => "Pa",
+            energy_joule => "J",
+            power_watt => "W",
+            electric_charge_coulomb => "C",
+            electric_potential_volt => "V",
+            capacitance_farad => "F",
+            electric_resistance_ohm => "Ω",
+            electric_conductance_siemens => "S",
+            magnetic_flux_weber => "Wb",
+            magnetic_flux_density_tesla => "T",
+            inductance_henry => "H",
+            degree_celsius => "°C",
+            luminous_flux_lumen => "lm",
+            illuminance_lux => "lx",
+            degree_fahrenheit => "°F",
+            minute => "min",
+            hour => "h",
+            day => "d",
+            degree_plane_angle => "°",
+            kilometre_per_hour => "km/h",
+            mile_per_hour => "mph",
+            revolutions_per_minute => "rpm",
+            period_beats_per_minute, beats_per_minute => "bpm",
+            percentage => "%",
+            per_mille => "‰",
+            parts_per_million => "ppm",
+            parts_per_billion => "ppb",
+            decibel => "dB",
+            pressure_bar => "bar",
+            pressure_millibar => "mbar",
+            pressure_millimetre_of_mercury => "mmHg",
+            energy_kilocalorie => "kcal",
+            energy_kilowatt_hour => "kWh",
+            else => null,
+        };
+    }
+};
+
 /// Bluetooth SIG Company Identifiers (16-bit IDs in Manufacturer Specific Data).
 pub const CompanyId = struct {
     pub const ericsson: u16 = 0x0000;
@@ -365,3 +552,15 @@ test "AssignedNumbers: Appearance category and lookup" {
     try std.testing.expectEqualStrings("Heart Rate Belt", Appearance.getName(Appearance.heart_rate_belt));
     try std.testing.expectEqual(Appearance.generic_watch, Appearance.getCategory(Appearance.sports_watch));
 }
+
+test "AssignedNumbers: Units lookup and symbols" {
+    try std.testing.expectEqualStrings("degree Celsius", Units.getName(Units.celsius).?);
+    try std.testing.expectEqualStrings("°C", Units.getSymbol(Units.celsius).?);
+    try std.testing.expectEqualStrings("pascal", Units.getName(Units.pascal).?);
+    try std.testing.expectEqualStrings("Pa", Units.getSymbol(Units.pascal).?);
+    try std.testing.expectEqualStrings("percentage", Units.getName(Units.percent).?);
+    try std.testing.expectEqualStrings("%", Units.getSymbol(Units.percent).?);
+    try std.testing.expectEqualStrings("bpm", Units.getSymbol(Units.bpm).?);
+    try std.testing.expect(Units.getName(0x9999) == null);
+}
+

@@ -128,6 +128,22 @@ pub const GattCharacteristic = struct {
         reply.deinit();
     }
 
+    /// Reads the characteristic value and deserializes it directly into the requested Zig type `T`
+    /// (e.g. u8, u16, u32, i16, f32, bool, Sfloat, Float32, enum, packed/extern struct).
+    pub fn readTyped(self: *GattCharacteristic, comptime T: type) !T {
+        var raw_buf: [128]u8 = undefined;
+        const n = try self.readValue(&raw_buf);
+        return core.format.deserialize(T, raw_buf[0..n]);
+    }
+
+    /// Serializes a typed value (integer, float, bool, enum, packed/extern struct, Sfloat, Float32)
+    /// into little-endian bytes and writes it to the characteristic over the air.
+    pub fn writeTyped(self: *GattCharacteristic, val: anytype, write_type: WriteType) !void {
+        var raw_buf: [128]u8 = undefined;
+        const len = try core.format.serialize(val, &raw_buf);
+        try self.writeValue(raw_buf[0..len], write_type);
+    }
+
     /// Enables notifications/indications on this characteristic.
     pub fn startNotify(self: *GattCharacteristic) !void {
         var reply = try self.conn.callMethod(
@@ -433,6 +449,26 @@ pub const GattDescriptor = struct {
 
         var reply = try self.conn.sendMessage(&msg, 5000);
         reply.deinit();
+    }
+
+    /// Reads the descriptor value and deserializes it directly into type `T`.
+    pub fn readTyped(self: *GattDescriptor, comptime T: type) !T {
+        var raw_buf: [64]u8 = undefined;
+        const n = try self.readValue(&raw_buf);
+        return core.format.deserialize(T, raw_buf[0..n]);
+    }
+
+    /// Serializes a typed value into bytes and writes it to the descriptor.
+    pub fn writeTyped(self: *GattDescriptor, val: anytype) !void {
+        var raw_buf: [64]u8 = undefined;
+        const len = try core.format.serialize(val, &raw_buf);
+        try self.writeValue(raw_buf[0..len]);
+    }
+
+    /// If this descriptor is a Characteristic Presentation Format (UUID 0x2904),
+    /// reads and decodes the standard 7-byte metadata structure.
+    pub fn readPresentationFormat(self: *GattDescriptor) !core.CharacteristicPresentationFormat {
+        return self.readTyped(core.CharacteristicPresentationFormat);
     }
 
     /// Reads the 128-bit UUID property of this descriptor.

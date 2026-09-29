@@ -56,6 +56,18 @@ pub const ServerDescriptor = struct {
     pub fn getValue(self: *const ServerDescriptor) []const u8 {
         return self.value[0..self.value_len];
     }
+
+    /// Sets the descriptor value by serializing a strongly-typed value.
+    pub fn setTyped(self: *ServerDescriptor, val: anytype) !void {
+        var raw_buf: [128]u8 = undefined;
+        const len = try core.format.serialize(val, &raw_buf);
+        self.setValue(raw_buf[0..len]);
+    }
+
+    /// Gets the descriptor value deserialized into type `T`.
+    pub fn getTyped(self: *const ServerDescriptor, comptime T: type) !T {
+        return core.format.deserialize(T, self.getValue());
+    }
 };
 
 pub const ServerCharacteristicFlags = struct {
@@ -175,6 +187,34 @@ pub const ServerCharacteristic = struct {
         try b.closeContainer(&invalidated);
 
         try conn.send(&sig);
+    }
+
+    /// Sets the characteristic value by serializing a strongly-typed value
+    /// (e.g. integer, float, bool, Sfloat, Float32, enum, packed/extern struct).
+    pub fn setTyped(self: *ServerCharacteristic, val: anytype) !void {
+        var raw_buf: [128]u8 = undefined;
+        const len = try core.format.serialize(val, &raw_buf);
+        self.setValue(raw_buf[0..len]);
+    }
+
+    /// Gets the characteristic value deserialized into type `T`.
+    pub fn getTyped(self: *const ServerCharacteristic, comptime T: type) !T {
+        return core.format.deserialize(T, self.getValue());
+    }
+
+    /// Serializes `val` into bytes and, if a client is subscribed, notifies the client over the air.
+    pub fn notifyTyped(self: *ServerCharacteristic, conn: *Connection, val: anytype) !void {
+        var raw_buf: [128]u8 = undefined;
+        const len = try core.format.serialize(val, &raw_buf);
+        try self.notify(conn, raw_buf[0..len]);
+    }
+
+    /// Attaches a standardized Bluetooth SIG 'Characteristic Presentation Format' descriptor (UUID 0x2904).
+    pub fn setPresentationFormat(self: *ServerCharacteristic, format_desc: core.CharacteristicPresentationFormat) !*ServerDescriptor {
+        const d = try self.addDescriptor(core.assigned_numbers.Descriptors.characteristic_presentation_format, .{ .read = true });
+        const enc = format_desc.encode();
+        d.setValue(&enc);
+        return d;
     }
 };
 
@@ -642,3 +682,41 @@ test "ServerCharacteristic: add descriptor and set user description" {
     try std.testing.expect(desc.uuid.eql(UUID.from16(0x2901)));
     try std.testing.expectEqualStrings("/org/zig_ble/app0/service0/char0/desc0", desc.getObjectPath());
 }
+
+test "ServerCharacteristic: setTyped and getTyped with Sfloat" {
+    var char = ServerCharacteristic{
+        .uuid = UUID.from16(0x2A1C), // Temperature Measurement
+        .flags = .{ .read = true },
+    };
+    const s = core.Sfloat.fromF32(36.8);
+    try char.setTyped(s);
+
+    const retrieved = try char.getTyped(core.Sfloat);
+    try std.testing.expectEqual(s.raw, retrieved.raw);
+    try std.testing.expectApproxEqAbs(@as(f32, 36.8), try retrieved.toF32(), 0.01);
+}
+
+test "ServerCharacteristic: setPresentationFormat" {
+    var s = ServerService{
+        .uuid = UUID.from16(0x1809), // Health Thermometer
+        .primary = true,
+    };
+    const s_path = "/org/zig_ble/app0/service0";
+    @memcpy(s.object_path[0..s_path.len], s_path);
+    s.object_path[s_path.len] = 0;
+    s.object_path_len = s_path.len;
+
+    const c = try s.addCharacteristic(UUID.from16(0x2A1C), .{ .read = true });
+    const cpf_desc = try c.setPresentationFormat(.{
+        .format = .sfloat,
+        .exponent = 0,
+        .unit = core.Units.celsius,
+    });
+
+    try std.testing.expectEqual(@as(usize, 1), c.desc_count);
+    try std.testing.expect(cpf_desc.uuid.eql(UUID.from16(0x2904)));
+    const decoded_cpf = try cpf_desc.getTyped(core.CharacteristicPresentationFormat);
+    try std.testing.expectEqual(core.FormatType.sfloat, decoded_cpf.format);
+    try std.testing.expectEqual(core.Units.celsius, decoded_cpf.unit);
+}
+
