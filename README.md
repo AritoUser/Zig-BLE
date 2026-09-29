@@ -4,6 +4,13 @@ A high-performance, allocation-conscious, native Bluetooth Low Energy (BLE) libr
 
 Supports both **Central (Client)** and **Peripheral (Server & Broadcaster)** roles with a zero-allocation domain model, non-blocking event loops, and thread-safe background workers.
 
+[![CI](https://github.com/AritoUser/Zig-BLE/actions/workflows/ci.yml/badge.svg)](https://github.com/AritoUser/Zig-BLE/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/AritoUser/Zig-BLE)](https://github.com/AritoUser/Zig-BLE/releases)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![White Paper](https://img.shields.io/badge/White%20Paper-Architecture%20%26%20Design-orange.svg)](docs/WHITEPAPER.md)
+
+> 📖 **Technical White Paper Available:** For a deep architectural analysis of the zero-allocation D-Bus Wire Protocol engine, bi-endian decoding, SCM_RIGHTS pipe streaming, and microsecond benchmarks, read the [**Zig-BLE Technical White Paper**](docs/WHITEPAPER.md).
+
 ---
 
 ## Features
