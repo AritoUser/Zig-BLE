@@ -273,6 +273,11 @@ pub const MessageBuilder = struct {
         _ = self;
         if (sub.container_type == .array) {
             const content_len: u32 = @intCast(sub.buffer.len - sub.array_content_start);
+            if (content_len == 0) {
+                // Per D-Bus Specification:
+                // "Empty arrays will contain no data and thus never have padding between the length and any data."
+                sub.buffer.len = sub.array_len_pos + 4;
+            }
             std.mem.writeInt(u32, sub.buffer.data[sub.array_len_pos..][0..4], content_len, .little);
         }
     }
@@ -536,5 +541,97 @@ test "MessageBuilder and MessageIter struct container roundtrip" {
     try std.testing.expectEqualStrings("device", st_it.getString().?);
     try std.testing.expectEqual(@as(?u32, 100), st_it.getUInt32());
 }
+
+test "MessageBuilder: Empty array eliminates speculative padding per D-Bus spec" {
+    var body_buf = ByteBuffer.init(std.testing.allocator);
+    defer body_buf.deinit();
+    var sig_buf = ByteBuffer.init(std.testing.allocator);
+    defer sig_buf.deinit();
+
+    const reader_mod = @import("reader.zig");
+
+    var builder = MessageBuilder.init(&body_buf, &sig_buf);
+    // Write empty options dictionary a{sv} (each element {sv} normally requires 8-byte alignment)
+    var opts = try builder.openArray("{sv}");
+    try builder.closeContainer(&opts);
+
+    // D-Bus spec: "Empty arrays will contain no data and thus never have padding between the length and any data."
+    // Array length is a 4-byte integer = 0.
+    // If padding had remained, body_buf.len would be 8 bytes instead of 4.
+    try std.testing.expectEqual(@as(usize, 4), body_buf.len);
+    try std.testing.expectEqual(@as(u32, 0), std.mem.readInt(u32, body_buf.getSlice()[0..4], .little));
+
+    // Append subsequent string "BlueZ"
+    try builder.appendString("BlueZ");
+    try std.testing.expectEqualStrings("a{sv}s", sig_buf.getSlice());
+    // 4 bytes (array len = 0) + 4 bytes (str len = 5) + 5 bytes ("BlueZ") + 1 null byte = 14 bytes total
+    try std.testing.expectEqual(@as(usize, 14), body_buf.len);
+
+    // Read back with openArray and getString
+    var it1 = reader_mod.MessageIter.init(body_buf.getSlice(), 0, body_buf.len, sig_buf.getSlice());
+    var arr1 = it1.openArray().?;
+    try std.testing.expect(!arr1.hasMore());
+    const str1 = it1.getString().?;
+    try std.testing.expectEqualStrings("BlueZ", str1);
+
+    // Read back with skipCurrent (via next()) and getString
+    var it2 = reader_mod.MessageIter.init(body_buf.getSlice(), 0, body_buf.len, sig_buf.getSlice());
+    try std.testing.expect(it2.next());
+    const str2 = it2.getString().?;
+    try std.testing.expectEqualStrings("BlueZ", str2);
+}
+
+test "MessageBuilder: Empty array between arguments roundtrip (sa{sv}u)" {
+    var body_buf = ByteBuffer.init(std.testing.allocator);
+    defer body_buf.deinit();
+    var sig_buf = ByteBuffer.init(std.testing.allocator);
+    defer sig_buf.deinit();
+
+    const reader_mod = @import("reader.zig");
+
+    var builder = MessageBuilder.init(&body_buf, &sig_buf);
+    try builder.appendString("path");
+    var opts = try builder.openArray("{sv}");
+    try builder.closeContainer(&opts);
+    try builder.appendUInt32(0xCAFEBABE);
+
+    try std.testing.expectEqualStrings("sa{sv}u", sig_buf.getSlice());
+
+    var it = reader_mod.MessageIter.init(body_buf.getSlice(), 0, body_buf.len, sig_buf.getSlice());
+    try std.testing.expectEqualStrings("path", it.getString().?);
+    var arr = it.openArray().?;
+    try std.testing.expect(!arr.hasMore());
+    try std.testing.expectEqual(@as(?u32, 0xCAFEBABE), it.getUInt32());
+}
+
+test "MessageBuilder: Non-empty array preserves alignment and roundtrips" {
+    var body_buf = ByteBuffer.init(std.testing.allocator);
+    defer body_buf.deinit();
+    var sig_buf = ByteBuffer.init(std.testing.allocator);
+    defer sig_buf.deinit();
+
+    const reader_mod = @import("reader.zig");
+
+    var builder = MessageBuilder.init(&body_buf, &sig_buf);
+    var opts = try builder.openArray("{sv}");
+    try opts.appendDictString("key", "val");
+    try builder.closeContainer(&opts);
+    try builder.appendUInt32(12345);
+
+    try std.testing.expectEqualStrings("a{sv}u", sig_buf.getSlice());
+
+    var it = reader_mod.MessageIter.init(body_buf.getSlice(), 0, body_buf.len, sig_buf.getSlice());
+    var arr = it.openArray().?;
+    try std.testing.expect(arr.hasMore());
+    var entry = arr.openDictEntry().?;
+    try std.testing.expectEqualStrings("key", entry.getString().?);
+    var v = entry.getVariant().?;
+    try std.testing.expectEqualStrings("val", v.getString().?);
+    _ = arr.next();
+    try std.testing.expect(!arr.hasMore());
+
+    try std.testing.expectEqual(@as(?u32, 12345), it.getUInt32());
+}
+
 
 
