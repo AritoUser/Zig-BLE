@@ -593,7 +593,35 @@ Standard 0-100% battery level telemetry and high-precision temperature, relative
 
 ---
 
-## 10. References & Standards Compliance
+## 10. L2CAP Connection-Oriented Channels & LE Signaling Engine
+
+Compliant with Bluetooth Core Specification v5.4 / v6.0, Volume 3, Part A.
+
+### 10.1 High-Throughput Streaming via L2CAP CoC
+When application throughput requirements exceed ATT MTU limits or GATT notification overhead, Zig-BLE provides direct access to credit-based L2CAP Connection-Oriented Channels (`AF_BLUETOOTH`, `BTPROTO_L2CAP`):
+- **Socket Operations**: `open(.seqpacket)`, `bind`, `listen`, `accept`, `connect`, `connectLe`, `read`, `write`, `writeAll`.
+- **Address & Security Management**:
+  - `setSecurityLevel(level: SecurityLevel, key_size: u8)`: Configure unauthenticated, authenticated, or FIPS Secure Connections encryption.
+  - `getSecurityLevel()`: Query socket security level.
+  - `getPeerAddress()` & `getLocalAddress()`: Transparent conversion between human-readable `Address` and Linux kernel `l2_bdaddr`.
+  - `setNonBlocking(bool)` and `poll(timeout_ms)`: Integration with async event loops.
+  - `getOptions()` / `setOptions()`: Dynamic MTU and L2CAP flow configuration.
+
+### 10.2 Zero-Allocation LE Signaling Engine (CID 0x0005)
+All signaling commands on the fixed LE Signaling Channel (`CID 0x0005`) are modeled with zero-copy binary serialization:
+- **Core Commands**:
+  - `CommandRejectRsp` (`0x01`): Signaling MTU exceeded, invalid CID, or unsupported commands.
+  - `DisconnectionReq` (`0x06`) / `DisconnectionRsp` (`0x07`): Channel teardown.
+  - `ConnParamUpdateReq` (`0x12`) / `ConnParamUpdateRsp` (`0x13`): Slave-initiated connection interval, latency, and timeout renegotiation.
+  - `LeCreditBasedConnReq` (`0x14`) / `LeCreditBasedConnRsp` (`0x15`): Dynamic credit-based CoC setup.
+  - `LeFlowControlCredit` (`0x16`): Credit replenishment for streaming flow control.
+  - `CreditBasedConnReq` (`0x17`) / `CreditBasedConnRsp` (`0x18`): Multi-channel Enhanced Credit-Based Connection (Bluetooth 5.2+).
+  - `CreditBasedReconfigureReq` (`0x19`) / `CreditBasedReconfigureRsp` (`0x1A`): Dynamic channel MTU/MPS reconfiguration.
+- **Framing**: `encodeFrame(cid, pdu, dest)` and `decodeFrame(raw)` wrap and unwrap standard 4-byte L2CAP B-frame headers.
+
+---
+
+## 11. References & Standards Compliance
 
 1. **Bluetooth SIG**: *Bluetooth Core Specification v5.4 & v6.0*, Volume 3: Core System Architecture:
    - Part A: Logical Link Control and Adaptation Protocol (L2CAP) Specification.

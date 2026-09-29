@@ -469,10 +469,18 @@ pub const EddystoneUrl = profiles.EddystoneUrl;
 pub const EddystoneUid = profiles.EddystoneUid;
 pub const EddystoneTlm = profiles.EddystoneTlm;
 
-// L2CAP Connection-Oriented Channels (High-Speed Streaming)
+// L2CAP Connection-Oriented Channels (High-Speed Streaming) & LE Signaling
 pub const l2cap = @import("l2cap/mod.zig");
 pub const L2capSocket = l2cap.L2capSocket;
 pub const sockaddr_l2 = l2cap.sockaddr_l2;
+pub const SecurityLevel = l2cap.SecurityLevel;
+pub const bt_security = l2cap.bt_security;
+pub const l2cap_options = l2cap.l2cap_options;
+pub const AcceptedConnection = l2cap.AcceptedConnection;
+pub const L2capSignalingPdu = l2cap.L2capSignalingPdu;
+pub const SignalingOpcode = l2cap.SignalingOpcode;
+pub const L2capHeader = l2cap.L2capHeader;
+
 
 // Raw HCI Subsystem (Zero-Daemon / Embedded Mode)
 pub const hci = @import("hci/mod.zig");

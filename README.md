@@ -46,8 +46,11 @@ Supports both **Central (Client)** and **Peripheral (Server & Broadcaster)** rol
   - **Apple iBeacon & Google Eddystone**: Complete 23-byte Apple iBeacon builder (Proximity UUID, Major, Minor, Measured Power) and Eddystone frames (UID, URL with scheme compression, TLM telemetry).
 - **Bluetooth 5.0+ Extended Advertising & LE Coded PHY (Long Range)**:
   - Secondary advertising channels (`.one_m`, `.two_m`, `.coded`), primary PHY (`.le_1m`, `.le_coded`), dynamic interval controls, and direct BlueZ `LEAdvertisingManager1` property exports.
-- **L2CAP Connection-Oriented Channels (CoC) (`src/l2cap/`)**:
-  - Direct Linux kernel streaming socket over `AF_BLUETOOTH` / `BTPROTO_L2CAP` (`L2capSocket`, `sockaddr_l2`) bypassing ATT/GATT protocol overhead for maximum point-to-point throughput.
+- **L2CAP Connection-Oriented Channels (CoC) & LE Signaling Engine (`src/l2cap/`)**:
+  - Direct Linux kernel streaming socket over `AF_BLUETOOTH` / `BTPROTO_L2CAP` (`L2capSocket`, `sockaddr_l2`) with `accept`, `setSecurityLevel`, `getPeerAddress`, `getLocalAddress`, `getOptions`/`setOptions`, and non-blocking I/O.
+  - Zero-allocation LE L2CAP Signaling PDU Engine (`CID 0x0005`): `CommandRejectRsp`, `DisconnectionReq`/`Rsp`, `ConnParamUpdateReq`/`Rsp`, `LeCreditBasedConnReq`/`Rsp`, `LeFlowControlCredit`, Enhanced Credit-Based Connection (`0x17`/`0x18`, BT 5.2+), and dynamic Reconfiguration (`0x19`/`0x1A`).
+  - L2CAP B-frame encapsulation and decapsulation helpers (`encodeFrame`, `decodeFrame`).
+
 - **Bluetooth Core Spec 5.4/6.0 Native Types**:
   - Full 16-bit, 32-bit, and 128-bit Little-Endian `UUID` support with canonical string formatting and parse verification.
   - Standard EUI-48 `Address` handling with automatic classification (Public, Random Static, Resolvable Private, Non-Resolvable Private).
