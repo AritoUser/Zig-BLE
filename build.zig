@@ -185,6 +185,87 @@ pub fn build(b: *std.Build) void {
     run_hrm_step.dependOn(&run_hrm_cmd.step);
 
     // ========================================================================
+    // Apple iBeacon & Google Eddystone Broadcaster (run-beacon)
+    // ========================================================================
+    const beacon_exe = b.addExecutable(.{
+        .name = "ble-beacon",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("examples/beacon_broadcaster.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "Zig_BLE", .module = mod },
+            },
+        }),
+    });
+    if (link_dbus and is_linux_target) {
+        beacon_exe.root_module.linkSystemLibrary("dbus-1", .{});
+        beacon_exe.root_module.link_libc = true;
+    }
+    b.installArtifact(beacon_exe);
+
+    const run_beacon_cmd = b.addRunArtifact(beacon_exe);
+    if (b.args) |args| {
+        run_beacon_cmd.addArgs(args);
+    }
+    const run_beacon_step = b.step("run-beacon", "Run the Apple iBeacon & Google Eddystone Broadcaster example");
+    run_beacon_step.dependOn(&run_beacon_cmd.step);
+
+    // ========================================================================
+    // Nordic UART Service (NUS) Serial Console (run-nus)
+    // ========================================================================
+    const nus_exe = b.addExecutable(.{
+        .name = "ble-nus",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("examples/nus_terminal.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "Zig_BLE", .module = mod },
+            },
+        }),
+    });
+    if (link_dbus and is_linux_target) {
+        nus_exe.root_module.linkSystemLibrary("dbus-1", .{});
+        nus_exe.root_module.link_libc = true;
+    }
+    b.installArtifact(nus_exe);
+
+    const run_nus_cmd = b.addRunArtifact(nus_exe);
+    if (b.args) |args| {
+        run_nus_cmd.addArgs(args);
+    }
+    const run_nus_step = b.step("run-nus", "Run the Nordic UART Service (NUS) serial console example");
+    run_nus_step.dependOn(&run_nus_cmd.step);
+
+    // ========================================================================
+    // L2CAP Connection-Oriented Channels Streamer (run-l2cap)
+    // ========================================================================
+    const l2cap_exe = b.addExecutable(.{
+        .name = "ble-l2cap",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("examples/l2cap_stream.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "Zig_BLE", .module = mod },
+            },
+        }),
+    });
+    if (link_dbus and is_linux_target) {
+        l2cap_exe.root_module.linkSystemLibrary("dbus-1", .{});
+        l2cap_exe.root_module.link_libc = true;
+    }
+    b.installArtifact(l2cap_exe);
+
+    const run_l2cap_cmd = b.addRunArtifact(l2cap_exe);
+    if (b.args) |args| {
+        run_l2cap_cmd.addArgs(args);
+    }
+    const run_l2cap_step = b.step("run-l2cap", "Run the L2CAP Connection-Oriented Channels (CoC) stream example");
+    run_l2cap_step.dependOn(&run_l2cap_cmd.step);
+
+    // ========================================================================
     // Microbenchmark Suite (run-bench, bench)
     // ========================================================================
     const bench_exe = b.addExecutable(.{

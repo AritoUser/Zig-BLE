@@ -59,17 +59,18 @@ pub const L2capSocket = struct {
             .stream => std.posix.SOCK.STREAM,
         };
 
-        const fd = std.posix.socket(AF_BLUETOOTH, st, BTPROTO_L2CAP) catch {
+        const rc = std.posix.system.socket(AF_BLUETOOTH, st, BTPROTO_L2CAP);
+        if (std.posix.errno(rc) != .SUCCESS) {
             return L2capError.SocketCreationFailed;
-        };
+        }
 
-        return L2capSocket{ .fd = fd };
+        return L2capSocket{ .fd = @intCast(rc) };
     }
 
     /// Closes the socket.
     pub fn close(self: *L2capSocket) void {
         if (builtin.os.tag == .linux) {
-            std.posix.close(self.fd);
+            _ = std.posix.system.close(self.fd);
         }
     }
 
@@ -85,19 +86,20 @@ pub const L2capSocket = struct {
             .l2_bdaddr_type = if (addr_type == .public) 1 else 2,
         };
 
-        const sock_addr: *const std.posix.sockaddr = @ptrCast(&addr);
-        std.posix.bind(self.fd, sock_addr, @sizeOf(sockaddr_l2)) catch {
+        const rc = std.posix.system.bind(self.fd, @ptrCast(&addr), @sizeOf(sockaddr_l2));
+        if (std.posix.errno(rc) != .SUCCESS) {
             return L2capError.BindFailed;
-        };
+        }
     }
 
     /// Puts the socket into listening mode for incoming peripheral connections.
     pub fn listen(self: *L2capSocket, backlog: u31) L2capError!void {
         if (builtin.os.tag != .linux) return L2capError.NotSupported;
 
-        std.posix.listen(self.fd, backlog) catch {
+        const rc = std.posix.system.listen(self.fd, backlog);
+        if (std.posix.errno(rc) != .SUCCESS) {
             return L2capError.ListenFailed;
-        };
+        }
     }
 
     /// Connects to a remote peripheral's L2CAP PSM.
@@ -120,31 +122,42 @@ pub const L2capSocket = struct {
             .l2_bdaddr_type = if (addr_type == .public) 1 else 2,
         };
 
-        const sock_addr: *const std.posix.sockaddr = @ptrCast(&addr);
-        std.posix.connect(self.fd, sock_addr, @sizeOf(sockaddr_l2)) catch {
+        const rc = std.posix.system.connect(self.fd, @ptrCast(&addr), @sizeOf(sockaddr_l2));
+        if (std.posix.errno(rc) != .SUCCESS) {
             return L2capError.ConnectFailed;
-        };
+        }
+    }
+
+    /// Convenience helper: opens a seqpacket L2CAP socket and connects to the remote address.
+    pub fn connectLe(remote_addr: Address, psm: u16, addr_type: AddressType) L2capError!L2capSocket {
+        if (builtin.os.tag != .linux) return L2capError.NotSupported;
+        var sock = try open(.seqpacket);
+        errdefer sock.close();
+        try sock.connect(remote_addr, psm, addr_type);
+        return sock;
     }
 
     /// Reads data from the L2CAP stream into `buf`.
     pub fn read(self: *L2capSocket, buf: []u8) L2capError!usize {
         if (builtin.os.tag != .linux) return L2capError.NotSupported;
 
-        const n = std.posix.read(self.fd, buf) catch |err| {
-            if (err == error.WouldBlock) return 0;
-            return L2capError.ReadFailed;
-        };
-        if (n == 0) return L2capError.ConnectionClosed;
-        return n;
+        const rc = std.posix.system.read(self.fd, buf.ptr, buf.len);
+        const err = std.posix.errno(rc);
+        if (err == .AGAIN or err == .WOULDBLOCK) return 0;
+        if (err != .SUCCESS) return L2capError.ReadFailed;
+        if (rc == 0) return L2capError.ConnectionClosed;
+        return @intCast(rc);
     }
 
     /// Writes data to the L2CAP stream.
     pub fn write(self: *L2capSocket, data: []const u8) L2capError!usize {
         if (builtin.os.tag != .linux) return L2capError.NotSupported;
 
-        return std.posix.write(self.fd, data) catch {
+        const rc = std.posix.system.write(self.fd, data.ptr, data.len);
+        if (std.posix.errno(rc) != .SUCCESS) {
             return L2capError.WriteFailed;
-        };
+        }
+        return @intCast(rc);
     }
 
     /// Writes all bytes in `data`, handling partial writes.

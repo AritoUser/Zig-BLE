@@ -169,8 +169,122 @@ pub const Device = struct {
         return object_manager.parseDeviceProps(self.getObjectPath(), &it);
     }
 
+    /// Initiates pairing with the peripheral (Security Manager Protocol).
+    /// Uses a 60-second timeout to accommodate user confirmation or passkey entry.
+    pub fn pair(self: *Device) !void {
+        if (builtin.os.tag != .linux) return error.NotSupported;
+        var reply = try self.conn.callMethod(
+            BlueZ.service_name,
+            self.getObjectPath(),
+            BlueZ.Device1.interface_name,
+            BlueZ.Device1.Methods.Pair,
+            60000,
+        );
+        reply.deinit();
+    }
+
+    /// Cancels an in-progress pairing attempt.
+    pub fn cancelPairing(self: *Device) !void {
+        if (builtin.os.tag != .linux) return error.NotSupported;
+        var reply = try self.conn.callMethod(
+            BlueZ.service_name,
+            self.getObjectPath(),
+            BlueZ.Device1.interface_name,
+            BlueZ.Device1.Methods.CancelPairing,
+            5000,
+        );
+        reply.deinit();
+    }
+
+    /// Marks the peripheral as trusted (or untrusted). Trusted peripherals can
+    /// reconnect automatically without user authorization prompts.
+    pub fn setTrusted(self: *Device, trusted: bool) !void {
+        if (builtin.os.tag != .linux) return error.NotSupported;
+        var msg = try Connection.createMethodCall(
+            BlueZ.service_name,
+            self.getObjectPath(),
+            BlueZ.Properties.interface_name,
+            BlueZ.Properties.Methods.Set,
+        );
+        defer msg.deinit();
+
+        var b = msg.builder();
+        try b.appendString(BlueZ.Device1.interface_name);
+        try b.appendString(BlueZ.Device1.Properties.Trusted);
+        var v = try b.openVariant("b");
+        try v.appendBool(trusted);
+        try b.closeContainer(&v);
+
+        var reply = try self.conn.sendMessage(&msg, 5000);
+        reply.deinit();
+    }
+
+    /// Checks if the peripheral is marked as trusted in BlueZ.
+    pub fn isTrusted(self: *Device) !bool {
+        return self.getBoolProperty(BlueZ.Device1.Properties.Trusted);
+    }
+
+    /// Checks if the peripheral is currently paired.
+    pub fn isPaired(self: *Device) !bool {
+        return self.getBoolProperty(BlueZ.Device1.Properties.Paired);
+    }
+
+    /// Reads the current signal strength (RSSI in dBm) of the peripheral.
+    /// Returns null if the property is absent or the device is out of radio range.
+    pub fn getRSSI(self: *Device) !?i16 {
+        if (builtin.os.tag != .linux) return null;
+        var msg = try Connection.createMethodCall(
+            BlueZ.service_name,
+            self.getObjectPath(),
+            BlueZ.Properties.interface_name,
+            BlueZ.Properties.Methods.Get,
+        );
+        defer msg.deinit();
+
+        var b = msg.builder();
+        try b.appendString(BlueZ.Device1.interface_name);
+        try b.appendString(BlueZ.Device1.Properties.RSSI);
+
+        var reply = try self.conn.sendMessage(&msg, 5000);
+        defer reply.deinit();
+
+        var it = reply.iterator();
+        if (it.getVariant()) |*v| {
+            var var_iter = v.*;
+            return var_iter.getInt16();
+        }
+        return null;
+    }
+
+    /// Reads the advertised transmit power (TxPower in dBm) of the peripheral.
+    pub fn getTxPower(self: *Device) !?i16 {
+        if (builtin.os.tag != .linux) return null;
+        var msg = try Connection.createMethodCall(
+            BlueZ.service_name,
+            self.getObjectPath(),
+            BlueZ.Properties.interface_name,
+            BlueZ.Properties.Methods.Get,
+        );
+        defer msg.deinit();
+
+        var b = msg.builder();
+        try b.appendString(BlueZ.Device1.interface_name);
+        try b.appendString(BlueZ.Device1.Properties.TxPower);
+
+        var reply = try self.conn.sendMessage(&msg, 5000);
+        defer reply.deinit();
+
+        var it = reply.iterator();
+        if (it.getVariant()) |*v| {
+            var var_iter = v.*;
+            return var_iter.getInt16();
+        }
+        return null;
+    }
+
     /// Reads a boolean D-Bus property from the device.
     pub fn getBoolProperty(self: *Device, prop_name: [:0]const u8) !bool {
+        if (builtin.os.tag != .linux) return false;
         var msg = try Connection.createMethodCall(
             BlueZ.service_name,
             self.getObjectPath(),
@@ -196,3 +310,8 @@ pub const Device = struct {
         return false;
     }
 };
+
+test "Device: init and path handling" {
+    var dev = Device.init(undefined, "/org/bluez/hci0/dev_AA_BB_CC_DD_EE_FF");
+    try std.testing.expectEqualStrings("/org/bluez/hci0/dev_AA_BB_CC_DD_EE_FF", dev.getObjectPath());
+}

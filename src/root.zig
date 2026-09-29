@@ -79,45 +79,302 @@ pub const GattDescriptorInfo = bluez.GattDescriptorInfo;
 const builtin = @import("builtin");
 
 // High-level BLE Controllers & Clients
-pub const Adapter = if (builtin.os.tag == .linux) @import("adapter.zig").Adapter else struct {};
+pub const Adapter = if (builtin.os.tag == .linux) @import("adapter.zig").Adapter else struct {
+    conn: *Connection,
+    object_path: [128]u8 = undefined,
+    object_path_len: u8 = 0,
 
-pub const Device = if (builtin.os.tag == .linux) @import("device.zig").Device else struct {};
-pub const gatt_client = if (builtin.os.tag == .linux) @import("gatt_client.zig") else struct {};
-pub const GattCharacteristic = if (builtin.os.tag == .linux) gatt_client.GattCharacteristic else struct {};
+    pub const DiscoveryFilter = struct {
+        transport: ?[:0]const u8 = "le",
+        duplicate_data: ?bool = null,
+    };
+
+    pub fn init(conn: *Connection, path: [:0]const u8) @This() {
+        _ = path;
+        return .{ .conn = conn };
+    }
+
+    pub fn getObjectPath(self: *const @This()) [:0]const u8 {
+        _ = self;
+        return "/org/bluez/hci0";
+    }
+
+    pub fn findDefault(conn: *Connection) !?@This() {
+        _ = conn;
+        return null;
+    }
+
+    pub fn setPowered(self: *@This(), powered: bool) !void {
+        _ = self;
+        _ = powered;
+        return error.NotSupported;
+    }
+
+    pub fn setDiscoveryFilter(self: *@This(), filter: DiscoveryFilter) !void {
+        _ = self;
+        _ = filter;
+        return error.NotSupported;
+    }
+
+    pub fn startDiscovery(self: *@This()) !void {
+        _ = self;
+        return error.NotSupported;
+    }
+
+    pub fn stopDiscovery(self: *@This()) !void {
+        _ = self;
+        return error.NotSupported;
+    }
+
+    pub fn getInfo(self: *@This()) !AdapterInfo {
+        _ = self;
+        return error.NotSupported;
+    }
+};
+
+pub const Device = if (builtin.os.tag == .linux) @import("device.zig").Device else struct {
+    conn: *Connection,
+    object_path: [128]u8 = undefined,
+    object_path_len: u8 = 0,
+
+    pub fn init(conn: *Connection, path: [:0]const u8) @This() {
+        _ = path;
+        return .{ .conn = conn };
+    }
+    pub fn getObjectPath(self: *const @This()) [:0]const u8 {
+        _ = self;
+        return "/org/bluez/hci0/dev_00_00_00_00_00_00";
+    }
+    pub fn connect(self: *@This()) !void {
+        _ = self;
+        return error.NotSupported;
+    }
+    pub fn disconnect(self: *@This()) !void {
+        _ = self;
+        return error.NotSupported;
+    }
+    pub fn pair(self: *@This()) !void {
+        _ = self;
+        return error.NotSupported;
+    }
+    pub fn cancelPairing(self: *@This()) !void {
+        _ = self;
+        return error.NotSupported;
+    }
+    pub fn isPaired(self: *@This()) !bool {
+        _ = self;
+        return false;
+    }
+    pub fn isConnected(self: *@This()) !bool {
+        _ = self;
+        return false;
+    }
+    pub fn isTrusted(self: *@This()) !bool {
+        _ = self;
+        return false;
+    }
+    pub fn setTrusted(self: *@This(), trusted: bool) !void {
+        _ = self;
+        _ = trusted;
+        return error.NotSupported;
+    }
+    pub fn getRSSI(self: *@This()) !?i16 {
+        _ = self;
+        return null;
+    }
+    pub fn getTxPower(self: *@This()) !?i16 {
+        _ = self;
+        return null;
+    }
+};
+
+pub const gatt_client = if (builtin.os.tag == .linux) @import("gatt_client.zig") else struct {
+    pub const GattCharacteristic = struct {
+        pub fn readValue(self: *@This()) ![]const u8 { _ = self; return error.NotSupported; }
+        pub fn writeValue(self: *@This(), val: []const u8) !void { _ = self; _ = val; return error.NotSupported; }
+        pub fn writeValueWithoutResponse(self: *@This(), val: []const u8) !void { _ = self; _ = val; return error.NotSupported; }
+        pub fn startNotify(self: *@This()) !void { _ = self; return error.NotSupported; }
+        pub fn stopNotify(self: *@This()) !void { _ = self; return error.NotSupported; }
+    };
+    pub const GattDescriptor = struct {
+        pub fn readValue(self: *@This()) ![]const u8 { _ = self; return error.NotSupported; }
+        pub fn writeValue(self: *@This(), val: []const u8) !void { _ = self; _ = val; return error.NotSupported; }
+    };
+};
+pub const GattCharacteristic = gatt_client.GattCharacteristic;
+pub const GattDescriptor = gatt_client.GattDescriptor;
 pub const GattStream = if (builtin.os.tag == .linux) gatt_client.GattStream else struct {};
 pub const NotificationEvent = if (builtin.os.tag == .linux) gatt_client.NotificationEvent else struct {};
 pub const NotificationDispatcher = if (builtin.os.tag == .linux) gatt_client.NotificationDispatcher else struct {};
 
 // Broadcaster & Peripheral Advertising
 pub const advertising_server = if (builtin.os.tag == .linux) @import("advertising.zig") else struct {};
-pub const Advertisement = if (builtin.os.tag == .linux) advertising_server.Advertisement else struct {};
-pub const AdvertisementConfig = if (builtin.os.tag == .linux) advertising_server.AdvertisementConfig else struct {};
-pub const AdvertisementType = if (builtin.os.tag == .linux) advertising_server.AdvertisementType else struct {};
-pub const AdvertisementIncludes = if (builtin.os.tag == .linux) advertising_server.AdvertisementIncludes else struct {};
+pub const AdvertisementType = if (builtin.os.tag == .linux) advertising_server.AdvertisementType else enum {
+    peripheral,
+    broadcast,
+    pub fn toSlice(self: @This()) [:0]const u8 {
+        return switch (self) {
+            .peripheral => "peripheral",
+            .broadcast => "broadcast",
+        };
+    }
+};
+pub const AdvertisementIncludes = if (builtin.os.tag == .linux) advertising_server.AdvertisementIncludes else struct {
+    tx_power: bool = true,
+    appearance: bool = false,
+    local_name: bool = true,
+};
+pub const AdvertisementConfig = if (builtin.os.tag == .linux) advertising_server.AdvertisementConfig else struct {
+    type: AdvertisementType = .peripheral,
+    local_name: ?[:0]const u8 = null,
+    service_uuids: []const UUID = &.{},
+    manufacturer_data: ?struct {
+        company_id: u16,
+        data: []const u8,
+    } = null,
+    service_data: ?struct {
+        uuid: UUID,
+        data: []const u8,
+    } = null,
+    discoverable: bool = true,
+    includes: AdvertisementIncludes = .{},
+    appearance: ?u16 = null,
+    duration_s: ?u16 = null,
+    timeout_s: ?u16 = null,
+    secondary_channel: ?core.SecondaryChannel = null,
+    min_interval_ms: ?u32 = null,
+    max_interval_ms: ?u32 = null,
+    tx_power: ?i8 = null,
+};
+pub const Advertisement = if (builtin.os.tag == .linux) advertising_server.Advertisement else struct {
+    conn: *Connection,
+    config: AdvertisementConfig,
+    pub fn init(conn: *Connection, adapter_path: [:0]const u8, adv_path: [:0]const u8, config: AdvertisementConfig) @This() {
+        _ = adapter_path;
+        _ = adv_path;
+        return .{ .conn = conn, .config = config };
+    }
+    pub fn register(self: *@This()) !void { _ = self; return error.NotSupported; }
+    pub fn unregister(self: *@This()) !void { _ = self; return error.NotSupported; }
+};
 
 // GATT Server / Peripheral Mode
 pub const gatt_server = if (builtin.os.tag == .linux) @import("gatt_server.zig") else struct {};
-pub const GattApplication = if (builtin.os.tag == .linux) gatt_server.GattApplication else struct {};
-pub const ServerService = if (builtin.os.tag == .linux) gatt_server.ServerService else struct {};
-pub const ServerCharacteristic = if (builtin.os.tag == .linux) gatt_server.ServerCharacteristic else struct {};
-pub const ServerCharacteristicFlags = if (builtin.os.tag == .linux) gatt_server.ServerCharacteristicFlags else struct {};
-pub const ServerDescriptor = if (builtin.os.tag == .linux) gatt_server.ServerDescriptor else struct {};
-pub const ServerDescriptorFlags = if (builtin.os.tag == .linux) gatt_server.ServerDescriptorFlags else struct {};
+pub const ServerCharacteristicFlags = if (builtin.os.tag == .linux) gatt_server.ServerCharacteristicFlags else struct {
+    read: bool = false,
+    write: bool = false,
+    notify: bool = false,
+    indicate: bool = false,
+    write_without_response: bool = false,
+};
+pub const ServerDescriptorFlags = if (builtin.os.tag == .linux) gatt_server.ServerDescriptorFlags else struct {
+    read: bool = false,
+    write: bool = false,
+};
+pub const ServerDescriptor = if (builtin.os.tag == .linux) gatt_server.ServerDescriptor else struct {
+    pub fn setValue(self: *@This(), val: []const u8) void {
+        _ = self;
+        _ = val;
+    }
+};
+pub const ServerCharacteristic = if (builtin.os.tag == .linux) gatt_server.ServerCharacteristic else struct {
+    pub fn setValue(self: *@This(), val: []const u8) void {
+        _ = self;
+        _ = val;
+    }
+    pub fn setUserDescription(self: *@This(), desc: []const u8) !*ServerDescriptor {
+        _ = self;
+        _ = desc;
+        const S = struct {
+            var desc_instance: ServerDescriptor = .{};
+        };
+        return &S.desc_instance;
+    }
+    pub fn notify(self: *@This(), conn: *Connection, data: []const u8) !void {
+        _ = self;
+        _ = conn;
+        _ = data;
+    }
+};
+pub const ServerService = if (builtin.os.tag == .linux) gatt_server.ServerService else struct {
+    pub fn addCharacteristic(self: *@This(), uuid: UUID, flags: ServerCharacteristicFlags) !*ServerCharacteristic {
+        _ = self;
+        _ = uuid;
+        _ = flags;
+        const S = struct {
+            var char_instance: ServerCharacteristic = .{};
+        };
+        return &S.char_instance;
+    }
+};
+pub const GattApplication = if (builtin.os.tag == .linux) gatt_server.GattApplication else struct {
+    pub fn init(conn: *Connection, adapter_path: [:0]const u8, app_path: [:0]const u8) @This() {
+        _ = conn;
+        _ = adapter_path;
+        _ = app_path;
+        return .{};
+    }
+    pub fn addService(self: *@This(), service: *ServerService) !void {
+        _ = self;
+        _ = service;
+    }
+};
 
 // Pairing Agent
 pub const agent_mod = if (builtin.os.tag == .linux) @import("agent.zig") else struct {};
-pub const Agent = if (builtin.os.tag == .linux) agent_mod.Agent else struct {};
-pub const AgentCapability = if (builtin.os.tag == .linux) agent_mod.AgentCapability else struct {};
+pub const AgentCapability = if (builtin.os.tag == .linux) agent_mod.AgentCapability else enum {
+    display_only,
+    display_yes_no,
+    keyboard_only,
+    no_input_no_output,
+    keyboard_display,
+};
+pub const Agent = if (builtin.os.tag == .linux) @import("agent.zig").Agent else struct {};
 
 // Unified High-Level Peripheral
 pub const peripheral_mod = if (builtin.os.tag == .linux) @import("peripheral.zig") else struct {};
-pub const Peripheral = if (builtin.os.tag == .linux) peripheral_mod.Peripheral else struct {};
-pub const PeripheralOptions = if (builtin.os.tag == .linux) peripheral_mod.PeripheralOptions else struct {};
+pub const PeripheralOptions = if (builtin.os.tag == .linux) peripheral_mod.PeripheralOptions else struct {
+    enable_agent: bool = true,
+    agent_capability: AgentCapability = .no_input_no_output,
+    app_path: [:0]const u8 = "/org/zig_ble/app0",
+    adv_path: [:0]const u8 = "/org/zig_ble/advertisement0",
+    agent_path: [:0]const u8 = "/org/zig_ble/agent",
+};
+pub const Peripheral = if (builtin.os.tag == .linux) peripheral_mod.Peripheral else struct {
+    pub fn init(
+        conn: *Connection,
+        adapter_path: [:0]const u8,
+        adv_config: AdvertisementConfig,
+        options: PeripheralOptions,
+    ) @This() {
+        _ = conn;
+        _ = adapter_path;
+        _ = adv_config;
+        _ = options;
+        return .{};
+    }
+    pub fn addService(self: *@This(), uuid: UUID, primary: bool) !*ServerService {
+        _ = self;
+        _ = uuid;
+        _ = primary;
+        const S = struct {
+            var srv_instance: ServerService = .{};
+        };
+        return &S.srv_instance;
+    }
+    pub fn startBackground(self: *@This()) !void {
+        _ = self;
+        return error.NotSupported;
+    }
+    pub fn stop(self: *@This()) void {
+        _ = self;
+    }
+};
 
 // Universal EventLoop & Background Runner
 pub const event_loop_mod = if (builtin.os.tag == .linux) @import("event_loop.zig") else struct {};
-pub const EventLoop = if (builtin.os.tag == .linux) event_loop_mod.EventLoop else struct {};
-pub const MessageHandler = if (builtin.os.tag == .linux) event_loop_mod.MessageHandler else struct {};
+pub const EventLoop = if (builtin.os.tag == .linux) @import("event_loop.zig").EventLoop else struct {};
+pub const MessageHandler = if (builtin.os.tag == .linux) @import("event_loop.zig").MessageHandler else struct {};
 
 // Pure-Zig D-Bus Wire Protocol Suite (Zero-Allocation, Platform-Independent)
 pub const wire = @import("dbus/wire/mod.zig");
@@ -129,7 +386,53 @@ else
     struct {
         pub const wire = @import("dbus/wire/mod.zig");
     };
-pub const Connection = if (builtin.os.tag == .linux) dbus.Connection else struct {};
+pub const Connection = if (builtin.os.tag == .linux)
+    dbus.Connection
+else
+    struct {
+        pub fn initSystem() anyerror!@This() {
+            return error.NotSupported;
+        }
+        pub fn deinit(self: *@This()) void {
+            _ = self;
+        }
+        pub fn addMatch(self: *@This(), rule: [:0]const u8) anyerror!void {
+            _ = self;
+            _ = rule;
+            return error.NotSupported;
+        }
+        pub fn pollSocket(self: *@This(), timeout_ms: c_int) usize {
+            _ = self;
+            _ = timeout_ms;
+            return 0;
+        }
+        pub fn popMessage(self: *@This()) ?wire.Message {
+            _ = self;
+            return null;
+        }
+        pub fn callMethod(
+            self: *@This(),
+            dest: [:0]const u8,
+            path: [:0]const u8,
+            iface: [:0]const u8,
+            method: [:0]const u8,
+            timeout_ms: u32,
+        ) anyerror!wire.Message {
+            _ = self;
+            _ = dest;
+            _ = path;
+            _ = iface;
+            _ = method;
+            _ = timeout_ms;
+            return error.NotSupported;
+        }
+        pub fn sendMessage(self: *@This(), msg: *wire.Message, timeout_ms: u32) anyerror!wire.Message {
+            _ = self;
+            _ = msg;
+            _ = timeout_ms;
+            return error.NotSupported;
+        }
+    };
 
 // Standard BLE Profiles & Beacons
 pub const profiles = @import("profiles/mod.zig");
@@ -139,8 +442,13 @@ pub const BodySensorLocation = profiles.BodySensorLocation;
 pub const BatteryService = profiles.BatteryService;
 pub const EnvironmentalSensing = profiles.EnvironmentalSensing;
 pub const NordicUart = profiles.NordicUart;
+pub const Beacon = profiles.Beacon;
 pub const IBeacon = profiles.IBeacon;
+pub const AppleIBeacon = profiles.AppleIBeacon;
 pub const Eddystone = profiles.Eddystone;
+pub const EddystoneUrl = profiles.EddystoneUrl;
+pub const EddystoneUid = profiles.EddystoneUid;
+pub const EddystoneTlm = profiles.EddystoneTlm;
 
 // L2CAP Connection-Oriented Channels (High-Speed Streaming)
 pub const l2cap = @import("l2cap/mod.zig");

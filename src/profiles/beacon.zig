@@ -69,6 +69,18 @@ pub const IBeacon = struct {
             .measured_power = power,
         };
     }
+
+    /// Directly constructs and encodes a standard 23-byte Apple iBeacon payload from parameters.
+    pub fn build(uuid_str: []const u8, major: u16, minor: u16, measured_power: i8) ![23]u8 {
+        const u = try UUID.parse(uuid_str);
+        const beacon = IBeacon{
+            .uuid = u,
+            .major = major,
+            .minor = minor,
+            .measured_power = measured_power,
+        };
+        return beacon.encode();
+    }
 };
 
 // ============================================================================
@@ -111,6 +123,15 @@ pub const Eddystone = struct {
         }
     };
 
+    pub const EncodedUrl = struct {
+        bytes: [32]u8 = undefined,
+        len: usize = 0,
+
+        pub fn slice(self: *const @This()) []const u8 {
+            return self.bytes[0..self.len];
+        }
+    };
+
     /// Eddystone-URL Frame.
     pub const UrlFrame = struct {
         tx_power_at_0m: i8,
@@ -125,6 +146,33 @@ pub const Eddystone = struct {
             out[2] = @intFromEnum(self.scheme);
             @memcpy(out[3..total], self.encoded_url);
             return total;
+        }
+
+        pub fn encodeUrl(url: []const u8, tx_power_at_0m: i8) !EncodedUrl {
+            var res = EncodedUrl{};
+            var scheme: UrlScheme = .https;
+            var path = url;
+            if (std.mem.startsWith(u8, url, "https://www.")) {
+                scheme = .https_www;
+                path = url["https://www.".len..];
+            } else if (std.mem.startsWith(u8, url, "http://www.")) {
+                scheme = .http_www;
+                path = url["http://www.".len..];
+            } else if (std.mem.startsWith(u8, url, "https://")) {
+                scheme = .https;
+                path = url["https://".len..];
+            } else if (std.mem.startsWith(u8, url, "http://")) {
+                scheme = .http;
+                path = url["http://".len..];
+            }
+
+            const frame = UrlFrame{
+                .tx_power_at_0m = tx_power_at_0m,
+                .scheme = scheme,
+                .encoded_url = path,
+            };
+            res.len = try frame.encode(&res.bytes);
+            return res;
         }
     };
 
@@ -154,7 +202,34 @@ pub const Eddystone = struct {
 
             return buf;
         }
+
+        pub fn encodeTlm(battery_mv: u16, temperature_celsius: f32, adv_pdu_count: u32, time_since_boot_seconds: u32) [14]u8 {
+            const frame = TlmFrame{
+                .battery_mv = battery_mv,
+                .temperature_celsius = temperature_celsius,
+                .adv_pdu_count = adv_pdu_count,
+                .time_since_boot_seconds = time_since_boot_seconds,
+            };
+            return frame.encode();
+        }
     };
+};
+
+pub const AppleIBeacon = struct {
+    pub const build = IBeacon.build;
+    pub const parse = IBeacon.parse;
+    pub const encode = IBeacon.encode;
+};
+
+pub const EddystoneUrl = struct {
+    pub const encode = Eddystone.UrlFrame.encodeUrl;
+    pub const UrlScheme = Eddystone.UrlScheme;
+};
+
+pub const EddystoneUid = Eddystone.UidFrame;
+
+pub const EddystoneTlm = struct {
+    pub const encode = Eddystone.TlmFrame.encodeTlm;
 };
 
 // ============================================================================

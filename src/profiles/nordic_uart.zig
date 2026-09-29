@@ -22,6 +22,11 @@ pub const NordicUart = struct {
     pub const RX_UUID = UUID.parse(rx_uuid_str) catch unreachable;
     pub const TX_UUID = UUID.parse(tx_uuid_str) catch unreachable;
 
+    // Aliases
+    pub const service_uuid = SERVICE_UUID;
+    pub const rx_uuid = RX_UUID;
+    pub const tx_uuid = TX_UUID;
+
     /// Default ATT MTU payload capacity (23 bytes MTU - 3 bytes ATT opcode & handle).
     pub const default_chunk_size: usize = 20;
 

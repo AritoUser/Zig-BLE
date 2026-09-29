@@ -361,6 +361,109 @@ pub const NotificationDispatcher = struct {
     }
 };
 
+/// Client-side representation of a GATT Descriptor (org.bluez.GattDescriptor1).
+/// Enables reading and writing remote descriptors such as CCCD (0x2902), User Description (0x2901),
+/// Presentation Format (0x2904), etc.
+pub const GattDescriptor = struct {
+    conn: *Connection,
+    object_path: [224]u8 = undefined,
+    object_path_len: u8 = 0,
+
+    pub fn init(conn: *Connection, path: [:0]const u8) GattDescriptor {
+        var desc = GattDescriptor{
+            .conn = conn,
+        };
+        const len = @min(desc.object_path.len - 1, path.len);
+        @memcpy(desc.object_path[0..len], path[0..len]);
+        desc.object_path[len] = 0;
+        desc.object_path_len = @intCast(len);
+        return desc;
+    }
+
+    pub fn getObjectPath(self: *const GattDescriptor) [:0]const u8 {
+        return self.object_path[0..self.object_path_len :0];
+    }
+
+    /// Reads the descriptor's value (ATT Read Request on descriptor handle).
+    /// Zero heap allocations: writes bytes directly into `buf`.
+    pub fn readValue(self: *GattDescriptor, buf: []u8) !usize {
+        if (builtin.os.tag != .linux) return error.NotSupported;
+        var msg = try Connection.createMethodCall(
+            BlueZ.service_name,
+            self.getObjectPath(),
+            BlueZ.GattDescriptor1.interface_name,
+            BlueZ.GattDescriptor1.Methods.ReadValue,
+        );
+        defer msg.deinit();
+
+        // Empty options dictionary {sv}
+        var b = msg.builder();
+        var options = try b.openArray("{sv}");
+        try b.closeContainer(&options);
+
+        var reply = try self.conn.sendMessage(&msg, 5000);
+        defer reply.deinit();
+
+        var it = reply.iterator();
+        if (it.getFixedBytes()) |bytes| {
+            const copy_len = @min(buf.len, bytes.len);
+            @memcpy(buf[0..copy_len], bytes[0..copy_len]);
+            return copy_len;
+        }
+        return 0;
+    }
+
+    /// Writes data to the descriptor (ATT Write Request on descriptor handle).
+    pub fn writeValue(self: *GattDescriptor, data: []const u8) !void {
+        if (builtin.os.tag != .linux) return error.NotSupported;
+        var msg = try Connection.createMethodCall(
+            BlueZ.service_name,
+            self.getObjectPath(),
+            BlueZ.GattDescriptor1.interface_name,
+            BlueZ.GattDescriptor1.Methods.WriteValue,
+        );
+        defer msg.deinit();
+
+        var b = msg.builder();
+        try b.appendBytes(data);
+
+        // Empty options dictionary {sv}
+        var options = try b.openArray("{sv}");
+        try b.closeContainer(&options);
+
+        var reply = try self.conn.sendMessage(&msg, 5000);
+        reply.deinit();
+    }
+
+    /// Reads the 128-bit UUID property of this descriptor.
+    pub fn getUUID(self: *GattDescriptor) !core.UUID {
+        if (builtin.os.tag != .linux) return error.NotSupported;
+        var msg = try Connection.createMethodCall(
+            BlueZ.service_name,
+            self.getObjectPath(),
+            BlueZ.Properties.interface_name,
+            BlueZ.Properties.Methods.Get,
+        );
+        defer msg.deinit();
+
+        var b = msg.builder();
+        try b.appendString(BlueZ.GattDescriptor1.interface_name);
+        try b.appendString(BlueZ.GattDescriptor1.Properties.UUID);
+
+        var reply = try self.conn.sendMessage(&msg, 5000);
+        defer reply.deinit();
+
+        var it = reply.iterator();
+        if (it.getVariant()) |*v| {
+            var var_iter = v.*;
+            if (var_iter.getString()) |uuid_str| {
+                return core.UUID.parse(uuid_str);
+            }
+        }
+        return error.PropertyNotFound;
+    }
+};
+
 // ============================================================================
 // Unit Tests
 // ============================================================================
@@ -373,6 +476,11 @@ test "GattStream: struct initialization and deinit" {
     try std.testing.expectEqual(@as(u16, 512), stream.mtu);
     stream.deinit();
     try std.testing.expectEqual(@as(c_int, -1), stream.fd);
+}
+
+test "GattDescriptor: init and path handling" {
+    var desc = GattDescriptor.init(undefined, "/org/bluez/hci0/dev_XX/service0020/char0021/desc0022");
+    try std.testing.expectEqualStrings("/org/bluez/hci0/dev_XX/service0020/char0021/desc0022", desc.getObjectPath());
 }
 
 

@@ -23,8 +23,13 @@ pub const nordic_uart = @import("nordic_uart.zig");
 pub const NordicUart = nordic_uart.NordicUart;
 
 pub const beacon = @import("beacon.zig");
+pub const Beacon = beacon;
 pub const IBeacon = beacon.IBeacon;
+pub const AppleIBeacon = beacon.AppleIBeacon;
 pub const Eddystone = beacon.Eddystone;
+pub const EddystoneUrl = beacon.EddystoneUrl;
+pub const EddystoneUid = beacon.EddystoneUid;
+pub const EddystoneTlm = beacon.EddystoneTlm;
 
 test {
     const std = @import("std");
