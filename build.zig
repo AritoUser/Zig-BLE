@@ -266,6 +266,33 @@ pub fn build(b: *std.Build) void {
     run_l2cap_step.dependOn(&run_l2cap_cmd.step);
 
     // ========================================================================
+    // Zero-Daemon Raw HCI Scanner (run-raw-hci)
+    // ========================================================================
+    const raw_hci_exe = b.addExecutable(.{
+        .name = "ble-raw-hci",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("examples/raw_hci_scanner.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "Zig_BLE", .module = mod },
+            },
+        }),
+    });
+    if (link_dbus and is_linux_target) {
+        raw_hci_exe.root_module.linkSystemLibrary("dbus-1", .{});
+        raw_hci_exe.root_module.link_libc = true;
+    }
+    b.installArtifact(raw_hci_exe);
+
+    const run_raw_hci_cmd = b.addRunArtifact(raw_hci_exe);
+    if (b.args) |args| {
+        run_raw_hci_cmd.addArgs(args);
+    }
+    const run_raw_hci_step = b.step("run-raw-hci", "Run the Zero-Daemon Raw HCI Scanner example (no D-Bus, no bluetoothd)");
+    run_raw_hci_step.dependOn(&run_raw_hci_cmd.step);
+
+    // ========================================================================
     // Microbenchmark Suite (run-bench, bench)
     // ========================================================================
     const bench_exe = b.addExecutable(.{

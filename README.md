@@ -282,14 +282,38 @@ while (chunker.next()) |chunk| {
 
 The repository includes ready-to-run CLI examples:
 
-### Terminal BLE Scanner
-Scans the 2.4 GHz spectrum for BLE devices, decoding MAC addresses, RSSI signal levels, and device names.
+### Terminal BLE Scanner (BlueZ D-Bus)
+Scans the 2.4 GHz spectrum for BLE devices via BlueZ, decoding MAC addresses, RSSI signal levels, and device names.
 ```sh
 zig build run-scanner
 ```
 
+### Zero-Daemon Raw HCI Scanner (AF_BLUETOOTH)
+Scans directly over kernel raw HCI sockets (`BTPROTO_HCI`). Operates **completely independent of `bluetoothd` and D-Bus** for embedded Linux, minimal containers, and custom appliances:
+```sh
+zig build run-raw-hci
+```
+
+### Apple iBeacon & Eddystone Broadcaster
+Broadcasts standard Apple iBeacon and Google Eddystone frames over the air:
+```sh
+zig build run-beacon
+```
+
+### Nordic UART Service (NUS) Terminal
+Hosts a virtual serial port over BLE with auto-chunked notifications:
+```sh
+zig build run-nus
+```
+
+### L2CAP Connection-Oriented Channels Streamer
+Tests direct high-throughput point-to-point binary transport bypassing GATT:
+```sh
+zig build run-l2cap -- <PEER_MAC> [PSM]
+```
+
 ### Heart Rate Peripheral Simulator
-Emits BLE beacons and hosts standard GATT Heart Rate Service `0x180D`. Open **nRF Connect** or any BLE scanner app on your smartphone to connect and stream live pulse measurements.
+Emits BLE beacons and hosts standard GATT Heart Rate Service `0x180D`. Open **nRF Connect** or any BLE scanner app on your smartphone to connect and stream live pulse measurements:
 ```sh
 zig build run-heart-rate
 ```
@@ -308,10 +332,14 @@ zig build run-bench
 
 ```
 Zig-BLE/
-├── build.zig               # Package configuration & example build targets
-├── build.zig.zon           # Package manifest (v0.2.0)
+├── build.zig               # Package configuration & 7 standalone example build targets
+├── build.zig.zon           # Package manifest
 ├── examples/
-│   ├── scanner.zig         # Interactive terminal BLE scanner
+│   ├── scanner.zig         # Terminal BLE scanner via BlueZ
+│   ├── raw_hci_scanner.zig # Zero-daemon scanner via direct AF_BLUETOOTH raw HCI sockets
+│   ├── beacon_broadcaster.zig # Apple iBeacon & Google Eddystone broadcaster
+│   ├── nus_terminal.zig    # Nordic UART Service terminal & echo server
+│   ├── l2cap_stream.zig    # High-throughput L2CAP CoC streaming
 │   ├── heart_rate_peripheral.zig # Standalone HRM GATT server
 │   └── benchmark.zig       # Microbenchmark suite (zig build bench)
 └── src/
@@ -321,6 +349,14 @@ Zig-BLE/
     │   ├── assigned_numbers.zig # Bluetooth SIG Services, Characteristics, Descriptors, Companies
     │   ├── gatt.zig        # CCCD bitmasks, GATT Permissions & Status Codes
     │   └── advertising.zig # Zero-copy AD packet parser (AdIterator, Extended Adv)
+    ├── hci/                # Zero-Daemon Raw HCI Subsystem (AF_BLUETOOTH, BTPROTO_HCI)
+    │   ├── constants.zig   # OGF, OCF, HCI Packet Indicators, Event Codes, Statuses
+    │   ├── filter.zig      # Kernel-level packet filter (struct hci_filter, SOL_HCI)
+    │   ├── commands.zig    # Zero-allocation HCI Command builders (Reset, Scan, Adv)
+    │   ├── events.zig      # Zero-allocation HCI Event & LE Advertising Report parsers
+    │   ├── socket.zig      # Pure-Zig raw HCI socket implementation via std.posix.system
+    │   ├── controller.zig  # High-level turnkey HciController
+    │   └── mod.zig         # HCI module exports
     ├── profiles/           # Pre-built GATT Standard Profiles
     │   ├── heart_rate.zig  # Heart Rate Service (HRP v1.0) encoder/decoder
     │   ├── battery.zig     # Battery Service (BAS v1.0) parser/encoder
@@ -333,7 +369,7 @@ Zig-BLE/
     ├── dbus/               # Pure-Zig D-Bus Wire Protocol engine (zero C dependencies)
     │   └── wire/           # Socket, Auth, Header, Buffer, Reader, Writer, Message, Connection
     ├── adapter.zig         # Adapter discovery & power management
-    ├── device.zig          # Remote BLE device representation
+    ├── device.zig          # Remote BLE device representation & pairing/bonding
     ├── gatt_client.zig     # GATT service/characteristic exploration & notifications
     ├── advertising.zig     # LEAdvertisingManager1 D-Bus object export
     ├── gatt_server.zig     # GattManager1 GATT service, characteristic & descriptor tree

@@ -455,12 +455,20 @@ pub const l2cap = @import("l2cap/mod.zig");
 pub const L2capSocket = l2cap.L2capSocket;
 pub const sockaddr_l2 = l2cap.sockaddr_l2;
 
+// Raw HCI Subsystem (Zero-Daemon / Embedded Mode)
+pub const hci = @import("hci/mod.zig");
+pub const HciSocket = hci.HciSocket;
+pub const HciController = hci.HciController;
+pub const HciFilter = hci.HciFilter;
+pub const HciScanConfig = hci.HciScanConfig;
+
 test {
     std.testing.refAllDecls(@This());
     _ = core;
     _ = profiles;
     _ = l2cap;
     _ = bluez;
+    _ = hci;
     if (builtin.os.tag == .linux) {
         _ = dbus;
         _ = gatt_client;
