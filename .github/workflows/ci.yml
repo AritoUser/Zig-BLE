@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  test-linux:
+    name: Linux Native (Pure Zig 0.16.0+)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Zig
+        uses: mlugg/setup-zig@v1
+        with:
+          version: master
+
+      - name: Run Unit Tests
+        run: zig build test --summary all
+
+      - name: Run Fuzz Testing (50,000 iterations)
+        run: |
+          zig build fuzz -- 50000
+          zig build fuzz-dbus -- 50000
+
+      - name: Pure Zig Cross-Compilation (aarch64-linux without Sysroot)
+        run: zig build -Dtarget=aarch64-linux
+
+      - name: Build All Targets & Benchmarks
+        run: |
+          zig build
+          zig build run-bench
+
+      - name: Generate API Documentation
+        run: zig build docs
+
+  test-cross-platform:
+    name: Cross-Platform Core Validation (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [windows-latest, macos-latest]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Zig
+        uses: mlugg/setup-zig@v1
+        with:
+          version: master
+
+      - name: Test Core Library
+        run: zig build test --summary all

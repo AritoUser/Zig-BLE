@@ -1,0 +1,23 @@
+# Zig build artifacts & caches
+.zig-cache/
+zig-out/
+
+# C / Object files
+*.o
+*.obj
+*.a
+*.so
+*.dylib
+*.dll
+*.exe
+
+# IDE & Editor artifacts
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Scratch & Temporary files
+scratch/
+tmp/
