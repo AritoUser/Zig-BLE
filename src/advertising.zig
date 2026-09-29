@@ -266,7 +266,31 @@ pub const Advertisement = struct {
                 try dict.closeContainer(&entry);
             }
 
-            // 8. SecondaryChannel (Bluetooth 5.0+ Extended Advertising / Coded PHY)
+            // 8. ServiceData dict {s: ay} (e.g. Eddystone-URL / custom sensors)
+            if (self.config.service_data) |sd| {
+                var entry = try dict.openDictEntry();
+                try entry.appendString(BlueZ.LEAdvertisement1.Properties.ServiceData);
+                var v = try entry.openVariant("a{sv}");
+                var sd_dict = try v.openArray("{sv}");
+                {
+                    var sd_entry = try sd_dict.openDictEntry();
+                    var u_buf: [36]u8 = undefined;
+                    _ = sd.uuid.formatBuf(&u_buf);
+                    var null_term: [37]u8 = undefined;
+                    @memcpy(null_term[0..36], &u_buf);
+                    null_term[36] = 0;
+                    try sd_entry.appendString(null_term[0..36 :0]);
+                    var payload_var = try sd_entry.openVariant("ay");
+                    try payload_var.appendBytes(sd.data);
+                    try sd_entry.closeContainer(&payload_var);
+                    try sd_dict.closeContainer(&sd_entry);
+                }
+                try v.closeContainer(&sd_dict);
+                try entry.closeContainer(&v);
+                try dict.closeContainer(&entry);
+            }
+
+            // 9. SecondaryChannel (Bluetooth 5.0+ Extended Advertising / Coded PHY)
             if (self.config.secondary_channel) |sec| {
                 if (sec.toBluezString()) |sec_str| {
                     var entry = try dict.openDictEntry();
@@ -278,7 +302,7 @@ pub const Advertisement = struct {
                 }
             }
 
-            // 9. MinInterval / MaxInterval
+            // 10. MinInterval / MaxInterval
             if (self.config.min_interval_ms) |min_ms| {
                 try dict.appendDictUInt32("MinInterval", min_ms);
             }
@@ -286,7 +310,7 @@ pub const Advertisement = struct {
                 try dict.appendDictUInt32("MaxInterval", max_ms);
             }
 
-            // 10. TxPower
+            // 11. TxPower
             if (self.config.tx_power) |pwr| {
                 try dict.appendDictInt16("TxPower", pwr);
             }
@@ -320,3 +344,18 @@ test "Advertisement config defaults" {
     try std.testing.expect(cfg.includes.tx_power);
     try std.testing.expect(cfg.includes.local_name);
 }
+
+test "Advertisement config with ServiceData" {
+    const eddystone_url = [_]u8{ 0x10, 0x08, 0x03, 'z', 'i', 'g' };
+    const cfg = AdvertisementConfig{
+        .local_name = "Eddystone-Beacon",
+        .service_data = .{
+            .uuid = UUID.from16(0xFEAA),
+            .data = &eddystone_url,
+        },
+    };
+    try std.testing.expect(cfg.service_data != null);
+    try std.testing.expect(cfg.service_data.?.uuid.eql(UUID.from16(0xFEAA)));
+    try std.testing.expectEqualSlices(u8, &eddystone_url, cfg.service_data.?.data);
+}
+
