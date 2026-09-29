@@ -6,6 +6,7 @@ pub const assigned_numbers = @import("assigned_numbers.zig");
 pub const gatt = @import("gatt.zig");
 pub const advertising = @import("advertising.zig");
 pub const format = @import("format.zig");
+pub const att = @import("att.zig");
 
 // Re-export primary types for ergonomic access
 pub const Address = types.Address;
@@ -29,6 +30,10 @@ pub const AttOpcode = gatt.AttOpcode;
 pub const ParseError = gatt.ParseError;
 pub const NotificationData = gatt.NotificationData;
 pub const parseNotification = gatt.parseNotification;
+
+pub const AttErrorCode = att.AttErrorCode;
+pub const AttPdu = att.AttPdu;
+pub const AttError = att.AttError;
 
 pub const AdType = advertising.AdType;
 pub const AdvertisingFlags = advertising.AdvertisingFlags;
@@ -59,4 +64,5 @@ test {
     _ = gatt;
     _ = advertising;
     _ = format;
+    _ = att;
 }

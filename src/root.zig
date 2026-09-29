@@ -50,6 +50,10 @@ pub const deserialize = core.deserialize;
 
 // GATT attributes & properties
 pub const gatt = core.gatt;
+pub const att = core.att;
+pub const AttErrorCode = core.AttErrorCode;
+pub const AttPdu = core.AttPdu;
+pub const AttError = core.AttError;
 pub const CharacteristicProperties = core.CharacteristicProperties;
 pub const CharacteristicProps = core.CharacteristicProps;
 pub const Cccd = core.Cccd;
