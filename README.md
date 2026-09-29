@@ -8,8 +8,12 @@ Supports both **Central (Client)** and **Peripheral (Server & Broadcaster)** rol
 [![Release](https://img.shields.io/github/v/release/AritoUser/Zig-BLE)](https://github.com/AritoUser/Zig-BLE/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![White Paper](https://img.shields.io/badge/White%20Paper-Architecture%20%26%20Design-orange.svg)](docs/WHITEPAPER.md)
+[![Protocol Manual](https://img.shields.io/badge/Manual-Architecture%20%26%20Protocol-blueviolet.svg)](docs/ARCHITECTURE_AND_PROTOCOL_MANUAL.md)
 
-> 📖 **Technical White Paper Available:** For a deep architectural analysis of the zero-allocation D-Bus Wire Protocol engine, bi-endian decoding, SCM_RIGHTS pipe streaming, and microsecond benchmarks, read the [**Zig-BLE Technical White Paper**](docs/WHITEPAPER.md).
+> 📖 **Engineering Documentation:**
+> * [**Technical White Paper**](docs/WHITEPAPER.md): Deep-dive into the zero-allocation D-Bus Wire Protocol engine, bi-endian decoding, SCM_RIGHTS pipe streaming, and microsecond benchmarks.
+> * [**Architecture & Protocol Manual**](docs/ARCHITECTURE_AND_PROTOCOL_MANUAL.md): Systems reference covering memory layout, lock-free SPSC ring buffers, unaligned trap prevention, GATT finite state machines, and byte-level packet specifications.
+> * **Interactive HTML API Reference**: Run `zig build docs` to generate searchable, type-safe API documentation in `zig-out/docs/`.
 
 ---
 

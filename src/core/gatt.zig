@@ -1,3 +1,16 @@
+//! # BLE Generic Attribute Profile (GATT) & Attribute Protocol (ATT) Engine
+//!
+//! Provides zero-copy abstractions and standardized data structures for BLE GATT
+//! client and server operations strictly conforming to the Bluetooth Core Specification
+//! (v5.4 / v6.0, Vol 3, Part F & Part G).
+//!
+//! ## Memory Safety & Concurrency Guarantees
+//! - **Zero-Allocation**: Hot-path packet parsing, notification processing, and CCCD bit manipulation
+//!   execute without heap allocations (`no-alloc`). All payloads borrow slices directly from network buffers.
+//! - **Alignment & Endianness**: Multi-byte integers (Attribute Handles, CCCD values, UUIDs) are decoded
+//!   using explicit Little-Endian semantics (`std.mem.readInt(..., .little)`) to prevent unaligned trap
+//!   exceptions on ARM, RISC-V, and MIPS CPUs.
+
 const std = @import("std");
 const types = @import("types.zig");
 const UUID = types.UUID;
@@ -136,6 +149,99 @@ pub const Cccd = packed struct(u16) {
     }
 };
 
+/// Alias for CharacteristicProperties conforming to Bluetooth Core Spec v5.4, Vol 3, Part G.
+pub const CharacteristicProps = CharacteristicProperties;
+
+/// Standard Attribute Protocol (ATT) Opcodes according to Bluetooth Core Spec v5.4, Vol 3, Part F, Section 3.4.
+pub const AttOpcode = enum(u8) {
+    error_rsp = 0x01,
+    exchange_mtu_req = 0x02,
+    exchange_mtu_rsp = 0x03,
+    find_info_req = 0x04,
+    find_info_rsp = 0x05,
+    find_by_type_val_req = 0x06,
+    find_by_type_val_rsp = 0x07,
+    read_by_type_req = 0x08,
+    read_by_type_rsp = 0x09,
+    read_req = 0x0A,
+    read_rsp = 0x0B,
+    read_blob_req = 0x0C,
+    read_blob_rsp = 0x0D,
+    read_multiple_req = 0x0E,
+    read_multiple_rsp = 0x0F,
+    read_by_group_type_req = 0x10,
+    read_by_group_type_rsp = 0x11,
+    write_req = 0x12,
+    write_rsp = 0x13,
+    write_cmd = 0x52,
+    prepare_write_req = 0x16,
+    prepare_write_rsp = 0x17,
+    execute_write_req = 0x18,
+    execute_write_rsp = 0x19,
+    handle_value_ntf = 0x1B,
+    handle_value_ind = 0x1D,
+    handle_value_cfm = 0x1E,
+    signed_write_cmd = 0xD2,
+    _,
+};
+
+/// Error set for ATT and GATT packet parsing.
+pub const ParseError = error{
+    PayloadTooShort,
+    InvalidCrc,
+    MalformedUuid,
+    BufferOverflow,
+    InvalidOpcode,
+};
+
+/// Represents an unpacked ATT Handle Value Notification (`ATT_HANDLE_VALUE_NTF`).
+pub const NotificationData = struct {
+    /// 16-bit Attribute Handle assigned to the characteristic value on the GATT server.
+    handle: u16,
+    /// Raw unparsed payload bytes. Borrows memory directly from the receive buffer.
+    payload: []const u8,
+};
+
+/// Parses a raw ATT Handle Value Notification (`ATT_HANDLE_VALUE_NTF`, Opcode 0x1B) packet.
+///
+/// ### Memory & Ownership
+/// - **Zero-Copy**: The returned `payload` slice references the provided `raw_packet` directly.
+/// - **Zero-Allocation**: Performs no heap allocations (`no-alloc`).
+///
+/// ### Endianness & Hardware Representation
+/// - `handle` is decoded from Little-Endian wire format according to Bluetooth Core Spec v5.4, Vol 3, Part F.
+///
+/// ### Preconditions
+/// - If the raw packet includes the 1-byte opcode (`0x1B`), `raw_packet.len` must be >= 3 bytes.
+/// - If the opcode was already stripped by lower L2CAP layers, 2-byte handle + value is accepted.
+///
+/// ### Arguments
+/// - `raw_packet`: Raw bytes from the BLE HCI/L2CAP/socket stream.
+///
+/// ### Returns
+/// Decoded `NotificationData` struct with handle and payload slice, or `ParseError.PayloadTooShort`.
+pub fn parseNotification(raw_packet: []const u8) ParseError!NotificationData {
+    if (raw_packet.len == 0) return ParseError.PayloadTooShort;
+
+    // Check if opcode byte is present
+    if (raw_packet[0] == @intFromEnum(AttOpcode.handle_value_ntf)) {
+        if (raw_packet.len < 3) return ParseError.PayloadTooShort;
+        const handle = std.mem.readInt(u16, raw_packet[1..3], .little);
+        return NotificationData{
+            .handle = handle,
+            .payload = raw_packet[3..],
+        };
+    } else {
+        // Opcode already stripped by L2CAP layer: Handle (2 bytes) + Payload
+        if (raw_packet.len < 2) return ParseError.PayloadTooShort;
+        const handle = std.mem.readInt(u16, raw_packet[0..2], .little);
+        return NotificationData{
+            .handle = handle,
+            .payload = raw_packet[2..],
+        };
+    }
+}
+
 // ============================================================================
 // Unit Tests
 // ============================================================================
@@ -189,3 +295,23 @@ test "Cccd encoding and decoding" {
     const both_dec = Cccd.decode(both_enc);
     try std.testing.expect(both_dec.notifications and both_dec.indications);
 }
+
+test "parseNotification: zero-copy and Little-Endian handle decoding" {
+    // Opcode (0x1B) + Handle (0x002A in LE: 0x2A, 0x00) + Payload ("SensorData")
+    const raw_packet = [_]u8{ 0x1B, 0x2A, 0x00, 'S', 'e', 'n', 's', 'o', 'r', 'D', 'a', 't', 'a' };
+    const ntf = try parseNotification(&raw_packet);
+
+    try std.testing.expectEqual(@as(u16, 0x002A), ntf.handle);
+    try std.testing.expectEqualStrings("SensorData", ntf.payload);
+
+    // Stripped L2CAP format: Handle (0x0014 in LE: 0x14, 0x00) + Payload (0xDE, 0xAD, 0xBE, 0xEF)
+    const stripped = [_]u8{ 0x14, 0x00, 0xDE, 0xAD, 0xBE, 0xEF };
+    const ntf_stripped = try parseNotification(&stripped);
+    try std.testing.expectEqual(@as(u16, 0x0014), ntf_stripped.handle);
+    try std.testing.expectEqualSlices(u8, &[_]u8{ 0xDE, 0xAD, 0xBE, 0xEF }, ntf_stripped.payload);
+
+    // Error case: too short
+    const short_pkt = [_]u8{ 0x1B, 0x2A };
+    try std.testing.expectError(ParseError.PayloadTooShort, parseNotification(&short_pkt));
+}
+

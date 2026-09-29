@@ -265,11 +265,17 @@ pub fn build(b: *std.Build) void {
     // ========================================================================
     // Documentation (zig build docs)
     // ========================================================================
+    const lib = b.addLibrary(.{
+        .linkage = .static,
+        .name = "zig_ble",
+        .root_module = mod,
+    });
+
     const install_docs = b.addInstallDirectory(.{
-        .source_dir = exe.getEmittedDocs(),
+        .source_dir = lib.getEmittedDocs(),
         .install_dir = .prefix,
         .install_subdir = "docs",
     });
-    const docs_step = b.step("docs", "Generate HTML documentation");
+    const docs_step = b.step("docs", "Generate complete HTML documentation for Zig_BLE library");
     docs_step.dependOn(&install_docs.step);
 }

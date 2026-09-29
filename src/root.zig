@@ -1,4 +1,24 @@
-//! Zig-BLE: Native, allocation-conscious Bluetooth Low Energy library for Zig.
+//! # Zig-BLE: Native, Pure-Zig Bluetooth Low Energy Stack
+//!
+//! A high-performance, allocation-conscious Bluetooth Low Energy (BLE) engine for **Zig 0.16.0+**,
+//! strictly adhering to the **Bluetooth Core Specification (v5.4 / v6.0)** and the Linux **BlueZ D-Bus Wire Protocol**.
+//!
+//! ## Architectural Pillars
+//! 1. **100% Pure Zig**: Zero C-dependencies, zero `libdbus-1`, zero sysroot requirements for cross-compilation.
+//! 2. **Zero-Allocation Hot-Paths**: Packet parsing, notification dispatching, and D-Bus message deserialization
+//!    execute without heap allocations (`no-alloc`), slicing directly from network buffers.
+//! 3. **Strict Memory & Hardware Alignment**: Multi-byte integers and structs enforce Little-Endian encoding
+//!    and aligned offsets to prevent unaligned trap faults on embedded ARM, MIPS, and RISC-V targets.
+//! 4. **Dual Role Architecture**: Supports both Central (GATT Client / Scanner) and Peripheral (GATT Server / Broadcaster) roles.
+//!
+//! ## Modules Overview
+//! - `core`: Platform-independent BLE primitives (UUID, Address, Advertising, GATT types, Bluetooth SIG Assigned Numbers).
+//! - `wire`: Pure-Zig D-Bus Wire Protocol engine (Reader, Writer, Header, SASL Auth, SCM_RIGHTS Unix Sockets).
+//! - `Adapter`: Linux Bluetooth adapter controller (discovery, powering, pairing filters).
+//! - `Device`: Remote BLE peripheral manager (connection, RSSI streaming, GATT exploration).
+//! - `GattCharacteristic`: GATT characteristic I/O (Read, Write, AcquireWrite pipe streaming, Notifications).
+//! - `Peripheral`: Unified peripheral engine for GATT server hosting and custom advertisement beaconing.
+
 const std = @import("std");
 
 pub const core = @import("core/mod.zig");
@@ -21,9 +41,14 @@ pub const Appearance = core.Appearance;
 // GATT attributes & properties
 pub const gatt = core.gatt;
 pub const CharacteristicProperties = core.CharacteristicProperties;
+pub const CharacteristicProps = core.CharacteristicProps;
 pub const Cccd = core.Cccd;
 pub const ServiceType = core.ServiceType;
 pub const WriteType = core.WriteType;
+pub const AttOpcode = core.AttOpcode;
+pub const ParseError = core.ParseError;
+pub const NotificationData = core.NotificationData;
+pub const parseNotification = core.parseNotification;
 
 // Zero-allocation advertising packet parser
 pub const advertising = core.advertising;

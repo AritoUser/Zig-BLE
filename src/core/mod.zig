@@ -19,9 +19,14 @@ pub const CompanyId = assigned_numbers.CompanyId;
 pub const Appearance = assigned_numbers.Appearance;
 
 pub const CharacteristicProperties = gatt.CharacteristicProperties;
+pub const CharacteristicProps = gatt.CharacteristicProps;
 pub const Cccd = gatt.Cccd;
 pub const ServiceType = gatt.ServiceType;
 pub const WriteType = gatt.WriteType;
+pub const AttOpcode = gatt.AttOpcode;
+pub const ParseError = gatt.ParseError;
+pub const NotificationData = gatt.NotificationData;
+pub const parseNotification = gatt.parseNotification;
 
 pub const AdType = advertising.AdType;
 pub const AdvertisingFlags = advertising.AdvertisingFlags;
