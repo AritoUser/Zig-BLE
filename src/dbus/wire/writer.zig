@@ -331,6 +331,16 @@ pub const MessageBuilder = struct {
         try self.closeContainer(&entry);
     }
 
+    /// Appends an int16 {s, n} as a variant into an {sv} dictionary.
+    pub fn appendDictInt16(self: *MessageBuilder, key: [:0]const u8, val: i16) !void {
+        var entry = try self.openDictEntry();
+        try entry.appendString(key);
+        var v = try entry.openVariant("n");
+        try v.appendInt16(val);
+        try entry.closeContainer(&v);
+        try self.closeContainer(&entry);
+    }
+
     /// Appends a uint32 {s, u} as a variant into an {sv} dictionary.
     pub fn appendDictUInt32(self: *MessageBuilder, key: [:0]const u8, val: u32) !void {
         var entry = try self.openDictEntry();

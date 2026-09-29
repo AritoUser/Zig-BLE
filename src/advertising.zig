@@ -49,6 +49,14 @@ pub const AdvertisementConfig = struct {
     appearance: ?u16 = null,
     duration_s: ?u16 = null,
     timeout_s: ?u16 = null,
+    /// Secondary advertising channel for Bluetooth 5.0+ Extended Advertising (e.g. .coded for Long Range).
+    secondary_channel: ?core.SecondaryChannel = null,
+    /// Minimum advertising interval in milliseconds.
+    min_interval_ms: ?u32 = null,
+    /// Maximum advertising interval in milliseconds.
+    max_interval_ms: ?u32 = null,
+    /// Explicit transmit power level in dBm.
+    tx_power: ?i8 = null,
 };
 
 pub const Advertisement = struct {
@@ -256,6 +264,31 @@ pub const Advertisement = struct {
                 try v.closeContainer(&mfg_dict);
                 try entry.closeContainer(&v);
                 try dict.closeContainer(&entry);
+            }
+
+            // 8. SecondaryChannel (Bluetooth 5.0+ Extended Advertising / Coded PHY)
+            if (self.config.secondary_channel) |sec| {
+                if (sec.toBluezString()) |sec_str| {
+                    var entry = try dict.openDictEntry();
+                    try entry.appendString("SecondaryChannel");
+                    var v = try entry.openVariant("s");
+                    try v.appendString(sec_str);
+                    try entry.closeContainer(&v);
+                    try dict.closeContainer(&entry);
+                }
+            }
+
+            // 9. MinInterval / MaxInterval
+            if (self.config.min_interval_ms) |min_ms| {
+                try dict.appendDictUInt32("MinInterval", min_ms);
+            }
+            if (self.config.max_interval_ms) |max_ms| {
+                try dict.appendDictUInt32("MaxInterval", max_ms);
+            }
+
+            // 10. TxPower
+            if (self.config.tx_power) |pwr| {
+                try dict.appendDictInt16("TxPower", pwr);
             }
 
             try b.closeContainer(&dict);

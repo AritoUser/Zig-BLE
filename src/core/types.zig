@@ -327,6 +327,16 @@ pub const UUID = struct {
         return UUID{ .bytes = res };
     }
 
+    /// Returns the internal 16-byte big-endian representation.
+    pub inline fn toBytes(self: UUID) [16]u8 {
+        return self.bytes;
+    }
+
+    /// Checks if this is a custom 128-bit vendor UUID (not a standard 16-bit SIG alias).
+    pub inline fn is128Bit(self: UUID) bool {
+        return !self.is16Bit();
+    }
+
     /// Checks if this UUID represents a 16-bit Bluetooth SIG standard UUID.
     /// Uses two native register comparisons (32-bit and 64-bit) instead of byte loops.
     pub inline fn is16Bit(self: UUID) bool {

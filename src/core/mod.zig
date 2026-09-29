@@ -40,6 +40,8 @@ pub const ServiceUuids128Iterator = advertising.ServiceUuids128Iterator;
 pub const AdStructure = advertising.AdStructure;
 pub const AdIterator = advertising.AdIterator;
 pub const AdvertisingReport = advertising.AdvertisingReport;
+pub const PhyType = advertising.PhyType;
+pub const SecondaryChannel = advertising.SecondaryChannel;
 
 test {
     std.testing.refAllDecls(@This());

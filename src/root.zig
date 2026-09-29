@@ -64,6 +64,8 @@ pub const ServiceUuids128Iterator = core.ServiceUuids128Iterator;
 pub const AdStructure = core.AdStructure;
 pub const AdIterator = core.AdIterator;
 pub const AdvertisingReport = core.AdvertisingReport;
+pub const PhyType = core.PhyType;
+pub const SecondaryChannel = core.SecondaryChannel;
 
 // Linux BlueZ D-Bus constants and protocol specification
 pub const bluez = @import("bluez/mod.zig");
@@ -129,9 +131,27 @@ else
     };
 pub const Connection = if (builtin.os.tag == .linux) dbus.Connection else struct {};
 
+// Standard BLE Profiles & Beacons
+pub const profiles = @import("profiles/mod.zig");
+pub const HeartRateMeasurement = profiles.HeartRateMeasurement;
+pub const SensorContactStatus = profiles.SensorContactStatus;
+pub const BodySensorLocation = profiles.BodySensorLocation;
+pub const BatteryService = profiles.BatteryService;
+pub const EnvironmentalSensing = profiles.EnvironmentalSensing;
+pub const NordicUart = profiles.NordicUart;
+pub const IBeacon = profiles.IBeacon;
+pub const Eddystone = profiles.Eddystone;
+
+// L2CAP Connection-Oriented Channels (High-Speed Streaming)
+pub const l2cap = @import("l2cap/mod.zig");
+pub const L2capSocket = l2cap.L2capSocket;
+pub const sockaddr_l2 = l2cap.sockaddr_l2;
+
 test {
     std.testing.refAllDecls(@This());
     _ = core;
+    _ = profiles;
+    _ = l2cap;
     _ = bluez;
     if (builtin.os.tag == .linux) {
         _ = dbus;

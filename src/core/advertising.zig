@@ -19,8 +19,47 @@ pub const AdType = enum(u8) {
     appearance = 0x19,
     service_data_32bit = 0x20,
     service_data_128bit = 0x21,
+    advertising_interval = 0x1A,
+    periodic_advertising_interval = 0x2A,
+    broadcast_code = 0x2D,
+    resolvable_set_identifier = 0x2E,
     manufacturer_specific_data = 0xFF,
     _,
+};
+
+/// Bluetooth Radio Physical Layer (PHY) types (Bluetooth Core Spec v5.0+).
+pub const PhyType = enum(u8) {
+    /// 1 Mbps standard BLE PHY (Bluetooth 4.0 - 6.0 compatible).
+    le_1m = 1,
+    /// 2 Mbps high-throughput PHY (Bluetooth 5.0+).
+    le_2m = 2,
+    /// LE Coded PHY for long-range communication (S=2 500 kbps, S=8 125 kbps).
+    le_coded = 3,
+
+    pub fn toString(self: PhyType) []const u8 {
+        return switch (self) {
+            .le_1m => "1M",
+            .le_2m => "2M",
+            .le_coded => "Coded",
+        };
+    }
+};
+
+/// Secondary Advertising Channel selection for Extended Advertising (Bluetooth 5.0+).
+pub const SecondaryChannel = enum {
+    none,
+    le_1m,
+    le_2m,
+    coded,
+
+    pub fn toBluezString(self: SecondaryChannel) ?[:0]const u8 {
+        return switch (self) {
+            .none => null,
+            .le_1m => "1M",
+            .le_2m => "2M",
+            .coded => "Coded",
+        };
+    }
 };
 
 /// BLE Advertising Flags (AD Type 0x01, 1 byte).
@@ -269,6 +308,9 @@ pub const AdvertisingReport = struct {
     raw_service_data16: ?[]const u8 = null,
     raw_service_data32: ?[]const u8 = null,
     raw_service_data128: ?[]const u8 = null,
+    secondary_phy: ?PhyType = null,
+    periodic_interval_ms: ?u32 = null,
+    is_extended: bool = false,
 
     /// Returns the local device name if it is a valid UTF-8 sequence.
     pub fn getValidLocalName(self: AdvertisingReport) ?[]const u8 {
@@ -361,6 +403,12 @@ pub const AdvertisingReport = struct {
                 },
                 .service_data_128bit => {
                     report.raw_service_data128 = ad.data;
+                },
+                .advertising_interval, .periodic_advertising_interval => {
+                    if (ad.data.len >= 2) {
+                        const units = std.mem.readInt(u16, ad.data[0..2], .little);
+                        report.periodic_interval_ms = @as(u32, units) * 5 / 4;
+                    }
                 },
                 else => {},
             }
@@ -702,6 +750,24 @@ test "AdIterator & AdvertisingReport: PRNG continuous fuzzing (25,000 iterations
         }
     }
 }
+
+test "Bluetooth 5.0+ Extended Advertising types and interval parsing" {
+    try std.testing.expectEqualStrings("1M", PhyType.le_1m.toString());
+    try std.testing.expectEqualStrings("2M", PhyType.le_2m.toString());
+    try std.testing.expectEqualStrings("Coded", PhyType.le_coded.toString());
+
+    try std.testing.expect(SecondaryChannel.none.toBluezString() == null);
+    try std.testing.expectEqualStrings("Coded", SecondaryChannel.coded.toBluezString().?);
+
+    // Packet with Advertising Interval (AD Type 0x1A: 2 bytes units of 1.25ms)
+    // 0x00A0 = 160 units * 1.25ms = 200 ms
+    const adv_int_pkt = [_]u8{
+        0x03, 0x1A, 0xA0, 0x00,
+    };
+    const rep = AdvertisingReport.parse(&adv_int_pkt);
+    try std.testing.expectEqual(@as(?u32, 200), rep.periodic_interval_ms);
+}
+
 
 
 
