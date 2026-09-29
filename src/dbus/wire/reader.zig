@@ -41,8 +41,13 @@ pub const MessageIter = struct {
     sig: []const u8,
     sig_idx: usize = 0,
     is_array: bool = false,
+    endian: std.builtin.Endian = .little,
 
     pub fn init(buf: []const u8, start_offset: usize, end_offset: usize, sig: []const u8) MessageIter {
+        return initEndian(buf, start_offset, end_offset, sig, .little);
+    }
+
+    pub fn initEndian(buf: []const u8, start_offset: usize, end_offset: usize, sig: []const u8, endian: std.builtin.Endian) MessageIter {
         return MessageIter{
             .buf = buf,
             .offset = start_offset,
@@ -50,6 +55,7 @@ pub const MessageIter = struct {
             .sig = sig,
             .sig_idx = 0,
             .is_array = false,
+            .endian = endian,
         };
     }
 
@@ -107,7 +113,7 @@ pub const MessageIter = struct {
             Type.string, Type.object_path => {
                 self.offset = types.alignOffset(self.offset, 4);
                 if (self.offset + 4 <= self.end_offset) {
-                    const len = std.mem.readInt(u32, self.buf[self.offset..][0..4], .little);
+                    const len = std.mem.readInt(u32, self.buf[self.offset..][0..4], self.endian);
                     self.offset += 4 + len + 1; // +1 for null terminator
                 }
             },
@@ -120,7 +126,7 @@ pub const MessageIter = struct {
             Type.array => {
                 self.offset = types.alignOffset(self.offset, 4);
                 if (self.offset + 4 <= self.end_offset) {
-                    const len = std.mem.readInt(u32, self.buf[self.offset..][0..4], .little);
+                    const len = std.mem.readInt(u32, self.buf[self.offset..][0..4], self.endian);
                     self.offset += 4;
                     // Take alignment of first element into account
                     const elem_sig = parseSingleType(self.sig[self.sig_idx + 1 ..]);
@@ -138,7 +144,7 @@ pub const MessageIter = struct {
                     self.offset += sig_len + 1; // + null terminator
                     if (val_sig.len > 0) {
                         self.offset = types.alignOffset(self.offset, types.getAlignment(val_sig[0]));
-                        var sub = MessageIter.init(self.buf, self.offset, self.end_offset, val_sig);
+                        var sub = MessageIter.initEndian(self.buf, self.offset, self.end_offset, val_sig, self.endian);
                         sub.skipCurrent();
                         self.offset = sub.offset;
                     }
@@ -177,12 +183,12 @@ pub const MessageIter = struct {
                 const align_val = types.getAlignment(inner_sig[0]);
                 self.offset = types.alignOffset(self.offset, align_val);
 
-                return MessageIter.init(self.buf, self.offset, self.end_offset, inner_sig);
+                return MessageIter.initEndian(self.buf, self.offset, self.end_offset, inner_sig, self.endian);
             },
             Type.array => {
                 self.offset = types.alignOffset(self.offset, 4);
                 if (self.offset + 4 > self.end_offset) return null;
-                const array_byte_len = std.mem.readInt(u32, self.buf[self.offset..][0..4], .little);
+                const array_byte_len = std.mem.readInt(u32, self.buf[self.offset..][0..4], self.endian);
                 self.offset += 4;
 
                 const elem_sig = parseSingleType(self.sig[self.sig_idx + 1 ..]);
@@ -194,7 +200,7 @@ pub const MessageIter = struct {
 
                 self.offset = content_end;
 
-                var it = MessageIter.init(self.buf, content_start, content_end, elem_sig);
+                var it = MessageIter.initEndian(self.buf, content_start, content_end, elem_sig, self.endian);
                 it.is_array = true;
                 return it;
             },
@@ -205,7 +211,7 @@ pub const MessageIter = struct {
                 if (entry_sig.len < 3) return null;
                 const inner_sig = entry_sig[1 .. entry_sig.len - 1]; // without '{' and '}'
 
-                return MessageIter.init(self.buf, self.offset, self.end_offset, inner_sig);
+                return MessageIter.initEndian(self.buf, self.offset, self.end_offset, inner_sig, self.endian);
             },
             Type.struct_begin => {
                 self.offset = types.alignOffset(self.offset, 8);
@@ -213,7 +219,7 @@ pub const MessageIter = struct {
                 if (struct_sig.len < 2) return null;
                 const inner_sig = struct_sig[1 .. struct_sig.len - 1];
 
-                return MessageIter.init(self.buf, self.offset, self.end_offset, inner_sig);
+                return MessageIter.initEndian(self.buf, self.offset, self.end_offset, inner_sig, self.endian);
             },
             else => return null,
         }
@@ -224,23 +230,19 @@ pub const MessageIter = struct {
         if (self.getArgType() != Type.string and self.getArgType() != Type.object_path) return null;
         self.offset = types.alignOffset(self.offset, 4);
         if (self.offset + 4 > self.end_offset) return null;
-        const len = std.mem.readInt(u32, self.buf[self.offset..][0..4], .little);
+        const len = std.mem.readInt(u32, self.buf[self.offset..][0..4], self.endian);
         self.offset += 4;
 
         if (self.offset + len >= self.end_offset) return null;
-        const slice = self.buf[self.offset .. self.offset + len];
-        self.offset += len;
+        if (self.buf[self.offset + len] != 0) return null;
+        const str = self.buf[self.offset .. self.offset + len :0];
+        self.offset += len + 1;
 
-        if (self.offset >= self.end_offset or self.buf[self.offset] != 0) return null;
-        self.offset += 1;
-
-        if (self.is_array) {
-            // In an array, is_array remains active
-        } else {
+        if (!self.is_array) {
             self.sig_idx += 1;
         }
 
-        return @ptrCast(slice);
+        return str;
     }
 
     pub fn getObjectPath(self: *MessageIter) ?[:0]const u8 {
@@ -262,7 +264,7 @@ pub const MessageIter = struct {
         if (self.getArgType() != Type.boolean) return null;
         self.offset = types.alignOffset(self.offset, 4);
         if (self.offset + 4 > self.end_offset) return null;
-        const val = std.mem.readInt(u32, self.buf[self.offset..][0..4], .little);
+        const val = std.mem.readInt(u32, self.buf[self.offset..][0..4], self.endian);
         self.offset += 4;
         if (!self.is_array) self.sig_idx += 1;
         return val != 0;
@@ -273,7 +275,7 @@ pub const MessageIter = struct {
         if (self.getArgType() != Type.uint16) return null;
         self.offset = types.alignOffset(self.offset, 2);
         if (self.offset + 2 > self.end_offset) return null;
-        const val = std.mem.readInt(u16, self.buf[self.offset..][0..2], .little);
+        const val = std.mem.readInt(u16, self.buf[self.offset..][0..2], self.endian);
         self.offset += 2;
         if (!self.is_array) self.sig_idx += 1;
         return val;
@@ -284,7 +286,7 @@ pub const MessageIter = struct {
         if (self.getArgType() != Type.int16) return null;
         self.offset = types.alignOffset(self.offset, 2);
         if (self.offset + 2 > self.end_offset) return null;
-        const val = @as(i16, @bitCast(std.mem.readInt(u16, self.buf[self.offset..][0..2], .little)));
+        const val = @as(i16, @bitCast(std.mem.readInt(u16, self.buf[self.offset..][0..2], self.endian)));
         self.offset += 2;
         if (!self.is_array) self.sig_idx += 1;
         return val;
@@ -295,7 +297,7 @@ pub const MessageIter = struct {
         if (self.getArgType() != Type.uint32) return null;
         self.offset = types.alignOffset(self.offset, 4);
         if (self.offset + 4 > self.end_offset) return null;
-        const val = std.mem.readInt(u32, self.buf[self.offset..][0..4], .little);
+        const val = std.mem.readInt(u32, self.buf[self.offset..][0..4], self.endian);
         self.offset += 4;
         if (!self.is_array) self.sig_idx += 1;
         return val;
@@ -306,7 +308,7 @@ pub const MessageIter = struct {
         if (self.getArgType() != Type.int32) return null;
         self.offset = types.alignOffset(self.offset, 4);
         if (self.offset + 4 > self.end_offset) return null;
-        const val = @as(i32, @bitCast(std.mem.readInt(u32, self.buf[self.offset..][0..4], .little)));
+        const val = @as(i32, @bitCast(std.mem.readInt(u32, self.buf[self.offset..][0..4], self.endian)));
         self.offset += 4;
         if (!self.is_array) self.sig_idx += 1;
         return val;
@@ -317,7 +319,7 @@ pub const MessageIter = struct {
         if (self.getArgType() != Type.uint64) return null;
         self.offset = types.alignOffset(self.offset, 8);
         if (self.offset + 8 > self.end_offset) return null;
-        const val = std.mem.readInt(u64, self.buf[self.offset..][0..8], .little);
+        const val = std.mem.readInt(u64, self.buf[self.offset..][0..8], self.endian);
         self.offset += 8;
         if (!self.is_array) self.sig_idx += 1;
         return val;
@@ -328,7 +330,7 @@ pub const MessageIter = struct {
         if (self.getArgType() != Type.int64) return null;
         self.offset = types.alignOffset(self.offset, 8);
         if (self.offset + 8 > self.end_offset) return null;
-        const val = @as(i64, @bitCast(std.mem.readInt(u64, self.buf[self.offset..][0..8], .little)));
+        const val = @as(i64, @bitCast(std.mem.readInt(u64, self.buf[self.offset..][0..8], self.endian)));
         self.offset += 8;
         if (!self.is_array) self.sig_idx += 1;
         return val;
@@ -339,7 +341,7 @@ pub const MessageIter = struct {
         if (self.getArgType() != Type.double) return null;
         self.offset = types.alignOffset(self.offset, 8);
         if (self.offset + 8 > self.end_offset) return null;
-        const bits = std.mem.readInt(u64, self.buf[self.offset..][0..8], .little);
+        const bits = std.mem.readInt(u64, self.buf[self.offset..][0..8], self.endian);
         const val: f64 = @bitCast(bits);
         self.offset += 8;
         if (!self.is_array) self.sig_idx += 1;
@@ -351,7 +353,7 @@ pub const MessageIter = struct {
         if (self.getArgType() != Type.unix_fd) return null;
         self.offset = types.alignOffset(self.offset, 4);
         if (self.offset + 4 > self.end_offset) return null;
-        const val = std.mem.readInt(u32, self.buf[self.offset..][0..4], .little);
+        const val = std.mem.readInt(u32, self.buf[self.offset..][0..4], self.endian);
         self.offset += 4;
         if (!self.is_array) self.sig_idx += 1;
         return val;
@@ -380,7 +382,7 @@ pub const MessageIter = struct {
 
         self.offset = types.alignOffset(self.offset, 4);
         if (self.offset + 4 > self.end_offset) return null;
-        const len = std.mem.readInt(u32, self.buf[self.offset..][0..4], .little);
+        const len = std.mem.readInt(u32, self.buf[self.offset..][0..4], self.endian);
         self.offset += 4;
 
         if (self.offset + len > self.end_offset) return null;
@@ -423,4 +425,22 @@ test "parseSingleType signature splitting" {
     try std.testing.expectEqualStrings("a{sv}", parseSingleType("a{sv}"));
     try std.testing.expectEqualStrings("a{sa{sv}}", parseSingleType("a{sa{sv}}"));
     try std.testing.expectEqualStrings("a(oa{sa{sv}})", parseSingleType("a(oa{sa{sv}})"));
+}
+
+test "MessageIter: Big-Endian decoding & safe sentinel string slicing" {
+    // uint32 (0x12345678 in BE) + int16 (-1234 in BE) + string "BlueZ"
+    const buf = [_]u8{
+        0x12, 0x34, 0x56, 0x78, // uint32
+        0xFB, 0x2E,             // int16: -1234 (0xFB2E)
+        0x00, 0x00,             // 2 bytes padding to align offset to 4 for string
+        0x00, 0x00, 0x00, 0x05, // string length = 5 (BE)
+        'B',  'l',  'u',  'e',  'Z', 0x00, // "BlueZ\0"
+    };
+
+    var it = MessageIter.initEndian(&buf, 0, buf.len, "uns", .big);
+    try std.testing.expectEqual(@as(u32, 0x12345678), it.getUInt32().?);
+    try std.testing.expectEqual(@as(i16, -1234), it.getInt16().?);
+    const s = it.getString().?;
+    try std.testing.expectEqualStrings("BlueZ", s);
+    try std.testing.expectEqual(@as(u8, 0), s[5]); // verified sentinel!
 }

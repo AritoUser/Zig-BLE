@@ -19,6 +19,10 @@ pub const FixedHeader = extern struct {
 
     pub const encoded_size: usize = 16;
 
+    pub fn getEndian(self: FixedHeader) std.builtin.Endian {
+        return if (self.endianness == 'B') .big else .little;
+    }
+
     pub fn decode(bytes: *const [16]u8) !FixedHeader {
         const endianness = bytes[0];
         if (endianness != 'l' and endianness != 'B') {
@@ -95,6 +99,8 @@ pub const HeaderFields = struct {
             return error.BufferTooSmall;
         }
 
+        const endian: std.builtin.Endian = if (msg_bytes.len > 0 and msg_bytes[0] == 'B') .big else .little;
+
         var offset: usize = FixedHeader.encoded_size;
         const end_offset = offset + fields_len;
 
@@ -129,38 +135,38 @@ pub const HeaderFields = struct {
             switch (field_code) {
                 HeaderField.path => {
                     if (val_type != Type.object_path) return error.InvalidHeaderFieldType;
-                    const val = try readStringSlice(msg_bytes, &offset, end_offset);
+                    const val = try readStringSlice(msg_bytes, &offset, end_offset, endian);
                     hf.path = val;
                 },
                 HeaderField.interface => {
                     if (val_type != Type.string) return error.InvalidHeaderFieldType;
-                    const val = try readStringSlice(msg_bytes, &offset, end_offset);
+                    const val = try readStringSlice(msg_bytes, &offset, end_offset, endian);
                     hf.interface = val;
                 },
                 HeaderField.member => {
                     if (val_type != Type.string) return error.InvalidHeaderFieldType;
-                    const val = try readStringSlice(msg_bytes, &offset, end_offset);
+                    const val = try readStringSlice(msg_bytes, &offset, end_offset, endian);
                     hf.member = val;
                 },
                 HeaderField.error_name => {
                     if (val_type != Type.string) return error.InvalidHeaderFieldType;
-                    const val = try readStringSlice(msg_bytes, &offset, end_offset);
+                    const val = try readStringSlice(msg_bytes, &offset, end_offset, endian);
                     hf.error_name = val;
                 },
                 HeaderField.reply_serial => {
                     if (val_type != Type.uint32) return error.InvalidHeaderFieldType;
                     if (offset + 4 > end_offset) return error.MalformedHeaderField;
-                    hf.reply_serial = std.mem.readInt(u32, msg_bytes[offset..][0..4], .little);
+                    hf.reply_serial = std.mem.readInt(u32, msg_bytes[offset..][0..4], endian);
                     offset += 4;
                 },
                 HeaderField.destination => {
                     if (val_type != Type.string) return error.InvalidHeaderFieldType;
-                    const val = try readStringSlice(msg_bytes, &offset, end_offset);
+                    const val = try readStringSlice(msg_bytes, &offset, end_offset, endian);
                     hf.destination = val;
                 },
                 HeaderField.sender => {
                     if (val_type != Type.string) return error.InvalidHeaderFieldType;
-                    const val = try readStringSlice(msg_bytes, &offset, end_offset);
+                    const val = try readStringSlice(msg_bytes, &offset, end_offset, endian);
                     hf.sender = val;
                 },
                 HeaderField.signature => {
@@ -177,14 +183,14 @@ pub const HeaderFields = struct {
                 HeaderField.unix_fds => {
                     if (val_type != Type.uint32) return error.InvalidHeaderFieldType;
                     if (offset + 4 > end_offset) return error.MalformedHeaderField;
-                    hf.unix_fds = std.mem.readInt(u32, msg_bytes[offset..][0..4], .little);
+                    hf.unix_fds = std.mem.readInt(u32, msg_bytes[offset..][0..4], endian);
                     offset += 4;
                 },
                 else => {
                     // Skip unknown header field:
                     // If string or object path:
                     if (val_type == Type.string or val_type == Type.object_path) {
-                        _ = try readStringSlice(msg_bytes, &offset, end_offset);
+                        _ = try readStringSlice(msg_bytes, &offset, end_offset, endian);
                     } else if (val_type == Type.uint32 or val_type == Type.boolean) {
                         offset += 4;
                     } else if (val_type == Type.uint64) {
@@ -200,10 +206,10 @@ pub const HeaderFields = struct {
         return hf;
     }
 
-    fn readStringSlice(bytes: []const u8, offset_ptr: *usize, max_offset: usize) ![]const u8 {
+    fn readStringSlice(bytes: []const u8, offset_ptr: *usize, max_offset: usize, endian: std.builtin.Endian) ![]const u8 {
         var off = offset_ptr.*;
         if (off + 4 > max_offset) return error.MalformedHeaderField;
-        const str_len = std.mem.readInt(u32, bytes[off..][0..4], .little);
+        const str_len = std.mem.readInt(u32, bytes[off..][0..4], endian);
         off += 4;
 
         if (off + str_len >= max_offset) return error.MalformedHeaderField;

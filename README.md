@@ -292,9 +292,9 @@ zig build test --summary all
 
 Output:
 ```
-Build Summary: 5/5 steps succeeded; 53/53 tests passed
+Build Summary: 5/5 steps succeeded; 54/54 tests passed
 test success
-+- run test 53 pass (53 total) 93ms MaxRSS:5M
++- run test 54 pass (54 total) 96ms MaxRSS:5M
 +- run test success 5ms MaxRSS:4M
 ```
 

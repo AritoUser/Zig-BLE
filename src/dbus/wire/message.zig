@@ -96,7 +96,7 @@ pub const Message = struct {
         const sig = self.header_fields.signature orelse "";
         const end_offset = body_offset + self.fixed_header.body_len;
 
-        return MessageIter.init(self.wire_bytes.getSlice(), body_offset, end_offset, sig);
+        return MessageIter.initEndian(self.wire_bytes.getSlice(), body_offset, end_offset, sig, self.fixed_header.getEndian());
     }
 
     /// Initializes a builder for appending arguments to this message.
@@ -243,7 +243,8 @@ pub const Message = struct {
         self.wire_bytes.clearRetainingCapacity();
 
         // 1. Temporary buffer for header fields a(yv) on the stack (zero heap allocations)
-        var stack_fields: [1024]u8 = undefined;
+        // 2048 bytes comfortably accommodates long object paths, interfaces, and signatures.
+        var stack_fields: [2048]u8 = undefined;
         var fba = std.heap.FixedBufferAllocator.init(&stack_fields);
         var fields_buf = ByteBuffer.init(fba.allocator());
         defer fields_buf.deinit();
