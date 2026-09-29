@@ -1,8 +1,8 @@
 # Zig-BLE: A Zero-Allocation, Native Bluetooth Low Energy & D-Bus Wire Protocol Stack for Embedded Linux
 
-**Technical White Paper | Version 1.0**  
+**Technical White Paper | Version 1.1**  
 **Author:** Attila Faust & The Zig-BLE Core Contributors  
-**Target Release:** Zig-BLE v0.1.1+ (Zig 0.16.0+)  
+**Target Release:** Zig-BLE v0.2.0+ (Zig 0.16.0+)  
 **Repository:** [github.com/AritoUser/Zig-BLE](https://github.com/AritoUser/Zig-BLE)  
 
 ---
@@ -39,6 +39,10 @@ This paper presents Zig-BLE, an autonomous, pure-Zig Bluetooth Low Energy stack 
    - 4.1 GATT Client Pipeline & Service Discovery
    - 4.2 GATT Server Hosting & Dynamic Object Tree Export
    - 4.3 High-Bandwidth MTU Pipe Streaming via File Descriptors
+   - 4.4 Pre-Built GATT Standard Profiles (HRP, BAS, ESS, NUS)
+   - 4.5 Proximity & Broadcast Frames: Apple iBeacon & Google Eddystone
+   - 4.6 Bluetooth 5.0+ Extended Advertising & LE Coded PHY (Long Range)
+   - 4.7 Direct Linux Kernel L2CAP Connection-Oriented Channels (CoC)
 5. [Empirical Microbenchmarks & Performance Evaluation](#5-empirical-microbenchmarks--performance-evaluation)
    - 5.1 Benchmark Methodology & Test Environment
    - 5.2 Microbenchmark Results
@@ -529,6 +533,54 @@ try writer.writeAll(firmware_chunk);
 ```
 Zig-BLE extracts this descriptor directly from the D-Bus message control buffer (`SCM_RIGHTS`) without calling intermediate C wrapper functions. The resulting socket delivers raw, wire-speed kernel throughput directly to the controller's L2CAP channel.
 
+### 4.4 Pre-Built GATT Standard Profiles (HRP, BAS, ESS, NUS)
+
+To eliminate boilerplate across telemetry applications, Zig-BLE v0.2.0 introduces dedicated, zero-allocation profile encoders and parsers conforming strictly to Bluetooth SIG profile specifications:
+
+1. **Heart Rate Service (HRP v1.0, `0x180D`)**:
+   - `HeartRateMeasurement`: Bit-packed flags (Bit 0: Heart Rate format 8/16-bit, Bits 1-2: Sensor Contact Status, Bit 3: Energy Expended Present, Bit 4: RR-Intervals Present).
+   - Parsing and encoding operate entirely on byte slices with zero heap allocations, decoding 16-bit RR-interval arrays and cumulative joules.
+2. **Battery Service (BAS v1.0, `0x180F`)**:
+   - `BatteryService.parseLevel()` and `encodeLevel()`: Enforces strictly bounded 0–100% state-of-charge values with range verification.
+3. **Environmental Sensing Service (ESS v1.0, `0x181A`)**:
+   - `Temperature`: 16-bit signed integer with 0.01 °C resolution ($-273.15$ °C to $+327.67$ °C).
+   - `Humidity`: 16-bit unsigned integer with 0.01 % resolution ($0.00$ % to $100.00$ %).
+   - `Pressure`: 32-bit unsigned integer with 0.1 Pa resolution ($0.0$ Pa to $429496729.5$ Pa).
+   - Provides zero-allocation conversion between raw wire fixed-point integers and standard floating-point representation (`f32` / `f64`).
+4. **Nordic UART Service (NUS)**:
+   - Full 128-bit vendor UUIDs: Primary Service `6E400001-B5A3-F393-E0A9-E50E24DCCA9E`, RX Characteristic `6E400002-...`, TX Characteristic `6E400003-...`.
+   - `PacketChunker`: A zero-allocation slice iterator that automatically fragments arbitrarily large stream buffers across negotiated ATT MTU boundaries ($N \le \text{MTU} - 3$), essential for streaming serial shells and high-frequency sensor bursts without buffer truncation.
+
+### 4.5 Proximity & Broadcast Frames: Apple iBeacon & Google Eddystone
+
+Beyond connection-oriented GATT profiles, Zig-BLE v0.2.0 incorporates native builders and decoders for industry-standard broadcast formats:
+
+1. **Apple iBeacon (`src/profiles/beacon.zig`)**:
+   - Standard 23-byte payload encoded into Manufacturer Specific Data (`0xFF`) under Apple's Company Identifier (`0x004C`).
+   - Byte layout: Type `0x02`, Sub-length `0x15` (21 bytes), 16-byte Big-Endian Proximity UUID, 2-byte Big-Endian Major, 2-byte Big-Endian Minor, and 1-byte 2's complement Measured RSSI Power at 1 meter.
+   - Zero-allocation validation via `AppleIBeacon.build()` and `AppleIBeacon.parse()`.
+2. **Google Eddystone**:
+   - Encoded under the standard 16-bit Service UUID `0xFEAA`.
+   - **Eddystone-UID**: 10-byte Namespace ID, 6-byte Instance ID, and calibrated TX Power at 0 meters.
+   - **Eddystone-URL**: Highly compressed URL encoding supporting RFC standard prefixes (`http://www.`, `https://www.`, `http://`, `https://`) and URI suffix expansion (`.com/`, `.org/`, `.edu/`, `.net/`, `.info/`, `.biz/`, `.io/`).
+   - **Eddystone-TLM (Telemetry)**: Unencrypted telemetry frame carrying battery millivolts, beacon temperature (8.8 fixed-point °C), advertising PDU count, and time-since-boot in 100-millisecond counter ticks.
+
+### 4.6 Bluetooth 5.0+ Extended Advertising & LE Coded PHY (Long Range)
+
+Zig-BLE v0.2.0 extends the advertising engine to support Bluetooth 5.0+ Extended Advertising and Secondary Advertising Channels via BlueZ's `LEAdvertisingManager1`:
+* **Secondary Channel Configuration**: Supports `.one_m` (1 Msym/s uncoded), `.two_m` (2 Msym/s high-throughput), and `.coded` (LE Coded PHY S=2 or S=8 for 1+ kilometer Long Range industrial transmission).
+* **Primary PHY Selection**: Allows specifying `.le_1m` or `.le_coded` for primary advertising packets on channels 37, 38, and 39.
+* **Interval Parsing & Control**: Exposes millisecond interval controls (`min_interval_ms`, `max_interval_ms`) dynamically mapped to BlueZ `MinInterval` / `MaxInterval` dictionary properties.
+
+### 4.7 Direct Linux Kernel L2CAP Connection-Oriented Channels (CoC)
+
+While GATT is ideal for small, structured attribute access, high-throughput point-to-point streaming (e.g., telemetry logs, binary blobs, raw sensor arrays) suffers from ATT packet header overhead and D-Bus IPC latency.
+
+Zig-BLE v0.2.0 introduces `L2capSocket` in `src/l2cap/socket.zig`:
+* **Kernel-Level Socket**: Opens a native Linux socket with domain `AF_BLUETOOTH` (`31`) and protocol `BTPROTO_L2CAP` (`0`).
+* **Protocol Service Multiplexer (PSM)**: Binds or connects directly to dynamic LE PSM endpoints ($0x1001 \dots 0xFFFF$) using the POSIX `sockaddr_l2` structure with `bdaddr_type = BDADDR_LE_PUBLIC` or `BDADDR_LE_RANDOM`.
+* **Zero-Allocation Streaming**: Provides direct POSIX `read()` and `write()` methods with zero buffer copies and deterministic kernel backpressure, achieving maximum physical BLE throughput.
+
 ---
 
 ## 5. Empirical Microbenchmarks & Performance Evaluation
@@ -671,19 +723,23 @@ Zig-BLE provides:
 
 Zig-BLE demonstrates that high-performance, complex system IPC and Bluetooth Low Energy orchestration can be achieved in a modern systems programming language without relying on legacy C libraries. 
 
-By implementing the D-Bus Wire Protocol from the ground up in 100% Pure Zig, Zig-BLE delivers:
+By implementing the D-Bus Wire Protocol from the ground up in 100% Pure Zig and expanding into high-level profiles and protocols in v0.2.0, Zig-BLE delivers:
 * **Elimination of C-toolchains & Sysroots**: True zero-friction cross-compilation for all Linux architectures.
 * **Zero-Heap, Zero-Copy Performance**: Sub-microsecond message dispatching, 135 Mop/s packet parsing, and zero memory fragmentation.
+* **Pre-Built GATT Standard Profiles**: Out-of-the-box support for Heart Rate (HRP v1.0), Battery Service (BAS v1.0), Environmental Sensing (ESS v1.0), and Nordic UART (NUS) with zero-allocation MTU `PacketChunker`.
+* **Proximity & Telemetry Broadcasts**: Native encoders and decoders for 23-byte Apple iBeacon and Google Eddystone (UID, URL, TLM).
+* **Bluetooth 5.0+ Extended Advertising & LE Coded PHY**: Long-range secondary channels and dynamic interval configuration.
+* **Direct Kernel L2CAP CoC Sockets**: High-throughput point-to-point streaming via `AF_BLUETOOTH` and `BTPROTO_L2CAP`.
 * **Formal Safety**: Robust bounds checking, dynamic bi-endian decoding, safe sentinel string slicing, and fuzz-tested stability.
 * **Production-Ready BlueZ Interoperability**: Full support for Adapter management, Device tracking, GATT Client/Server profiles, and high-throughput `SCM_RIGHTS` file descriptor streaming.
 
 ### 8.2 Future Roadmap
 
 The Zig-BLE project is actively expanding along several strategic architectural vectors:
-1. **Native Raw HCI Sockets (`AF_BLUETOOTH`)**: An optional direct kernel HCI socket backend (`hci_sock.zig`) that bypasses the BlueZ daemon entirely for ultra-low-footprint bare-metal embedded Linux deployments.
-2. **Bluetooth 5.4 PAwR (Periodic Advertising with Responses)**: Support for bidirectional large-scale sensor networks and Electronic Shelf Labels (ESL).
-3. **LE Audio & Isochronous Channels (CIS / BIS)**: Native support for LC3 audio streaming and broadcast audio streams directly over kernel file descriptors.
-4. **L2CAP Connection-Oriented Channels (CoC)**: Standardized high-speed point-to-point data transport channels for custom industrial protocols.
+1. **Native Raw HCI Sockets (`AF_BLUETOOTH` / `BTPROTO_HCI`)**: An optional direct kernel HCI socket backend (`hci_sock.zig`, `HCI_CHANNEL_USER`) that bypasses the BlueZ daemon entirely for ultra-low-footprint bare-metal embedded Linux deployments.
+2. **Cross-Platform Native Backends (Windows & macOS)**: Developing native Windows WinRT COM bindings (`Windows.Devices.Bluetooth`) and macOS `CoreBluetooth` bindings to provide a seamless cross-platform BLE API.
+3. **Bluetooth 5.4 PAwR (Periodic Advertising with Responses)**: Support for bidirectional large-scale sensor networks and Electronic Shelf Labels (ESL).
+4. **LE Audio & Isochronous Channels (CIS / BIS)**: Native support for LC3 audio streaming and broadcast audio streams directly over kernel file descriptors.
 
 ---
 

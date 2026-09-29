@@ -1,6 +1,6 @@
 # Zig-BLE: Architecture & Protocol Manual
 
-**Engineering Specification & Systems Reference | Version 1.0**  
+**Engineering Specification & Systems Reference | Version 1.1 (v0.2.0 Release)**  
 **Module:** `Zig_BLE`  
 **Compatibility:** Zig 0.16.0+ | Linux BlueZ 5.x / Native POSIX  
 **Repository:** [github.com/AritoUser/Zig-BLE](https://github.com/AritoUser/Zig-BLE)  
@@ -273,6 +273,85 @@ Legacy advertising packets (31 bytes max) and Extended Advertising PDUs comprise
 | `0x00` | **Length** | `1 Byte` | Total length of remaining chunk ($N + 1$) |
 | `0x01` | **AD Type** | `1 Byte` | Assigned AD Type code (e.g., `0x01`=Flags, `0x09`=Complete Name, `0xFF`=Mfg) |
 | `0x02 .. N+1` | **AD Data** | `$N$ Bytes` | Payload data (Manufacturer ID, UTF-8 Name, UUID list) |
+
+### 4.6 Apple iBeacon Wire Specification (23-Byte Payload)
+
+Transmitted inside the Manufacturer Specific Data (`AD Type 0xFF`) record with Apple's Company Identifier (`0x004C` Little-Endian: `[0x4C, 0x00]`):
+
+| Byte Offset | Field Name | Wire Type | Expected Value / Range | Description |
+| :---: | :--- | :---: | :---: | :--- |
+| `0x00` | **Beacon Sub-Type** | `u8` | `0x02` | Proximity Beacon Type Code |
+| `0x01` | **Remaining Length** | `u8` | `0x15` (`21` bytes) | Payload size through Measured Power |
+| `0x02 .. 0x11` | **Proximity UUID** | `[16]u8` | 128-bit Big-Endian | Deployment / Region UUID |
+| `0x12 .. 0x13` | **Major ID** | `u16` | Big-Endian `u16` | Sub-region or site identifier |
+| `0x14 .. 0x15` | **Minor ID** | `u16` | Big-Endian `u16` | Specific beacon or point identifier |
+| `0x16` | **Measured Power** | `i8` | 2's Complement `i8` | Calibrated RSSI in dBm at 1 meter distance |
+
+### 4.7 Google Eddystone Frame Specifications
+
+Eddystone beacons broadcast under the 16-bit Service UUID `0xFEAA` (`AD Type 0x16` Service Data 16-bit UUID):
+
+#### Eddystone-UID (`Frame Type 0x00`)
+| Byte Offset | Field Name | Size | Description |
+| :---: | :--- | :---: | :--- |
+| `0x00` | **Frame Type** | `1 Byte` | `0x00` |
+| `0x01` | **Ranging Data** | `1 Byte` | Calibrated TX power in dBm at 0 meters |
+| `0x02 .. 0x0B` | **Namespace ID** | `10 Bytes` | Unique organizational identifier |
+| `0x0C .. 0x11` | **Instance ID** | `6 Bytes` | Specific beacon device identifier |
+| `0x12 .. 0x13` | **Reserved** | `2 Bytes` | `0x00, 0x00` |
+
+#### Eddystone-URL (`Frame Type 0x10`)
+| Byte Offset | Field Name | Size | Description |
+| :---: | :--- | :---: | :--- |
+| `0x00` | **Frame Type** | `1 Byte` | `0x10` |
+| `0x01` | **TX Power** | `1 Byte` | Calibrated TX power in dBm at 0 meters |
+| `0x02` | **URL Scheme** | `1 Byte` | `0x00`=http://www., `0x01`=https://www., `0x02`=http://, `0x03`=https:// |
+| `0x03 .. end` | **Encoded URL** | `$N$ Bytes` | ASCII characters with single-byte suffix expansion (e.g., `0x00`=`.com/`) |
+
+#### Eddystone-TLM (`Frame Type 0x20`)
+| Byte Offset | Field Name | Size | Description |
+| :---: | :--- | :---: | :--- |
+| `0x00` | **Frame Type** | `1 Byte` | `0x20` |
+| `0x01` | **Version** | `1 Byte` | `0x00` (Unencrypted TLM) |
+| `0x02 .. 0x03` | **Battery Voltage** | `2 Bytes` | Big-Endian `u16` in millivolts (mV) |
+| `0x04 .. 0x05` | **Beacon Temperature**| `2 Bytes` | Big-Endian Fixed-Point 8.8 signed integer in °C |
+| `0x06 .. 0x09` | **ADV Packet Count** | `4 Bytes` | Big-Endian `u32` running counter since boot |
+| `0x0A .. 0x0D` | **SEC01 Time (Uptime)**| `4 Bytes` | Big-Endian `u32` in 0.1-second intervals since boot |
+
+### 4.8 GATT Standard Profiles Binary Layouts
+
+#### Heart Rate Measurement (`UUID 0x2A37`)
+* **Byte 0 (Flags)**:
+  * Bit 0: Value Format (`0` = UINT8 BPM, `1` = UINT16 BPM)
+  * Bits 1–2: Sensor Contact Status (`0b10` = Not detected, `0b11` = Detected)
+  * Bit 3: Energy Expended Status (`1` = Present as 16-bit Joules)
+  * Bit 4: RR-Interval Status (`1` = One or more 16-bit RR-intervals present)
+* **Byte 1 (+2)**: Heart rate magnitude (8-bit or 16-bit Little-Endian)
+* **Subsequent bytes**: Optional Energy Expended (`u16` Little-Endian) and sequence of RR-intervals (`u16` Little-Endian in 1/1024-second units).
+
+#### Environmental Sensing Service (`UUID 0x181A`)
+* **Temperature (`0x2A6E`)**: Signed 16-bit integer (`i16` Little-Endian), scaling factor $10^{-2}$ ($0.01$ °C).
+* **Humidity (`0x2A6F`)**: Unsigned 16-bit integer (`u16` Little-Endian), scaling factor $10^{-2}$ ($0.01$ %).
+* **Pressure (`0x2A6D`)**: Unsigned 32-bit integer (`u32` Little-Endian), scaling factor $10^{-1}$ ($0.1$ Pa).
+
+### 4.9 Linux Kernel L2CAP Connection-Oriented Channels (CoC)
+
+For point-to-point binary transport bypassing ATT/GATT MTU ceilings, Zig-BLE communicates over native Linux `AF_BLUETOOTH` sockets (`BTPROTO_L2CAP`):
+
+```
++-----------------------------------------------------------------------+
+| sockaddr_l2 (POSIX Socket Address Structure)                          |
+|                                                                       |
+|  Offset  Size   Field Name         Value / Description                |
+|  +00     2 B    sa_family          AF_BLUETOOTH (31)                  |
+|  +02     2 B    l2_psm             Protocol Service Multiplexer (LE)  |
+|  +04     6 B    l2_bdaddr          Remote Bluetooth MAC (Little-Endian)|
+|  +10     2 B    l2_cid             Fixed Channel ID (0 for dynamic)   |
+|  +12     1 B    l2_bdaddr_type     1 = BDADDR_LE_PUBLIC, 2 = RANDOM  |
++-----------------------------------------------------------------------+
+```
+
+Credit-based flow control is managed transparently by the Linux kernel Bluetooth subsystem (`l2cap_core.ko`), ensuring zero packet loss and automatic TCP-like stream backpressure.
 
 ---
 
