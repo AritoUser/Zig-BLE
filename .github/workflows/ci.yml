@@ -61,11 +61,11 @@ jobs:
 
       - name: Setup Zig 0.16.0 (Windows)
         if: runner.os == 'Windows'
-        shell: bash
         run: |
-          curl -sLO https://ziglang.org/download/0.16.0/zig-x86_64-windows-0.16.0.zip
-          unzip -q zig-x86_64-windows-0.16.0.zip
-          echo "$PWD/zig-x86_64-windows-0.16.0" >> $GITHUB_PATH
+          Invoke-WebRequest -Uri "https://ziglang.org/download/0.16.0/zig-x86_64-windows-0.16.0.zip" -OutFile "zig.zip"
+          Expand-Archive -Path "zig.zip" -DestinationPath "."
+          $zigPath = (Resolve-Path "zig-x86_64-windows-0.16.0").Path
+          "$zigPath" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
       - name: Verify Zig Version
         run: zig version
