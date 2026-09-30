@@ -140,13 +140,11 @@ pub const Advertisement = struct {
             }
         };
         const ctx = PredicateContext{ .reg_serial = reg_serial, .adv_path = self.object_path[0..self.object_path_len :0] };
-        _ = ctx;
 
         // Event loop until confirmation or error (up to 5 seconds)
         var iters: usize = 0;
         while (iters < 50) : (iters += 1) {
-            _ = self.conn.pollSocket(100);
-            while (self.conn.popMessage()) |incoming| {
+            while (self.conn.popMatching(ctx, PredicateContext.isMatch)) |incoming| {
                 var inc = incoming;
                 defer inc.deinit();
                 const msg_type = inc.getMessageType();
@@ -163,6 +161,7 @@ pub const Advertisement = struct {
                     }
                 }
             }
+            _ = self.conn.pollSocket(100);
         }
 
         return error.Timeout;

@@ -285,20 +285,29 @@ pub const GattCharacteristic = struct {
         step_ms: c_int,
     ) !usize {
         if (builtin.os.tag != .linux) return 0;
+        const PredicateContext = struct {
+            char_path: [:0]const u8,
+            fn isMatch(ctx: @This(), msg: *const Message) bool {
+                if (parseNotification(msg)) |ev| {
+                    return std.mem.eql(u8, ev.characteristic_path, ctx.char_path);
+                }
+                return false;
+            }
+        };
+        const ctx = PredicateContext{ .char_path = self.getObjectPath() };
         var packet_count: usize = 0;
         var iters: usize = 0;
 
         while (iters < max_iterations) : (iters += 1) {
-            _ = self.conn.pollSocket(step_ms);
-            while (self.conn.popMessage()) |msg| {
-                defer msg.deinit();
-                if (parseNotification(&msg)) |ev| {
-                    if (std.mem.eql(u8, ev.characteristic_path, self.getObjectPath())) {
-                        packet_count += 1;
-                        callback(context, ev.data);
-                    }
+            while (self.conn.popMatching(ctx, PredicateContext.isMatch)) |msg| {
+                var m = msg;
+                defer m.deinit();
+                if (parseNotification(&m)) |ev| {
+                    packet_count += 1;
+                    callback(context, ev.data);
                 }
             }
+            _ = self.conn.pollSocket(step_ms);
         }
         return packet_count;
     }

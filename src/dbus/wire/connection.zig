@@ -630,6 +630,14 @@ pub const Connection = struct {
         var received_fds: [8]std.posix.fd_t = [_]std.posix.fd_t{-1} ** 8;
         var fds_count: usize = 0;
 
+        errdefer {
+            for (received_fds[0..fds_count]) |fd| {
+                if (fd >= 0) {
+                    _ = std.posix.system.close(fd);
+                }
+            }
+        }
+
         if (self.supports_unix_fd) {
             const res = try self.socket.recvWithFds(&hdr_bytes, &received_fds);
             fds_count = res.fds_read;
@@ -638,14 +646,6 @@ pub const Connection = struct {
             }
         } else {
             try self.socket.readExact(&hdr_bytes);
-        }
-
-        errdefer {
-            for (received_fds[0..fds_count]) |fd| {
-                if (fd >= 0) {
-                    _ = std.posix.system.close(fd);
-                }
-            }
         }
 
         const fixed_hdr = try FixedHeader.decode(&hdr_bytes);
