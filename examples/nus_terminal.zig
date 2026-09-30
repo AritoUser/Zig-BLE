@@ -15,7 +15,7 @@ pub fn main() !void {
 
     // Demonstrate PacketChunker on all platforms
     std.debug.print("1. PacketChunker Demonstration (Payload Slicing across 20-Byte BLE MTUs):\n", .{});
-    const sample_message = "Zig-BLE v0.2.0: High-performance BLE stack with Nordic UART and L2CAP streaming!";
+    const sample_message = "Zig-BLE v0.3.0: High-performance BLE stack with Nordic UART and L2CAP streaming!";
     var chunker = Zig_BLE.NordicUart.PacketChunker.init(sample_message, 20);
     var chunk_idx: usize = 1;
     while (chunker.next()) |chunk| {

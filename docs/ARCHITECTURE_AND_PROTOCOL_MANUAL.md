@@ -1,6 +1,6 @@
 # Zig-BLE: Architecture & Protocol Manual
 
-**Engineering Specification & Systems Reference | Version 1.1 (v0.2.0 Release)**  
+**Engineering Specification & Systems Reference | Version 1.2 (v0.3.0 Release)**  
 **Module:** `Zig_BLE`  
 **Compatibility:** Zig 0.16.0+ | Linux BlueZ 5.x / Native POSIX  
 **Repository:** [github.com/AritoUser/Zig-BLE](https://github.com/AritoUser/Zig-BLE)  

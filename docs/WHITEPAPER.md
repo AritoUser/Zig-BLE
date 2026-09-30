@@ -1,8 +1,8 @@
 # Zig-BLE: A Zero-Allocation, Native Bluetooth Low Energy & D-Bus Wire Protocol Stack for Embedded Linux
 
-**Technical White Paper | Version 1.1**  
+**Technical White Paper | Version 1.2**  
 **Author:** Attila Faust & The Zig-BLE Core Contributors  
-**Target Release:** Zig-BLE v0.2.0+ (Zig 0.16.0+)  
+**Target Release:** Zig-BLE v0.3.0+ (Zig 0.16.0+)  
 **Repository:** [github.com/AritoUser/Zig-BLE](https://github.com/AritoUser/Zig-BLE)  
 
 ---

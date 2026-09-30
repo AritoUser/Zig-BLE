@@ -93,7 +93,7 @@ Or for local development:
 // build.zig.zon
 .{
     .name = .my_app,
-    .version = "0.2.0",
+    .version = "0.3.0",
     .dependencies = .{
         .zig_ble = .{
             .path = "path/to/Zig-BLE",
