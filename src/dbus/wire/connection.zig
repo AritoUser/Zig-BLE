@@ -83,32 +83,53 @@ pub const Mutex = struct {
 
     const UNLOCKED: u32 = 0;
     const LOCKED: u32 = 1;
+    const CONTENDED: u32 = 2;
 
     pub fn lock(self: *Mutex) void {
         // Fast path: try to acquire uncontended lock
-        if (self.state.cmpxchgWeak(UNLOCKED, LOCKED, .acquire, .monotonic) == null) {
-            return;
+        var c = self.state.cmpxchgWeak(UNLOCKED, LOCKED, .acquire, .monotonic) orelse return;
+
+        // Brief spin loop to avoid syscall overhead on short critical sections
+        var spins: usize = 0;
+        while (spins < 16) : (spins += 1) {
+            if (c == UNLOCKED) {
+                c = self.state.cmpxchgWeak(UNLOCKED, LOCKED, .acquire, .monotonic) orelse return;
+            }
+            std.atomic.spinLoopHint();
+            c = self.state.load(.monotonic);
         }
 
-        var spins: usize = 0;
-        while (true) {
-            if (self.state.load(.monotonic) == UNLOCKED) {
-                if (self.state.cmpxchgWeak(UNLOCKED, LOCKED, .acquire, .monotonic) == null) {
-                    return;
-                }
-            }
+        // Transition to CONTENDED state
+        if (c != CONTENDED) {
+            c = self.state.swap(CONTENDED, .acquire);
+        }
 
-            if (spins < 64) {
-                std.atomic.spinLoopHint();
-                spins += 1;
+        // Put thread to sleep in OS kernel (0% CPU on Linux) until unlocked
+        while (c != UNLOCKED) {
+            if (builtin.os.tag == .linux) {
+                _ = std.os.linux.futex_4arg(
+                    &self.state.raw,
+                    .{ .cmd = .WAIT, .private = true },
+                    CONTENDED,
+                    null,
+                );
             } else {
                 std.Thread.yield() catch {};
             }
+            c = self.state.swap(CONTENDED, .acquire);
         }
     }
 
     pub fn unlock(self: *Mutex) void {
-        self.state.store(UNLOCKED, .release);
+        if (self.state.swap(UNLOCKED, .release) == CONTENDED) {
+            if (builtin.os.tag == .linux) {
+                _ = std.os.linux.futex_3arg(
+                    &self.state.raw,
+                    .{ .cmd = .WAKE, .private = true },
+                    1,
+                );
+            }
+        }
     }
 
     pub fn tryLock(self: *Mutex) bool {
@@ -124,7 +145,8 @@ pub const Connection = struct {
     incoming_queue: List(Message),
     queue_head: usize = 0,
     supports_unix_fd: bool = false,
-    mutex: Mutex = .{},
+    write_mutex: Mutex = .{},
+    read_mutex: Mutex = .{},
 
     /// Connects to the D-Bus system bus and authenticates.
     pub fn initSystem() DBusError!Connection {
@@ -181,8 +203,10 @@ pub const Connection = struct {
     }
 
     pub fn deinit(self: *Connection) void {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        self.write_mutex.lock();
+        defer self.write_mutex.unlock();
+        self.read_mutex.lock();
+        defer self.read_mutex.unlock();
         while (self.popMessageUnlocked()) |msg| {
             var m = msg;
             m.deinit();
@@ -220,8 +244,8 @@ pub const Connection = struct {
 
     /// Allocates the next unique serial number for a message.
     pub fn getNextSerial(self: *Connection) u32 {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        self.write_mutex.lock();
+        defer self.write_mutex.unlock();
         return self.getNextSerialUnlocked();
     }
 
@@ -269,8 +293,8 @@ pub const Connection = struct {
     /// Sends a message asynchronously and returns the allocated serial number.
     /// Supports automatic UNIX file descriptor passing (SCM_RIGHTS).
     pub fn sendWithSerial(self: *Connection, msg: *Message) DBusError!u32 {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        self.write_mutex.lock();
+        defer self.write_mutex.unlock();
         return self.sendWithSerialUnlocked(msg);
     }
 
@@ -295,14 +319,38 @@ pub const Connection = struct {
     /// Sends a message synchronously and blocks waiting for the reply (with timeout).
     /// Signals and other messages arriving in the interim are queued!
     pub fn sendMessage(self: *Connection, msg: *Message, timeout_ms: i32) DBusError!Message {
-        self.mutex.lock();
-        defer self.mutex.unlock();
-        return self.sendMessageUnlocked(msg, timeout_ms);
-    }
+        // 1. Send request under write_mutex, release immediately so other threads can send
+        const expected_serial = blk: {
+            self.write_mutex.lock();
+            defer self.write_mutex.unlock();
+            break :blk try self.sendWithSerialUnlocked(msg);
+        };
 
-    fn sendMessageUnlocked(self: *Connection, msg: *Message, timeout_ms: i32) DBusError!Message {
-        const expected_serial = try self.sendWithSerialUnlocked(msg);
+        // 2. Poll for reply under read_mutex
+        self.read_mutex.lock();
+        defer self.read_mutex.unlock();
 
+        // 2a. Check if matching reply is already in the queue
+        var idx = self.queue_head;
+        while (idx < self.incoming_queue.len) : (idx += 1) {
+            const candidate = self.incoming_queue.items[idx];
+            if (candidate.fixed_header.msg_type == .method_return or candidate.fixed_header.msg_type == .error_reply) {
+                if (candidate.getReplySerial() == expected_serial) {
+                    std.mem.copyForwards(Message, self.incoming_queue.items[idx .. self.incoming_queue.len - 1], self.incoming_queue.items[idx + 1 .. self.incoming_queue.len]);
+                    self.incoming_queue.len -= 1;
+                    if (self.queue_head >= self.incoming_queue.len) {
+                        self.incoming_queue.clearRetainingCapacity();
+                        self.queue_head = 0;
+                    }
+                    if (candidate.fixed_header.msg_type == .error_reply) {
+                        return mapDBusError(candidate.getErrorName());
+                    }
+                    return candidate;
+                }
+            }
+        }
+
+        // 2b. Poll socket until reply arrives or timeout expires
         const deadline = getMonotonicMs() + @as(i64, timeout_ms);
 
         while (true) {
@@ -433,8 +481,8 @@ pub const Connection = struct {
 
     /// Pops the next message from the internal receive queue or socket.
     pub fn popMessage(self: *Connection) ?Message {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        self.read_mutex.lock();
+        defer self.read_mutex.unlock();
         return self.popMessageUnlocked();
     }
 
@@ -459,8 +507,8 @@ pub const Connection = struct {
 
     /// Reads incoming data from the D-Bus socket (waits up to timeout_ms).
     pub fn readWrite(self: *Connection, timeout_ms: i32) bool {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        self.read_mutex.lock();
+        defer self.read_mutex.unlock();
         return self.readWriteUnlocked(timeout_ms);
     }
 

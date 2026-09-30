@@ -170,5 +170,5 @@ test "Peripheral: initialization with config" {
         .local_name = "Test-Device",
     }, .{});
     try std.testing.expectEqualStrings("/org/bluez/hci0", p.adapter_path[0..p.adapter_path_len]);
-    try std.testing.expect(!p.is_running);
+    try std.testing.expect(!p.is_running.load(.acquire));
 }
