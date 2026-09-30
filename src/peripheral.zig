@@ -43,7 +43,7 @@ pub const Peripheral = struct {
     gatt_app: GattApplication,
     agent: Agent,
     enable_agent: bool,
-    is_running: bool = false,
+    is_running: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
 
     thread: ?std.Thread = null,
     should_stop: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
@@ -60,7 +60,7 @@ pub const Peripheral = struct {
             .gatt_app = GattApplication.init(conn, adapter_path, options.app_path),
             .agent = Agent.init(conn, options.agent_path, options.agent_capability),
             .enable_agent = options.enable_agent,
-            .is_running = false,
+            .is_running = std.atomic.Value(bool).init(false),
             .thread = null,
             .should_stop = std.atomic.Value(bool).init(false),
         };
@@ -98,7 +98,7 @@ pub const Peripheral = struct {
             self.agent.register() catch {};
         }
 
-        self.is_running = true;
+        self.is_running.store(true, .release);
     }
 
     fn threadWorker(self: *Peripheral) void {
@@ -120,7 +120,7 @@ pub const Peripheral = struct {
     /// Processes incoming client requests (read, write, notify, pairing, advertising).
     pub fn step(self: *Peripheral, timeout_ms: i32) !void {
         if (builtin.os.tag != .linux) return;
-        if (!self.is_running) return;
+        if (!self.is_running.load(.acquire)) return;
 
         _ = self.conn.pollSocket(timeout_ms);
         while (self.conn.popMessage()) |msg| {
@@ -148,7 +148,7 @@ pub const Peripheral = struct {
         }
 
         if (builtin.os.tag != .linux) return;
-        if (!self.is_running) return;
+        if (!self.is_running.load(.acquire)) return;
 
         if (self.enable_agent) {
             self.agent.unregister() catch {};
@@ -156,7 +156,7 @@ pub const Peripheral = struct {
         self.advertisement.unregister() catch {};
         self.gatt_app.unregister() catch {};
 
-        self.is_running = false;
+        self.is_running.store(false, .release);
     }
 };
 

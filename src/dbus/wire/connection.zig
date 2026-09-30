@@ -78,6 +78,44 @@ pub const ReleaseNameReply = enum(u32) {
     not_owner = 3,
 };
 
+pub const Mutex = struct {
+    state: std.atomic.Value(u32) = std.atomic.Value(u32).init(UNLOCKED),
+
+    const UNLOCKED: u32 = 0;
+    const LOCKED: u32 = 1;
+
+    pub fn lock(self: *Mutex) void {
+        // Fast path: try to acquire uncontended lock
+        if (self.state.cmpxchgWeak(UNLOCKED, LOCKED, .acquire, .monotonic) == null) {
+            return;
+        }
+
+        var spins: usize = 0;
+        while (true) {
+            if (self.state.load(.monotonic) == UNLOCKED) {
+                if (self.state.cmpxchgWeak(UNLOCKED, LOCKED, .acquire, .monotonic) == null) {
+                    return;
+                }
+            }
+
+            if (spins < 64) {
+                std.atomic.spinLoopHint();
+                spins += 1;
+            } else {
+                std.Thread.yield() catch {};
+            }
+        }
+    }
+
+    pub fn unlock(self: *Mutex) void {
+        self.state.store(UNLOCKED, .release);
+    }
+
+    pub fn tryLock(self: *Mutex) bool {
+        return self.state.cmpxchgStrong(UNLOCKED, LOCKED, .acquire, .monotonic) == null;
+    }
+};
+
 pub const Connection = struct {
     allocator: std.mem.Allocator,
     socket: Socket,
@@ -86,6 +124,7 @@ pub const Connection = struct {
     incoming_queue: List(Message),
     queue_head: usize = 0,
     supports_unix_fd: bool = false,
+    mutex: Mutex = .{},
 
     /// Connects to the D-Bus system bus and authenticates.
     pub fn initSystem() DBusError!Connection {
@@ -142,7 +181,9 @@ pub const Connection = struct {
     }
 
     pub fn deinit(self: *Connection) void {
-        while (self.popMessage()) |msg| {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        while (self.popMessageUnlocked()) |msg| {
             var m = msg;
             m.deinit();
         }
@@ -179,6 +220,12 @@ pub const Connection = struct {
 
     /// Allocates the next unique serial number for a message.
     pub fn getNextSerial(self: *Connection) u32 {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        return self.getNextSerialUnlocked();
+    }
+
+    fn getNextSerialUnlocked(self: *Connection) u32 {
         const s = self.next_serial;
         self.next_serial +%= 1;
         if (self.next_serial == 0) self.next_serial = 1;
@@ -222,7 +269,13 @@ pub const Connection = struct {
     /// Sends a message asynchronously and returns the allocated serial number.
     /// Supports automatic UNIX file descriptor passing (SCM_RIGHTS).
     pub fn sendWithSerial(self: *Connection, msg: *Message) DBusError!u32 {
-        const serial = self.getNextSerial();
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        return self.sendWithSerialUnlocked(msg);
+    }
+
+    fn sendWithSerialUnlocked(self: *Connection, msg: *Message) DBusError!u32 {
+        const serial = self.getNextSerialUnlocked();
         const wire = msg.finalize(serial) catch return DBusError.NoMemory;
 
         if (msg.fd_count > 0) {
@@ -242,7 +295,13 @@ pub const Connection = struct {
     /// Sends a message synchronously and blocks waiting for the reply (with timeout).
     /// Signals and other messages arriving in the interim are queued!
     pub fn sendMessage(self: *Connection, msg: *Message, timeout_ms: i32) DBusError!Message {
-        const expected_serial = try self.sendWithSerial(msg);
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        return self.sendMessageUnlocked(msg, timeout_ms);
+    }
+
+    fn sendMessageUnlocked(self: *Connection, msg: *Message, timeout_ms: i32) DBusError!Message {
+        const expected_serial = try self.sendWithSerialUnlocked(msg);
 
         const deadline = getMonotonicMs() + @as(i64, timeout_ms);
 
@@ -374,6 +433,12 @@ pub const Connection = struct {
 
     /// Pops the next message from the internal receive queue or socket.
     pub fn popMessage(self: *Connection) ?Message {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        return self.popMessageUnlocked();
+    }
+
+    fn popMessageUnlocked(self: *Connection) ?Message {
         // 1. Service messages from internal queue first
         if (self.queue_head < self.incoming_queue.len) {
             const msg = self.incoming_queue.items[self.queue_head];
@@ -394,6 +459,14 @@ pub const Connection = struct {
 
     /// Reads incoming data from the D-Bus socket (waits up to timeout_ms).
     pub fn readWrite(self: *Connection, timeout_ms: i32) bool {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        return self.readWriteUnlocked(timeout_ms);
+    }
+
+    fn readWriteUnlocked(self: *Connection, timeout_ms: i32) bool {
+        if (self.queue_head < self.incoming_queue.len) return true;
+
         const has_data = self.socket.pollRead(timeout_ms) catch return false;
         if (!has_data) return false;
 
@@ -497,3 +570,36 @@ fn mapDBusError(error_name: ?[]const u8) DBusError {
     if (std.mem.endsWith(u8, name, "Timeout")) return DBusError.Timeout;
     return DBusError.Failed;
 }
+
+test "Connection: Mutex mutual exclusion" {
+    var mutex = Mutex{};
+    try std.testing.expect(mutex.tryLock());
+    try std.testing.expect(!mutex.tryLock());
+    mutex.unlock();
+    try std.testing.expect(mutex.tryLock());
+    mutex.unlock();
+
+    var counter: u32 = 0;
+    const Worker = struct {
+        fn run(m: *Mutex, c: *u32) void {
+            for (0..1000) |_| {
+                m.lock();
+                c.* += 1;
+                m.unlock();
+            }
+        }
+    };
+
+    var t1 = try std.Thread.spawn(.{}, Worker.run, .{ &mutex, &counter });
+    var t2 = try std.Thread.spawn(.{}, Worker.run, .{ &mutex, &counter });
+    var t3 = try std.Thread.spawn(.{}, Worker.run, .{ &mutex, &counter });
+    var t4 = try std.Thread.spawn(.{}, Worker.run, .{ &mutex, &counter });
+
+    t1.join();
+    t2.join();
+    t3.join();
+    t4.join();
+
+    try std.testing.expectEqual(@as(u32, 4000), counter);
+}
+
