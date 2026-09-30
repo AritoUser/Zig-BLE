@@ -285,10 +285,13 @@ pub const Socket = struct {
 
         const ret = try std.posix.poll(&pfd, timeout_ms);
         if (ret > 0) {
+            if ((pfd[0].revents & std.posix.POLL.IN) != 0) {
+                return true;
+            }
             if ((pfd[0].revents & (std.posix.POLL.ERR | std.posix.POLL.HUP | std.posix.POLL.NVAL)) != 0) {
                 return error.ConnectionReset;
             }
-            return (pfd[0].revents & std.posix.POLL.IN) != 0;
+            return false;
         }
         return false;
     }

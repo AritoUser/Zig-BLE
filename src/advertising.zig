@@ -140,15 +140,16 @@ pub const Advertisement = struct {
             }
         };
         const ctx = PredicateContext{ .reg_serial = reg_serial, .adv_path = self.object_path[0..self.object_path_len :0] };
+        _ = ctx;
 
         // Event loop until confirmation or error (up to 5 seconds)
         var iters: usize = 0;
         while (iters < 50) : (iters += 1) {
-            while (self.conn.popMatching(ctx, PredicateContext.isMatch)) |incoming| {
+            _ = self.conn.pollSocket(100);
+            while (self.conn.popMessage()) |incoming| {
                 var inc = incoming;
                 defer inc.deinit();
                 const msg_type = inc.getMessageType();
-
                 if (msg_type == 1) { // DBUS_MESSAGE_TYPE_METHOD_CALL
                     _ = try self.processMessage(&inc);
                 } else if (msg_type == 2) { // DBUS_MESSAGE_TYPE_METHOD_RETURN
@@ -162,7 +163,6 @@ pub const Advertisement = struct {
                     }
                 }
             }
-            _ = self.conn.pollSocket(100);
         }
 
         return error.Timeout;
@@ -215,8 +215,10 @@ pub const Advertisement = struct {
             // 1. Type
             try dict.appendDictString(BlueZ.LEAdvertisement1.Properties.Type, self.config.type.toSlice());
 
-            // 2. Discoverable
-            try dict.appendDictBool(BlueZ.LEAdvertisement1.Properties.Discoverable, self.config.discoverable);
+            // 2. Discoverable (only valid for peripheral type; BlueZ rejects flags for broadcast)
+            if (self.config.type == .peripheral) {
+                try dict.appendDictBool(BlueZ.LEAdvertisement1.Properties.Discoverable, self.config.discoverable);
+            }
 
             // 3. LocalName
             if (self.config.local_name) |name| {

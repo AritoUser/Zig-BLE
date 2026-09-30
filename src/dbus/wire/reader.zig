@@ -128,12 +128,10 @@ pub const MessageIter = struct {
                 if (self.offset + 4 <= self.end_offset) {
                     const len = std.mem.readInt(u32, self.buf[self.offset..][0..4], self.endian);
                     self.offset += 4;
-                    // Take alignment of first element into account only if array contains data
-                    if (len > 0) {
-                        const elem_sig = parseSingleType(self.sig[self.sig_idx + 1 ..]);
-                        if (elem_sig.len > 0) {
-                            self.offset = types.alignOffset(self.offset, types.getAlignment(elem_sig[0]));
-                        }
+                    // Per D-Bus spec: alignment padding for the first element is required even if array is empty (len == 0)
+                    const elem_sig = parseSingleType(self.sig[self.sig_idx + 1 ..]);
+                    if (elem_sig.len > 0) {
+                        self.offset = types.alignOffset(self.offset, types.getAlignment(elem_sig[0]));
                     }
                     self.offset += len;
                 }
@@ -196,13 +194,9 @@ pub const MessageIter = struct {
                 const elem_sig = parseSingleType(self.sig[self.sig_idx + 1 ..]);
                 if (elem_sig.len == 0) return null;
 
-                // Per D-Bus Specification: Empty arrays have no data and no padding between length and data
-                const content_start = if (array_byte_len == 0)
-                    self.offset
-                else blk: {
-                    const elem_align = types.getAlignment(elem_sig[0]);
-                    break :blk types.alignOffset(self.offset, elem_align);
-                };
+                // Per D-Bus spec: alignment padding for the first element is required even if array is empty (len == 0)
+                const elem_align = types.getAlignment(elem_sig[0]);
+                const content_start = types.alignOffset(self.offset, elem_align);
                 const content_end = content_start + array_byte_len;
 
                 self.offset = content_end;

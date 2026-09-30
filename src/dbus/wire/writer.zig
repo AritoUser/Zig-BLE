@@ -273,11 +273,6 @@ pub const MessageBuilder = struct {
         _ = self;
         if (sub.container_type == .array) {
             const content_len: u32 = @intCast(sub.buffer.len - sub.array_content_start);
-            if (content_len == 0) {
-                // Per D-Bus Specification:
-                // "Empty arrays will contain no data and thus never have padding between the length and any data."
-                sub.buffer.len = sub.array_len_pos + 4;
-            }
             std.mem.writeInt(u32, sub.buffer.data[sub.array_len_pos..][0..4], content_len, .little);
         }
     }
@@ -542,7 +537,7 @@ test "MessageBuilder and MessageIter struct container roundtrip" {
     try std.testing.expectEqual(@as(?u32, 100), st_it.getUInt32());
 }
 
-test "MessageBuilder: Empty array eliminates speculative padding per D-Bus spec" {
+test "MessageBuilder: Empty array preserves element alignment padding per D-Bus spec" {
     var body_buf = ByteBuffer.init(std.testing.allocator);
     defer body_buf.deinit();
     var sig_buf = ByteBuffer.init(std.testing.allocator);
@@ -551,21 +546,20 @@ test "MessageBuilder: Empty array eliminates speculative padding per D-Bus spec"
     const reader_mod = @import("reader.zig");
 
     var builder = MessageBuilder.init(&body_buf, &sig_buf);
-    // Write empty options dictionary a{sv} (each element {sv} normally requires 8-byte alignment)
+    // Write empty options dictionary a{sv} (each element {sv} requires 8-byte alignment)
     var opts = try builder.openArray("{sv}");
     try builder.closeContainer(&opts);
 
-    // D-Bus spec: "Empty arrays will contain no data and thus never have padding between the length and any data."
-    // Array length is a 4-byte integer = 0.
-    // If padding had remained, body_buf.len would be 8 bytes instead of 4.
-    try std.testing.expectEqual(@as(usize, 4), body_buf.len);
+    // D-Bus spec: "The alignment padding for the first element is required even if the array is empty (where n is zero)."
+    // Array length is a 4-byte integer = 0, followed by 4 bytes of padding to align the first element to 8 bytes.
+    try std.testing.expectEqual(@as(usize, 8), body_buf.len);
     try std.testing.expectEqual(@as(u32, 0), std.mem.readInt(u32, body_buf.getSlice()[0..4], .little));
 
     // Append subsequent string "BlueZ"
     try builder.appendString("BlueZ");
     try std.testing.expectEqualStrings("a{sv}s", sig_buf.getSlice());
-    // 4 bytes (array len = 0) + 4 bytes (str len = 5) + 5 bytes ("BlueZ") + 1 null byte = 14 bytes total
-    try std.testing.expectEqual(@as(usize, 14), body_buf.len);
+    // 4 bytes (array len = 0) + 4 bytes (alignment pad) + 4 bytes (str len = 5) + 5 bytes ("BlueZ") + 1 null byte = 18 bytes total
+    try std.testing.expectEqual(@as(usize, 18), body_buf.len);
 
     // Read back with openArray and getString
     var it1 = reader_mod.MessageIter.init(body_buf.getSlice(), 0, body_buf.len, sig_buf.getSlice());

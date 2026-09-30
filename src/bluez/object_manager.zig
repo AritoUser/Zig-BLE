@@ -162,6 +162,9 @@ pub fn parseAdapterProps(obj_path: [:0]const u8, props_iter: anytype) AdapterInf
     info.object_path_len = copyBoundedString(&info.object_path, obj_path);
 
     var it = props_iter.*;
+    if (it.getArgType() == wire.Type.array) {
+        it = it.recurse() orelse return info;
+    }
     while (it.hasMore()) {
         if (it.recurse()) |*dict_entry| {
             var entry = dict_entry.*;
@@ -206,6 +209,9 @@ pub fn parseDeviceProps(obj_path: [:0]const u8, props_iter: anytype) DeviceInfo 
     info.object_path_len = copyBoundedString(&info.object_path, obj_path);
 
     var it = props_iter.*;
+    if (it.getArgType() == wire.Type.array) {
+        it = it.recurse() orelse return info;
+    }
     while (it.hasMore()) {
         if (it.recurse()) |*dict_entry| {
             var entry = dict_entry.*;
@@ -279,6 +285,9 @@ pub fn parseGattServiceProps(obj_path: [:0]const u8, props_iter: anytype) GattSe
     info.object_path_len = copyBoundedString(&info.object_path, obj_path);
 
     var it = props_iter.*;
+    if (it.getArgType() == wire.Type.array) {
+        it = it.recurse() orelse return info;
+    }
     while (it.hasMore()) {
         if (it.recurse()) |*dict_entry| {
             var entry = dict_entry.*;
@@ -309,6 +318,9 @@ pub fn parseGattCharProps(obj_path: [:0]const u8, props_iter: anytype) GattChara
     info.object_path_len = copyBoundedString(&info.object_path, obj_path);
 
     var it = props_iter.*;
+    if (it.getArgType() == wire.Type.array) {
+        it = it.recurse() orelse return info;
+    }
     while (it.hasMore()) {
         if (it.recurse()) |*dict_entry| {
             var entry = dict_entry.*;
@@ -351,6 +363,9 @@ pub fn parseGattDescProps(obj_path: [:0]const u8, props_iter: anytype) GattDescr
     info.object_path_len = copyBoundedString(&info.object_path, obj_path);
 
     var it = props_iter.*;
+    if (it.getArgType() == wire.Type.array) {
+        it = it.recurse() orelse return info;
+    }
     while (it.hasMore()) {
         if (it.recurse()) |*dict_entry| {
             var entry = dict_entry.*;

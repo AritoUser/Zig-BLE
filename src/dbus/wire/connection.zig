@@ -593,8 +593,25 @@ pub const Connection = struct {
         }
     }
 
+    /// Waits on the D-Bus socket for new incoming messages up to timeout_ms.
+    /// Does not short-circuit on existing unhandled messages in incoming_queue, ensuring caller loops actually wait.
     pub fn pollSocket(self: *Connection, timeout_ms: i32) bool {
-        return self.readWrite(timeout_ms);
+        self.read_mutex.lock();
+        defer self.read_mutex.unlock();
+
+        const has_data = self.socket.pollRead(timeout_ms) catch return false;
+        if (!has_data) return false;
+
+        if (self.readNextMessageFromSocket()) |msg| {
+            self.incoming_queue.append(msg) catch {
+                var m = msg;
+                m.deinit();
+                return false;
+            };
+            return true;
+        } else |_| {
+            return false;
+        }
     }
 
     pub fn getUnixFd(self: *Connection) ?i32 {
