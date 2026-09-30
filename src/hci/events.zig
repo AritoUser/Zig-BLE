@@ -52,40 +52,49 @@ pub const AdvertisingReportIterator = struct {
 
     pub fn next(self: *AdvertisingReportIterator) ?HciAdvertisingReport {
         if (self.current_index >= self.num_reports) return null;
-        if (self.offset >= self.payload.len) return null;
 
-        // In standard HCI LE Advertising Report with 1 report:
-        // [event_type: 1B] [addr_type: 1B] [addr: 6B] [data_len: 1B] [data: NB] [rssi: 1B]
-        // Note: For multiple reports (num_reports > 1), the Bluetooth SIG specifies arrays of fields:
-        // event_type[N], addr_type[N], addr[N][6], data_len[N], data[N], rssi[N].
-        // However, 99.9% of controllers emit num_reports = 1 per event.
-        if (self.num_reports == 1) {
-            const p = self.payload;
-            if (p.len < 9) return null; // 1 + 1 + 6 + 1
-            const ev_type = p[0];
-            const addr_type: AddressType = if (p[1] == 0) .public else .random;
-            // Kernel HCI stores BD_ADDR in little-endian order (reverse of human-readable MAC)
-            const mac = Address{
-                .bytes = [6]u8{ p[7], p[6], p[5], p[4], p[3], p[2] },
-            };
-            const data_len = p[8];
-            if (p.len < 9 + data_len + 1) return null;
-            const data = p[9 .. 9 + data_len];
-            const rssi: i8 = @bitCast(p[9 + data_len]);
+        const n: usize = self.num_reports;
+        if (self.payload.len < n * 9) return null;
 
-            self.current_index += 1;
-            self.offset = p.len; // Done
-            return .{
-                .event_type = ev_type,
-                .address_type = addr_type,
-                .address = mac,
-                .data = data,
-                .rssi = rssi,
-            };
+        var total_data_len: usize = 0;
+        var cur_data_start: usize = 0;
+        var i: usize = 0;
+        while (i < n) : (i += 1) {
+            const dlen = self.payload[8 * n + i];
+            if (i < self.current_index) {
+                cur_data_start += dlen;
+            }
+            total_data_len += dlen;
         }
 
-        // Multiple reports case fallback
-        return null;
+        const total_expected_len = n * 9 + total_data_len + n;
+        if (self.payload.len < total_expected_len) return null;
+
+        const idx = self.current_index;
+        const ev_type = self.payload[idx];
+        const addr_type: AddressType = if (self.payload[n + idx] == 0) .public else .random;
+
+        const addr_offset = 2 * n + idx * 6;
+        const p = self.payload[addr_offset .. addr_offset + 6];
+        const mac = Address{
+            .bytes = [6]u8{ p[5], p[4], p[3], p[2], p[1], p[0] },
+        };
+
+        const data_len = self.payload[8 * n + idx];
+        const data_start = 9 * n + cur_data_start;
+        const data = self.payload[data_start .. data_start + data_len];
+
+        const rssi_offset = 9 * n + total_data_len + idx;
+        const rssi: i8 = @bitCast(self.payload[rssi_offset]);
+
+        self.current_index += 1;
+        return .{
+            .event_type = ev_type,
+            .address_type = addr_type,
+            .address = mac,
+            .data = data,
+            .rssi = rssi,
+        };
     }
 };
 

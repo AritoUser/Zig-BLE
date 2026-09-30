@@ -202,24 +202,47 @@ pub const Device = if (builtin.os.tag == .linux) @import("device.zig").Device el
     }
 };
 
+const NonLinuxGattStream = struct {
+    fd: c_int = -1,
+    mtu: u16 = 23,
+    pub fn deinit(self: *@This()) void { _ = self; }
+};
+const NonLinuxNotificationEvent = struct {
+    characteristic_path: [:0]const u8 = "",
+    data: []const u8 = &.{},
+};
+const NonLinuxNotificationDispatcher = struct {};
+
 pub const gatt_client = if (builtin.os.tag == .linux) @import("gatt_client.zig") else struct {
     pub const GattCharacteristic = struct {
-        pub fn readValue(self: *@This()) ![]const u8 { _ = self; return error.NotSupported; }
-        pub fn writeValue(self: *@This(), val: []const u8) !void { _ = self; _ = val; return error.NotSupported; }
+        pub fn readValue(self: *@This(), buf: []u8) !usize { _ = self; _ = buf; return error.NotSupported; }
+        pub fn writeValue(self: *@This(), data: []const u8, write_type: core.WriteType) !void { _ = self; _ = data; _ = write_type; return error.NotSupported; }
         pub fn writeValueWithoutResponse(self: *@This(), val: []const u8) !void { _ = self; _ = val; return error.NotSupported; }
+        pub fn readTyped(self: *@This(), comptime T: type) !T { _ = self; return error.NotSupported; }
+        pub fn writeTyped(self: *@This(), val: anytype, write_type: core.WriteType) !void { _ = self; _ = val; _ = write_type; return error.NotSupported; }
         pub fn startNotify(self: *@This()) !void { _ = self; return error.NotSupported; }
         pub fn stopNotify(self: *@This()) !void { _ = self; return error.NotSupported; }
+        pub fn acquireNotify(self: *@This()) !NonLinuxGattStream { _ = self; return error.NotSupported; }
+        pub fn acquireWrite(self: *@This()) !NonLinuxGattStream { _ = self; return error.NotSupported; }
+        pub fn waitForNotification(self: *@This(), buf: []u8, timeout_ms: c_int) !?usize { _ = self; _ = buf; _ = timeout_ms; return null; }
     };
     pub const GattDescriptor = struct {
-        pub fn readValue(self: *@This()) ![]const u8 { _ = self; return error.NotSupported; }
+        pub fn readValue(self: *@This(), buf: []u8) !usize { _ = self; _ = buf; return error.NotSupported; }
         pub fn writeValue(self: *@This(), val: []const u8) !void { _ = self; _ = val; return error.NotSupported; }
+        pub fn readTyped(self: *@This(), comptime T: type) !T { _ = self; return error.NotSupported; }
+        pub fn writeTyped(self: *@This(), val: anytype) !void { _ = self; _ = val; return error.NotSupported; }
+        pub fn readString(self: *@This(), buf: []u8) ![]const u8 { _ = self; _ = buf; return error.NotSupported; }
+        pub fn getUUID(self: *@This()) !core.UUID { _ = self; return error.NotSupported; }
     };
+    pub const GattStream = NonLinuxGattStream;
+    pub const NotificationEvent = NonLinuxNotificationEvent;
+    pub const NotificationDispatcher = NonLinuxNotificationDispatcher;
 };
 pub const GattCharacteristic = gatt_client.GattCharacteristic;
 pub const GattDescriptor = gatt_client.GattDescriptor;
-pub const GattStream = if (builtin.os.tag == .linux) gatt_client.GattStream else struct {};
-pub const NotificationEvent = if (builtin.os.tag == .linux) gatt_client.NotificationEvent else struct {};
-pub const NotificationDispatcher = if (builtin.os.tag == .linux) gatt_client.NotificationDispatcher else struct {};
+pub const GattStream = gatt_client.GattStream;
+pub const NotificationEvent = gatt_client.NotificationEvent;
+pub const NotificationDispatcher = gatt_client.NotificationDispatcher;
 
 // Broadcaster & Peripheral Advertising
 pub const advertising_server = if (builtin.os.tag == .linux) @import("advertising.zig") else struct {};
@@ -423,6 +446,21 @@ else
         pub fn popMessage(self: *@This()) ?wire.Message {
             _ = self;
             return null;
+        }
+        pub fn popMatching(
+            self: *@This(),
+            context: anytype,
+            comptime predicate: anytype,
+        ) ?wire.Message {
+            _ = self;
+            _ = context;
+            _ = predicate;
+            return null;
+        }
+        pub fn requeueMessage(self: *@This(), msg: wire.Message) !void {
+            _ = self;
+            _ = msg;
+            return error.NotSupported;
         }
         pub fn callMethod(
             self: *@This(),

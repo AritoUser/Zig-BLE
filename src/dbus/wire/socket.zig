@@ -92,10 +92,12 @@ pub const Socket = struct {
         };
         @memset(&addr.path, 0);
 
+        var addr_len: std.posix.socklen_t = @sizeOf(std.posix.sockaddr.un);
         if (is_abstract) {
             addr.path[0] = 0; // Abstract Unix domain socket starts with NUL byte
             const copy_len = @min(addr.path.len - 2, path.len);
             @memcpy(addr.path[1 .. 1 + copy_len], path[0..copy_len]);
+            addr_len = @intCast(@offsetOf(std.posix.sockaddr.un, "path") + 1 + copy_len);
         } else {
             const copy_len = @min(addr.path.len - 1, path.len);
             @memcpy(addr.path[0..copy_len], path[0..copy_len]);
@@ -110,7 +112,7 @@ pub const Socket = struct {
         const fd: std.posix.fd_t = @intCast(rc);
         errdefer _ = std.posix.system.close(fd);
 
-        const conn_rc = std.posix.system.connect(fd, @ptrCast(&addr), @sizeOf(std.posix.sockaddr.un));
+        const conn_rc = std.posix.system.connect(fd, @ptrCast(&addr), addr_len);
         const conn_err = std.posix.errno(conn_rc);
         if (conn_err != .SUCCESS) {
             return switch (conn_err) {

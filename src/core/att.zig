@@ -862,6 +862,17 @@ pub const SignedWriteCommand = struct {
             .signature = sig,
         };
     }
+
+    pub fn encode(self: SignedWriteCommand, dest: []u8) AttError!usize {
+        const total = 15 + self.value.len;
+        if (dest.len < total) return AttError.BufferTooSmall;
+        dest[0] = @intFromEnum(opcode);
+        std.mem.writeInt(u16, dest[1..3], self.handle, .little);
+        const val_end = 3 + self.value.len;
+        @memcpy(dest[3..val_end], self.value);
+        @memcpy(dest[val_end..total], &self.signature);
+        return total;
+    }
 };
 
 /// ATT_HANDLE_VALUE_NTF (0x1B): Server sends an unacknowledged value notification.
@@ -1169,4 +1180,20 @@ test "ATT: WriteCommand and PrepareWrite roundtrip" {
     try std.testing.expectEqual(@as(u16, 18), parsed_prep.prepare_write_req.offset);
     try std.testing.expectEqualStrings("Long write payload chunk", parsed_prep.prepare_write_req.part_value);
 }
+
+test "ATT: SignedWriteCommand encode and decode roundtrip" {
+    const sw = SignedWriteCommand{
+        .handle = 0x0055,
+        .value = "AuthPayload",
+        .signature = [_]u8{ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12 },
+    };
+    var buf: [64]u8 = undefined;
+    const len = try sw.encode(&buf);
+
+    const parsed = try AttPdu.parse(buf[0..len]);
+    try std.testing.expectEqual(@as(u16, 0x0055), parsed.signed_write_cmd.handle);
+    try std.testing.expectEqualStrings("AuthPayload", parsed.signed_write_cmd.value);
+    try std.testing.expectEqual([_]u8{ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12 }, parsed.signed_write_cmd.signature);
+}
+
 

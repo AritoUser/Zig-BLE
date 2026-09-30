@@ -123,27 +123,46 @@ pub const Advertisement = struct {
         // Send asynchronously with serial to process simultaneous BlueZ callbacks (GetAll) in the event loop
         const reg_serial = try self.conn.sendWithSerial(&msg);
 
+        const PredicateContext = struct {
+            reg_serial: u32,
+            adv_path: [:0]const u8,
+            fn isMatch(ctx: @This(), incoming: *const Message) bool {
+                const msg_type = incoming.getMessageType();
+                if (msg_type == 1) { // DBUS_MESSAGE_TYPE_METHOD_CALL
+                    if (incoming.getPath()) |p| {
+                        return std.mem.eql(u8, p, ctx.adv_path);
+                    }
+                    return false;
+                } else if (msg_type == 2 or msg_type == 3) { // METHOD_RETURN or ERROR
+                    return incoming.getReplySerial() == ctx.reg_serial;
+                }
+                return false;
+            }
+        };
+        const ctx = PredicateContext{ .reg_serial = reg_serial, .adv_path = self.object_path[0..self.object_path_len :0] };
+
         // Event loop until confirmation or error (up to 5 seconds)
         var iters: usize = 0;
         while (iters < 50) : (iters += 1) {
-            _ = self.conn.pollSocket(100);
-            while (self.conn.popMessage()) |incoming| {
-                defer incoming.deinit();
-                const msg_type = incoming.getMessageType();
+            while (self.conn.popMatching(ctx, PredicateContext.isMatch)) |incoming| {
+                var inc = incoming;
+                defer inc.deinit();
+                const msg_type = inc.getMessageType();
 
                 if (msg_type == 1) { // DBUS_MESSAGE_TYPE_METHOD_CALL
-                    _ = try self.processMessage(&incoming);
+                    _ = try self.processMessage(&inc);
                 } else if (msg_type == 2) { // DBUS_MESSAGE_TYPE_METHOD_RETURN
-                    if (incoming.getReplySerial() == reg_serial) {
+                    if (inc.getReplySerial() == reg_serial) {
                         self.is_registered = true;
                         return;
                     }
                 } else if (msg_type == 3) { // DBUS_MESSAGE_TYPE_ERROR
-                    if (incoming.getReplySerial() == reg_serial) {
+                    if (inc.getReplySerial() == reg_serial) {
                         return error.AdvertisementRegistrationFailed;
                     }
                 }
             }
+            _ = self.conn.pollSocket(100);
         }
 
         return error.Timeout;

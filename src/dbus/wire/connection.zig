@@ -505,6 +505,69 @@ pub const Connection = struct {
         return self.readNextMessageFromSocket() catch null;
     }
 
+    /// Selectively pops the first message that satisfies the predicate function.
+    /// Non-matching messages are preserved in incoming_queue in exact FIFO order (zero loss, zero allocations).
+    /// If no matching message is currently queued, polls the socket non-blocking.
+    pub fn popMatching(
+        self: *Connection,
+        context: anytype,
+        comptime predicate: fn (@TypeOf(context), *const Message) bool,
+    ) ?Message {
+        self.read_mutex.lock();
+        defer self.read_mutex.unlock();
+        return self.popMatchingUnlocked(context, predicate);
+    }
+
+    fn popMatchingUnlocked(
+        self: *Connection,
+        context: anytype,
+        comptime predicate: fn (@TypeOf(context), *const Message) bool,
+    ) ?Message {
+        // 1. Search existing receive queue
+        var idx = self.queue_head;
+        while (idx < self.incoming_queue.len) : (idx += 1) {
+            const candidate = &self.incoming_queue.items[idx];
+            if (predicate(context, candidate)) {
+                const matched = candidate.*;
+                // Remove matched message by shifting subsequent elements forward
+                std.mem.copyForwards(Message, self.incoming_queue.items[idx .. self.incoming_queue.len - 1], self.incoming_queue.items[idx + 1 .. self.incoming_queue.len]);
+                self.incoming_queue.len -= 1;
+                if (self.queue_head >= self.incoming_queue.len) {
+                    self.incoming_queue.clearRetainingCapacity();
+                    self.queue_head = 0;
+                }
+                return matched;
+            }
+        }
+
+        // 2. If no match in queue, check socket non-blocking
+        const has_data = self.socket.pollRead(0) catch return null;
+        if (!has_data) return null;
+
+        var incoming = self.readNextMessageFromSocket() catch return null;
+        if (predicate(context, &incoming)) {
+            return incoming;
+        }
+
+        // Not a match: preserve in queue so other callers or central event loop can process it
+        self.incoming_queue.append(incoming) catch {
+            incoming.deinit();
+        };
+        return null;
+    }
+
+    /// Re-inserts an unhandled message back into the receive queue so other components can process it.
+    pub fn requeueMessage(self: *Connection, msg: Message) !void {
+        self.read_mutex.lock();
+        defer self.read_mutex.unlock();
+        if (self.queue_head > 0) {
+            self.queue_head -= 1;
+            self.incoming_queue.items[self.queue_head] = msg;
+        } else {
+            try self.incoming_queue.append(msg);
+        }
+    }
+
     /// Reads incoming data from the D-Bus socket (waits up to timeout_ms).
     pub fn readWrite(self: *Connection, timeout_ms: i32) bool {
         self.read_mutex.lock();
@@ -558,6 +621,14 @@ pub const Connection = struct {
             }
         } else {
             try self.socket.readExact(&hdr_bytes);
+        }
+
+        errdefer {
+            for (received_fds[0..fds_count]) |fd| {
+                if (fd >= 0) {
+                    _ = std.posix.system.close(fd);
+                }
+            }
         }
 
         const fixed_hdr = try FixedHeader.decode(&hdr_bytes);

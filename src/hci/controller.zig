@@ -67,19 +67,18 @@ pub const HciController = struct {
             const evt = HciEvent.parse(buf[0..n]) catch continue;
             switch (evt) {
                 .command_complete => |cc| {
-                    if (cc.opcode == constants.Opcode.read_bd_addr and cc.return_params.len >= 6) {
+                    if (cc.opcode == constants.Opcode.read_bd_addr and cc.return_params.len >= 7) {
                         const p = cc.return_params;
                         // Return parameters: [status: 1B] [BD_ADDR: 6B LE]
-                        // Note: If status byte is present at index 0:
-                        const offset: usize = if (cc.return_params.len >= 7) 1 else 0;
+                        if (p[0] != 0) return HciError.CommandFailed;
                         return Address{
                             .bytes = [6]u8{
-                                p[offset + 5],
-                                p[offset + 4],
-                                p[offset + 3],
-                                p[offset + 2],
-                                p[offset + 1],
-                                p[offset + 0],
+                                p[6],
+                                p[5],
+                                p[4],
+                                p[3],
+                                p[2],
+                                p[1],
                             },
                         };
                     }

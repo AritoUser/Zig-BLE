@@ -7,6 +7,7 @@
 //! heap allocations on hot paths, hardware alignment-safe, and constant-time where applicable.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const types = @import("../core/types.zig");
 const Address = types.Address;
 const AddressType = types.AddressType;
@@ -114,21 +115,26 @@ pub fn resolveRpa(irk: [16]u8, rpa: Address) bool {
     return std.crypto.timing_safe.eql([3]u8, expected_hash, actual_hash);
 }
 
-var fallback_seed: u64 = 0x87654321A1B2C3D4;
+extern "advapi32" fn SystemFunction036(pbBuffer: [*]u8, dwLen: u32) callconv(.winapi) u8;
 
-fn getPseudoRandom3Bytes() [3]u8 {
-    fallback_seed = fallback_seed *% 6364136223846793005 +% 1442695040888963407;
-    var prng = std.Random.DefaultPrng.init(fallback_seed);
+fn getRandom3Bytes() [3]u8 {
     var buf: [3]u8 = undefined;
-    prng.random().bytes(&buf);
+    if (builtin.os.tag == .linux) {
+        _ = std.os.linux.getrandom(&buf, buf.len, 0);
+    } else if (builtin.os.tag == .windows) {
+        _ = SystemFunction036(&buf, buf.len);
+    } else {
+        var prng = std.Random.DefaultPrng.init(0x87654321A1B2C3D4);
+        prng.random().bytes(&buf);
+    }
     return buf;
 }
 
 /// Generates a compliant Resolvable Private Address (RPA) using the specified Identity Resolving Key (IRK).
 ///
-/// If `prand_override` is null, pseudo-random bytes are generated automatically.
+/// If `prand_override` is null, cryptographically secure random bytes are generated automatically.
 pub fn generateRpa(irk: [16]u8, prand_override: ?[3]u8) Address {
-    var prand = prand_override orelse getPseudoRandom3Bytes();
+    var prand = prand_override orelse getRandom3Bytes();
 
     // Bluetooth Core Spec requires the two most significant bits of prand to be 0b01
     // and that prand cannot be all zeros or all ones (excluding MSBs).
@@ -449,7 +455,7 @@ pub fn sih(sirk: [16]u8, r: [3]u8) [3]u8 {
 
 /// Generates a 6-byte Resolvable Set Identifier (RSI) for CSIP (LE Audio coordinated device sets).
 pub fn generateRsi(sirk: [16]u8, prand_override: ?[3]u8) [6]u8 {
-    var prand = prand_override orelse getPseudoRandom3Bytes();
+    var prand = prand_override orelse getRandom3Bytes();
 
     // The two MSBs of prand shall be 0b01
     prand[2] = (prand[2] & 0x3F) | 0x40;

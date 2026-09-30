@@ -10,6 +10,8 @@ fn sleepUs(usec: u64) void {
             .nsec = @intCast((usec % 1_000_000) * 1000),
         };
         _ = std.os.linux.nanosleep(&ts, null);
+    } else if (builtin.os.tag == .windows) {
+        std.os.windows.kernel32.Sleep(@intCast(usec / 1000));
     }
 }
 

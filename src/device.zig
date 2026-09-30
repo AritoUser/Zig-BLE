@@ -127,13 +127,19 @@ pub const Device = struct {
         const max_attempts = (timeout_ms + @as(u32, @intCast(step_ms)) - 1) / @as(u32, @intCast(step_ms));
         var attempts: usize = 0;
 
-        while (attempts < max_attempts) : (attempts += 1) {
-            // Kernel sleep via pollSocket on D-Bus file descriptor (0% CPU)
-            _ = self.conn.pollSocket(step_ms);
+        const PredicateContext = struct {
+            dev_path: [:0]const u8,
+            fn isMatch(ctx: @This(), msg: *const Message) bool {
+                return checkDevicePropertySignal(msg, ctx.dev_path) != .none;
+            }
+        };
+        const ctx = PredicateContext{ .dev_path = self.getObjectPath() };
 
-            while (self.conn.popMessage()) |msg| {
-                defer msg.deinit();
-                const ev = checkDevicePropertySignal(&msg, self.getObjectPath());
+        while (attempts < max_attempts) : (attempts += 1) {
+            while (self.conn.popMatching(ctx, PredicateContext.isMatch)) |msg| {
+                var m = msg;
+                defer m.deinit();
+                const ev = checkDevicePropertySignal(&m, self.getObjectPath());
                 switch (ev) {
                     .services_resolved => return,
                     .disconnected => return error.Disconnected,
@@ -150,6 +156,9 @@ pub const Device = struct {
                     return error.Disconnected;
                 }
             }
+
+            // Kernel sleep via pollSocket on D-Bus file descriptor (0% CPU)
+            _ = self.conn.pollSocket(step_ms);
         }
         return error.ServicesResolutionTimeout;
     }

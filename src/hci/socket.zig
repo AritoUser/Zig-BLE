@@ -17,6 +17,7 @@ pub const HciError = error{
     ReadFailed,
     BufferTooSmall,
     Timeout,
+    CommandFailed,
 };
 
 pub const HciSocket = struct {

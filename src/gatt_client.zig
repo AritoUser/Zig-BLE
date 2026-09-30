@@ -236,15 +236,38 @@ pub const GattCharacteristic = struct {
     /// `NotificationDispatcher` combined with `EventLoop` so messages for other components are preserved.
     pub fn waitForNotification(self: *GattCharacteristic, buf: []u8, timeout_ms: c_int) !?usize {
         if (builtin.os.tag != .linux) return null;
-        _ = self.conn.pollSocket(timeout_ms);
-        while (self.conn.popMessage()) |msg| {
-            defer msg.deinit();
-            if (parseNotification(&msg)) |ev| {
-                if (std.mem.eql(u8, ev.characteristic_path, self.getObjectPath())) {
-                    const copy_len = @min(buf.len, ev.data.len);
-                    @memcpy(buf[0..copy_len], ev.data[0..copy_len]);
-                    return copy_len;
+        const PredicateContext = struct {
+            char_path: [:0]const u8,
+            fn isMatch(ctx: @This(), msg: *const Message) bool {
+                if (parseNotification(msg)) |ev| {
+                    return std.mem.eql(u8, ev.characteristic_path, ctx.char_path);
                 }
+                return false;
+            }
+        };
+
+        const ctx = PredicateContext{ .char_path = self.getObjectPath() };
+
+        // 1. Check if matching notification is already queued
+        if (self.conn.popMatching(ctx, PredicateContext.isMatch)) |msg| {
+            var m = msg;
+            defer m.deinit();
+            if (parseNotification(&m)) |ev| {
+                const copy_len = @min(buf.len, ev.data.len);
+                @memcpy(buf[0..copy_len], ev.data[0..copy_len]);
+                return copy_len;
+            }
+        }
+
+        // 2. Poll socket and retrieve matching notification
+        _ = self.conn.pollSocket(timeout_ms);
+        if (self.conn.popMatching(ctx, PredicateContext.isMatch)) |msg| {
+            var m = msg;
+            defer m.deinit();
+            if (parseNotification(&m)) |ev| {
+                const copy_len = @min(buf.len, ev.data.len);
+                @memcpy(buf[0..copy_len], ev.data[0..copy_len]);
+                return copy_len;
             }
         }
         return null;
