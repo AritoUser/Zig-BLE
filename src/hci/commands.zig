@@ -578,4 +578,3 @@ test "HCI Commands: reset and scan parameters serialization" {
     try std.testing.expectEqual(@as(u8, 3), ext_adv[24]); // primary Coded PHY
     try std.testing.expectEqual(@as(u8, 3), ext_adv[26]); // secondary Coded PHY
 }
-

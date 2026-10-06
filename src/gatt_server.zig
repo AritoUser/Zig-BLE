@@ -738,4 +738,3 @@ test "ServerCharacteristic: setPresentationFormat" {
     try std.testing.expectEqual(core.FormatType.sfloat, decoded_cpf.format);
     try std.testing.expectEqual(core.Units.celsius, decoded_cpf.unit);
 }
-

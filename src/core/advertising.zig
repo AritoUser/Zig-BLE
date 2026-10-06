@@ -429,7 +429,9 @@ test "AdIterator: parse standard advertising packet" {
     // 3. Tx Power (3 Bytes): Len=0x02, Type=0x0A, 0x04 (+4 dBm)
     const packet = [_]u8{
         0x02, 0x01, 0x06,
-        0x08, 0x09, 'Z',  'i',  'g',  '-',  'B', 'L', 'E',
+        0x08, 0x09, 'Z',
+        'i',  'g',  '-',
+        'B',  'L',  'E',
         0x02, 0x0A, 0x04,
     };
 
@@ -472,7 +474,9 @@ test "AdIterator: parse manufacturer specific data" {
 test "AdvertisingReport: zero-allocation full parse" {
     const packet = [_]u8{
         0x02, 0x01, 0x06,
-        0x06, 0x09, 'H',  'e',  'a',  'r',  't',
+        0x06, 0x09, 'H',
+        'e',  'a',  'r',
+        't',
         0x03, 0x19, 0x40, 0x03, // Appearance: 0x0340 = 832 (Heart Rate Sensor, Little-Endian: 40 03)
         0x00, 0x00, // Padding
     };
@@ -508,13 +512,15 @@ test "AdIterator: Service Data 16, 32, and 128 bit" {
         // Service Data 16-bit: Len = 5, Typ = 0x16, UUID = 0x0D, 0x18, Data = 0x50, 0x60
         0x05, 0x16, 0x0D, 0x18, 0x50, 0x60,
         // Service Data 32-bit: Len = 6, Typ = 0x20, UUID = 78 56 34 12, Data = AA
-        0x06, 0x20, 0x78, 0x56, 0x34, 0x12, 0xAA,
+        0x06, 0x20, 0x78, 0x56, 0x34, 0x12,
+        0xAA,
         // Service Data 128-bit: Len = 19, Typ = 0x21, UUID = 16 bytes, Data = 01 02
         0x13, 0x21,
         // 16 bytes UUID in little-endian (e.g. 0000180d-0000-1000-8000-00805f9b34fb in LE)
-        0xFB, 0x34, 0x9B, 0x5F, 0x80, 0x00, 0x00, 0x80,
-        0x00, 0x10, 0x00, 0x00, 0x0D, 0x18, 0x00, 0x00,
-        0x01, 0x02,
+        0xFB, 0x34, 0x9B,
+        0x5F, 0x80, 0x00, 0x00, 0x80, 0x00,
+        0x10, 0x00, 0x00, 0x0D, 0x18, 0x00,
+        0x00, 0x01, 0x02,
     };
 
     var it = AdIterator.init(&packet);
@@ -558,9 +564,9 @@ test "AdIterator: Service UUID list iterators (16-bit, 32-bit, 128-bit)" {
         // 32-bit list: Len = 5, Typ = 0x05, UUID: 0x12345678 (78 56 34 12)
         0x05, 0x05, 0x78, 0x56, 0x34, 0x12,
         // 128-bit list: Len = 17, Typ = 0x06, 16-byte UUID in LE
-        0x11, 0x06,
-        0xFB, 0x34, 0x9B, 0x5F, 0x80, 0x00, 0x00, 0x80,
-        0x00, 0x10, 0x00, 0x00, 0x0D, 0x18, 0x00, 0x00,
+        0x11, 0x06, 0xFB, 0x34, 0x9B, 0x5F,
+        0x80, 0x00, 0x00, 0x80, 0x00, 0x10,
+        0x00, 0x00, 0x0D, 0x18, 0x00, 0x00,
     };
 
     var it = AdIterator.init(&packet);
@@ -636,7 +642,7 @@ test "AdIterator & AdvertisingReport: PRNG continuous fuzzing (25,000 iterations
                 const elem_len = rand.intRangeAtMost(usize, 1, @min(rem - 1, 255));
                 buffer[cursor] = @truncate(elem_len);
                 buffer[cursor + 1] = rand.int(u8);
-                for (cursor + 2 .. cursor + 1 + elem_len) |idx| {
+                for (cursor + 2..cursor + 1 + elem_len) |idx| {
                     if (idx < target_len) buffer[idx] = rand.int(u8);
                 }
                 cursor += 1 + elem_len;
@@ -767,7 +773,3 @@ test "Bluetooth 5.0+ Extended Advertising types and interval parsing" {
     const rep = AdvertisingReport.parse(&adv_int_pkt);
     try std.testing.expectEqual(@as(?u32, 200), rep.periodic_interval_ms);
 }
-
-
-
-

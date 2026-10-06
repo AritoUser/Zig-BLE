@@ -314,4 +314,3 @@ test "parseNotification: zero-copy and Little-Endian handle decoding" {
     const short_pkt = [_]u8{ 0x1B, 0x2A };
     try std.testing.expectError(ParseError.PayloadTooShort, parseNotification(&short_pkt));
 }
-

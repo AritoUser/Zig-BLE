@@ -184,9 +184,9 @@ pub const UUID = struct {
     /// Bluetooth SIG Base UUID: 00000000-0000-1000-8000-00805F9B34FB
     pub const BASE_UUID: [16]u8 = .{
         0x00, 0x00, 0x00, 0x00, // 0..3: 32-bit / 16-bit field
-        0x00, 0x00,             // 4..5
-        0x10, 0x00,             // 6..7
-        0x80, 0x00,             // 8..9
+        0x00, 0x00, // 4..5
+        0x10, 0x00, // 6..7
+        0x80, 0x00, // 8..9
         0x00, 0x80, 0x5F, 0x9B, 0x34, 0xFB, // 10..15
     };
 
@@ -296,10 +296,9 @@ pub const UUID = struct {
             const v: @Vector(36, u8) = s[0..36].*;
             const hex_chars: @Vector(32, u8) = @shuffle(u8, v, undefined, [32]i32{
                 0,  1,  2,  3,  4,  5,  6,  7,
-                9,  10, 11, 12,
-                14, 15, 16, 17,
-                19, 20, 21, 22,
-                24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35,
+                9,  10, 11, 12, 14, 15, 16, 17,
+                19, 20, 21, 22, 24, 25, 26, 27,
+                28, 29, 30, 31, 32, 33, 34, 35,
             });
 
             const nibbles = try parseHexNibblesSimd(32, hex_chars);
@@ -543,5 +542,3 @@ test "UUID: SIMD parsing of flat 32-char and uppercase strings" {
     try std.testing.expectError(error.InvalidFormat, UUID.parse("6e400001_b5a3_f393_e0a9_e50e24dcca9e")); // wrong separator
     try std.testing.expectError(error.InvalidLength, UUID.parse("6e400001-b5a3-f393")); // truncated
 }
-
-

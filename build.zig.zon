@@ -7,7 +7,7 @@
     // It is redundant to include "zig" in this name because it is already
     // within the Zig package namespace.
     .name = .zig_ble,
-    .version = "0.3.1",
+    .version = "1.0.0",
     .fingerprint = 0xfd301412824be472, // Changing this has security and trust implications.
     .minimum_zig_version = "0.16.0",
     .dependencies = .{},
@@ -16,6 +16,9 @@
         "build.zig.zon",
         "src",
         "examples",
+        "docs",
+        "CHANGELOG.md",
+        "CONTRIBUTING.md",
         "LICENSE",
         "README.md",
     },

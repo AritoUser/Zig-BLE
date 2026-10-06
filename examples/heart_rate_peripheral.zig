@@ -48,7 +48,7 @@ pub fn main() !void {
     var peripheral = Zig_BLE.Peripheral.init(&conn, adapter.getObjectPath(), .{
         .local_name = "Zig-HRM-Sensor",
         .appearance = Zig_BLE.Appearance.generic_heart_rate_sensor,
-        .service_uuids = &[_]Zig_BLE.UUID{ Zig_BLE.Services.heart_rate },
+        .service_uuids = &[_]Zig_BLE.UUID{Zig_BLE.Services.heart_rate},
         .manufacturer_data = .{
             .company_id = Zig_BLE.CompanyId.nordic_semiconductor,
             .data = &[_]u8{ 0xBE, 0xEF },
@@ -73,7 +73,7 @@ pub fn main() !void {
     const loc_char = try hr_service.addCharacteristic(Zig_BLE.Characteristics.body_sensor_location, .{
         .read = true,
     });
-    loc_char.setValue(&[_]u8{ 0x01 }); // Location: Chest
+    loc_char.setValue(&[_]u8{0x01}); // Location: Chest
 
     // 4. Start in background
     std.debug.print("[+] Starting BLE advertising & GATT server in background...\n", .{});

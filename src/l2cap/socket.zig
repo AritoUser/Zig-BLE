@@ -451,4 +451,3 @@ test "L2capSocket: non-linux mock check" {
         sock.close();
     }
 }
-

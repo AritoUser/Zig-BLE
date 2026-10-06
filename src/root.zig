@@ -22,6 +22,15 @@
 const std = @import("std");
 
 pub const core = @import("core/mod.zig");
+pub const backend = @import("backend/mod.zig");
+pub const storage = @import("storage/mod.zig");
+pub const tooling = @import("tooling/mod.zig");
+pub const pcap = tooling.pcap;
+
+pub const BondStore = storage.BondStore;
+pub const BondRecord = storage.BondRecord;
+pub const SecurityKeys = storage.SecurityKeys;
+pub const MemoryBondStore = storage.MemoryBondStore;
 
 // Direct exports for common core domain types
 pub const types = core.types;
@@ -63,6 +72,10 @@ pub const AttOpcode = core.AttOpcode;
 pub const ParseError = core.ParseError;
 pub const NotificationData = core.NotificationData;
 pub const parseNotification = core.parseNotification;
+pub const transfers = core.transfers;
+pub const LongWriteIterator = core.LongWriteIterator;
+pub const LongReadReassembler = core.LongReadReassembler;
+pub const ServerPrepareWriteQueue = core.ServerPrepareWriteQueue;
 
 // Zero-allocation advertising packet parser
 pub const advertising = core.advertising;
@@ -89,6 +102,19 @@ pub const DeviceInfo = bluez.DeviceInfo;
 pub const GattServiceInfo = bluez.GattServiceInfo;
 pub const GattCharacteristicInfo = bluez.GattCharacteristicInfo;
 pub const GattDescriptorInfo = bluez.GattDescriptorInfo;
+
+// Unified Pluggable Backend HAL & Types
+pub const Backend = backend.Backend;
+pub const BackendVTable = backend.BackendVTable;
+pub const UnifiedAdapter = backend.UnifiedAdapter;
+pub const UnifiedDevice = backend.UnifiedDevice;
+pub const MockController = backend.MockController;
+pub const MockDevice = backend.MockDevice;
+pub const MockCharacteristic = backend.MockCharacteristic;
+pub const ScanFilter = backend.ScanFilter;
+pub const DiscoveredDevice = backend.DiscoveredDevice;
+pub const BleError = backend.BleError;
+pub const WindowsBackend = backend.WindowsBackend;
 
 const builtin = @import("builtin");
 
@@ -205,7 +231,9 @@ pub const Device = if (builtin.os.tag == .linux) @import("device.zig").Device el
 const NonLinuxGattStream = struct {
     fd: c_int = -1,
     mtu: u16 = 23,
-    pub fn deinit(self: *@This()) void { _ = self; }
+    pub fn deinit(self: *@This()) void {
+        _ = self;
+    }
 };
 const NonLinuxNotificationEvent = struct {
     characteristic_path: [:0]const u8 = "",
@@ -215,24 +243,84 @@ const NonLinuxNotificationDispatcher = struct {};
 
 pub const gatt_client = if (builtin.os.tag == .linux) @import("gatt_client.zig") else struct {
     pub const GattCharacteristic = struct {
-        pub fn readValue(self: *@This(), buf: []u8) !usize { _ = self; _ = buf; return error.NotSupported; }
-        pub fn writeValue(self: *@This(), data: []const u8, write_type: core.WriteType) !void { _ = self; _ = data; _ = write_type; return error.NotSupported; }
-        pub fn writeValueWithoutResponse(self: *@This(), val: []const u8) !void { _ = self; _ = val; return error.NotSupported; }
-        pub fn readTyped(self: *@This(), comptime T: type) !T { _ = self; return error.NotSupported; }
-        pub fn writeTyped(self: *@This(), val: anytype, write_type: core.WriteType) !void { _ = self; _ = val; _ = write_type; return error.NotSupported; }
-        pub fn startNotify(self: *@This()) !void { _ = self; return error.NotSupported; }
-        pub fn stopNotify(self: *@This()) !void { _ = self; return error.NotSupported; }
-        pub fn acquireNotify(self: *@This()) !NonLinuxGattStream { _ = self; return error.NotSupported; }
-        pub fn acquireWrite(self: *@This()) !NonLinuxGattStream { _ = self; return error.NotSupported; }
-        pub fn waitForNotification(self: *@This(), buf: []u8, timeout_ms: c_int) !?usize { _ = self; _ = buf; _ = timeout_ms; return null; }
+        pub fn readValue(self: *@This(), buf: []u8) !usize {
+            _ = self;
+            _ = buf;
+            return error.NotSupported;
+        }
+        pub fn writeValue(self: *@This(), data: []const u8, write_type: core.WriteType) !void {
+            _ = self;
+            _ = data;
+            _ = write_type;
+            return error.NotSupported;
+        }
+        pub fn writeValueWithoutResponse(self: *@This(), val: []const u8) !void {
+            _ = self;
+            _ = val;
+            return error.NotSupported;
+        }
+        pub fn readTyped(self: *@This(), comptime T: type) !T {
+            _ = self;
+            return error.NotSupported;
+        }
+        pub fn writeTyped(self: *@This(), val: anytype, write_type: core.WriteType) !void {
+            _ = self;
+            _ = val;
+            _ = write_type;
+            return error.NotSupported;
+        }
+        pub fn startNotify(self: *@This()) !void {
+            _ = self;
+            return error.NotSupported;
+        }
+        pub fn stopNotify(self: *@This()) !void {
+            _ = self;
+            return error.NotSupported;
+        }
+        pub fn acquireNotify(self: *@This()) !NonLinuxGattStream {
+            _ = self;
+            return error.NotSupported;
+        }
+        pub fn acquireWrite(self: *@This()) !NonLinuxGattStream {
+            _ = self;
+            return error.NotSupported;
+        }
+        pub fn waitForNotification(self: *@This(), buf: []u8, timeout_ms: c_int) !?usize {
+            _ = self;
+            _ = buf;
+            _ = timeout_ms;
+            return null;
+        }
     };
     pub const GattDescriptor = struct {
-        pub fn readValue(self: *@This(), buf: []u8) !usize { _ = self; _ = buf; return error.NotSupported; }
-        pub fn writeValue(self: *@This(), val: []const u8) !void { _ = self; _ = val; return error.NotSupported; }
-        pub fn readTyped(self: *@This(), comptime T: type) !T { _ = self; return error.NotSupported; }
-        pub fn writeTyped(self: *@This(), val: anytype) !void { _ = self; _ = val; return error.NotSupported; }
-        pub fn readString(self: *@This(), buf: []u8) ![]const u8 { _ = self; _ = buf; return error.NotSupported; }
-        pub fn getUUID(self: *@This()) !core.UUID { _ = self; return error.NotSupported; }
+        pub fn readValue(self: *@This(), buf: []u8) !usize {
+            _ = self;
+            _ = buf;
+            return error.NotSupported;
+        }
+        pub fn writeValue(self: *@This(), val: []const u8) !void {
+            _ = self;
+            _ = val;
+            return error.NotSupported;
+        }
+        pub fn readTyped(self: *@This(), comptime T: type) !T {
+            _ = self;
+            return error.NotSupported;
+        }
+        pub fn writeTyped(self: *@This(), val: anytype) !void {
+            _ = self;
+            _ = val;
+            return error.NotSupported;
+        }
+        pub fn readString(self: *@This(), buf: []u8) ![]const u8 {
+            _ = self;
+            _ = buf;
+            return error.NotSupported;
+        }
+        pub fn getUUID(self: *@This()) !core.UUID {
+            _ = self;
+            return error.NotSupported;
+        }
     };
     pub const GattStream = NonLinuxGattStream;
     pub const NotificationEvent = NonLinuxNotificationEvent;
@@ -291,8 +379,14 @@ pub const Advertisement = if (builtin.os.tag == .linux) advertising_server.Adver
         _ = adv_path;
         return .{ .conn = conn, .config = config };
     }
-    pub fn register(self: *@This()) !void { _ = self; return error.NotSupported; }
-    pub fn unregister(self: *@This()) !void { _ = self; return error.NotSupported; }
+    pub fn register(self: *@This()) !void {
+        _ = self;
+        return error.NotSupported;
+    }
+    pub fn unregister(self: *@This()) !void {
+        _ = self;
+        return error.NotSupported;
+    }
 };
 
 // GATT Server / Peripheral Mode
@@ -518,7 +612,9 @@ pub const AcceptedConnection = l2cap.AcceptedConnection;
 pub const L2capSignalingPdu = l2cap.L2capSignalingPdu;
 pub const SignalingOpcode = l2cap.SignalingOpcode;
 pub const L2capHeader = l2cap.L2capHeader;
-
+pub const AclReassembler = l2cap.AclReassembler;
+pub const L2capFrame = l2cap.L2capFrame;
+pub const PbFlag = l2cap.PbFlag;
 
 // Raw HCI Subsystem (Zero-Daemon / Embedded Mode)
 pub const hci = @import("hci/mod.zig");
@@ -530,7 +626,10 @@ pub const HciEvent = hci.HciEvent;
 pub const HciAdvertisingReport = hci.HciAdvertisingReport;
 pub const HciExtAdvertisingReport = hci.HciExtAdvertisingReport;
 pub const ExtAdvParams = hci.ExtAdvParams;
-
+pub const H4Type = hci.H4Type;
+pub const H4Packet = hci.H4Packet;
+pub const H4StreamParser = hci.H4StreamParser;
+pub const H4Serializer = hci.H4Serializer;
 
 // Bluetooth Cryptography & Security Manager Protocol (SMP)
 pub const crypto = @import("crypto/mod.zig");
@@ -549,6 +648,8 @@ pub const PairingFailedReason = crypto.PairingFailedReason;
 test {
     std.testing.refAllDecls(@This());
     _ = core;
+    _ = backend;
+    _ = tooling;
     _ = profiles;
     _ = l2cap;
     _ = bluez;
@@ -564,5 +665,3 @@ test {
         _ = event_loop_mod;
     }
 }
-
-

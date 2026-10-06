@@ -435,10 +435,10 @@ test "MessageIter: Big-Endian decoding & safe sentinel string slicing" {
     // uint32 (0x12345678 in BE) + int16 (-1234 in BE) + string "BlueZ"
     const buf = [_]u8{
         0x12, 0x34, 0x56, 0x78, // uint32
-        0xFB, 0x2E,             // int16: -1234 (0xFB2E)
-        0x00, 0x00,             // 2 bytes padding to align offset to 4 for string
+        0xFB, 0x2E, // int16: -1234 (0xFB2E)
+        0x00, 0x00, // 2 bytes padding to align offset to 4 for string
         0x00, 0x00, 0x00, 0x05, // string length = 5 (BE)
-        'B',  'l',  'u',  'e',  'Z', 0x00, // "BlueZ\0"
+        'B', 'l', 'u', 'e', 'Z', 0x00, // "BlueZ\0"
     };
 
     var it = MessageIter.initEndian(&buf, 0, buf.len, "uns", .big);

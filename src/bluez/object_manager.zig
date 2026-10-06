@@ -618,4 +618,3 @@ test "parseManagedObjects correctly decodes adapters and devices without skippin
     try std.testing.expectEqual(@as(?i16, -55), handler.device_rssi);
     try std.testing.expect(handler.device_name_match);
 }
-

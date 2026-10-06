@@ -17,8 +17,13 @@ pub const commands = @import("commands.zig");
 pub const events = @import("events.zig");
 pub const socket = @import("socket.zig");
 pub const controller = @import("controller.zig");
+pub const h4 = @import("h4.zig");
 
 // Primary re-exports
+pub const H4Type = h4.H4Type;
+pub const H4Packet = h4.H4Packet;
+pub const H4StreamParser = h4.H4StreamParser;
+pub const H4Serializer = h4.H4Serializer;
 pub const HciSocket = socket.HciSocket;
 pub const HciError = socket.HciError;
 pub const HciFilter = filter.HciFilter;
@@ -54,4 +59,5 @@ test {
     _ = events;
     _ = socket;
     _ = controller;
+    _ = h4;
 }

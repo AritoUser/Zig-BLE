@@ -80,7 +80,7 @@ pub fn main() !void {
     {
         var adv_packet = [_]u8{
             0x02, 0x01, 0x06, // Flags: General Discoverable + BR/EDR Not Supported
-            0x0F, 0x09, 'Z',  'i',  'g', 'H', 'e', 'a', 'r', 't', 'R', 'a', 't', 'e', '0', '1', // Complete Local Name
+            0x0F, 0x09, 'Z', 'i', 'g', 'H', 'e', 'a', 'r', 't', 'R', 'a', 't', 'e', '0', '1', // Complete Local Name
             0x03, 0x19, 0x40, 0x03, // Appearance: Heart Rate Sensor (832)
             0x07, 0xFF, 0x59, 0x00, 0xDE, 0xAD, 0xBE, 0xEF, // Mfg: Nordic Semi (0x0059) + payload
         };
@@ -109,7 +109,8 @@ pub fn main() !void {
         var adv_packet = [_]u8{
             0x02, 0x01, 0x06,
             0x05, 0x03, 0x0D, 0x18, 0x0F, 0x18, // 16-bit Service UUIDs (Heart Rate, Battery)
-            0x07, 0x09, 'P',  'u',  'l',  's',  'e', '1',
+            0x07, 0x09, 'P',  'u',  'l',  's',
+            'e',  '1',
             0x05, 0xFF, 0x4C, 0x00, 0x01, 0x02, // Apple Inc. Company ID
         };
 
@@ -359,6 +360,120 @@ pub fn main() !void {
         std.mem.doNotOptimizeAway(dummy_sum);
 
         printResult("D-Bus Wire MessageIter (Zero-Copy)", iterations, elapsed);
+    }
+
+    // ------------------------------------------------------------------------
+    // Benchmark 10: H4 UART Stream Parser (Streaming Zero-Allocation Engine)
+    // ------------------------------------------------------------------------
+    {
+        const h4_stream = [_]u8{
+            0x04, 0x0E, 0x04, 0x01, 0x03, 0x0C, 0x00, // HCI Command Complete (Reset, status=0)
+        };
+        var parser = Zig_BLE.H4StreamParser.init();
+        var storage: [64]u8 = undefined;
+
+        const iterations: u64 = 5_000_000;
+        var dummy_pkts: u64 = 0;
+
+        const timer = Timer.start();
+        for (0..iterations) |_| {
+            parser.reset();
+            const res = (try parser.feed(&h4_stream, &storage)).?;
+            std.mem.doNotOptimizeAway(&res);
+            dummy_pkts +%= 1;
+        }
+        const elapsed = timer.read();
+        std.mem.doNotOptimizeAway(dummy_pkts);
+
+        printResult("H4StreamParser.feed (UART Frame Parser)", iterations, elapsed);
+    }
+
+    // ------------------------------------------------------------------------
+    // Benchmark 11: L2CAP ACL Zero-Allocation Frame Reassembler
+    // ------------------------------------------------------------------------
+    {
+        var reassembler = Zig_BLE.AclReassembler(512).init();
+        const l2cap_pdu = [_]u8{ 0x05, 0x00, 0x04, 0x00, 0x02, 0x17, 0x00, 0x00, 0x00 };
+
+        const iterations: u64 = 5_000_000;
+        var dummy_reassembled: u64 = 0;
+
+        const timer = Timer.start();
+        for (0..iterations) |_| {
+            const frame = (try reassembler.processFragment(0x0040, Zig_BLE.PbFlag.FIRST_NON_FLUSHABLE, &l2cap_pdu)).?;
+            std.mem.doNotOptimizeAway(&frame);
+            dummy_reassembled +%= frame.length;
+        }
+        const elapsed = timer.read();
+        std.mem.doNotOptimizeAway(dummy_reassembled);
+
+        printResult("AclReassembler.processFragment (Zero-Copy)", iterations, elapsed);
+    }
+
+    // ------------------------------------------------------------------------
+    // Benchmark 12: GATT Long Transfers (Prepare/Execute Write Pipeline)
+    // ------------------------------------------------------------------------
+    {
+        const test_data = "Zig-BLE-v1.0.0-HighPerformanceEmbeddedBluetoothEngineToken!";
+        var queue = Zig_BLE.ServerPrepareWriteQueue.init();
+
+        const iterations: u64 = 1_000_000;
+        var dummy_bytes: usize = 0;
+
+        const timer = Timer.start();
+        for (0..iterations) |_| {
+            queue.reset();
+            var iter = Zig_BLE.LongWriteIterator.init(0x0010, test_data, 23);
+            while (iter.next()) |chunk| {
+                try queue.enqueue(chunk);
+            }
+            var dest: [128]u8 = undefined;
+            const written = try queue.assembleForHandle(0x0010, &dest);
+            dummy_bytes +%= written;
+        }
+        const elapsed = timer.read();
+        std.mem.doNotOptimizeAway(dummy_bytes);
+
+        printResult("GATT LongWrite (Chunk + Server Queue)", iterations, elapsed);
+    }
+
+    // ------------------------------------------------------------------------
+    // Benchmark 13: BondStore NVS Image Serialization & Deserialization
+    // ------------------------------------------------------------------------
+    {
+        var store = Zig_BLE.MemoryBondStore(4).init();
+        const test_addr = Zig_BLE.Address{ .bytes = [_]u8{ 0x78, 0xB6, 0xFE, 0x6C, 0x4E, 0xA4 } };
+        var rec = Zig_BLE.BondRecord{
+            .address = test_addr,
+            .keys = .{
+                .ltk = [_]u8{0xAB} ** 16,
+                .rand = 0x1234567890ABCDEF,
+                .ediv = 0x4321,
+                .authenticated = true,
+            },
+        };
+        rec.setCccd(0x0010, 0x0001);
+        rec.setCccd(0x0014, 0x0002);
+        try store.save(rec);
+
+        var nvs_buf: [256]u8 = undefined;
+        const serialized_len = try store.serialize(&nvs_buf);
+
+        const iterations: u64 = 2_000_000;
+        var dummy_valid: u64 = 0;
+
+        const timer = Timer.start();
+        for (0..iterations) |_| {
+            var temp_store = Zig_BLE.MemoryBondStore(4).init();
+            try temp_store.deserialize(nvs_buf[0..serialized_len]);
+            if (temp_store.load(test_addr)) |loaded| {
+                dummy_valid +%= loaded.cccd_count;
+            }
+        }
+        const elapsed = timer.read();
+        std.mem.doNotOptimizeAway(dummy_valid);
+
+        printResult("BondStore.deserialize (NVS Image)", iterations, elapsed);
     }
 
     std.debug.print("=========================================================================================\n", .{});

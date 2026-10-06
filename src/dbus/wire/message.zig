@@ -240,127 +240,125 @@ pub const Message = struct {
     /// Finalizes the message and serializes the complete wire block with serial.
     pub fn finalize(self: *Message, serial: u32) ![]const u8 {
         self.fixed_header.serial = serial;
-        self.wire_bytes.clearRetainingCapacity();
 
-        // 1. Temporary buffer for header fields a(yv) on the stack (zero heap allocations)
-        // 2048 bytes comfortably accommodates long object paths, interfaces, and signatures.
+        // 1. Format header fields directly into L1 stack buffer (zero allocations, zero reallocations)
         var stack_fields: [2048]u8 = undefined;
-        var fba = std.heap.FixedBufferAllocator.init(&stack_fields);
-        var fields_buf = ByteBuffer.init(fba.allocator());
-        defer fields_buf.deinit();
+        var fields_len: usize = 0;
 
-        // Path (Field 1, 'o')
-        if (self.path) |p| {
-            try appendHeaderField(&fields_buf, HeaderField.path, "o", p);
-        }
-        // Interface (Field 2, 's')
-        if (self.interface) |iface| {
-            try appendHeaderField(&fields_buf, HeaderField.interface, "s", iface);
-        }
-        // Member (Field 3, 's')
-        if (self.member) |mem| {
-            try appendHeaderField(&fields_buf, HeaderField.member, "s", mem);
-        }
-        // ErrorName (Field 4, 's')
-        if (self.error_name) |err_n| {
-            try appendHeaderField(&fields_buf, HeaderField.error_name, "s", err_n);
-        }
-        // ReplySerial (Field 5, 'u')
-        if (self.reply_serial) |r_ser| {
-            try appendHeaderFieldUint32(&fields_buf, HeaderField.reply_serial, r_ser);
-        }
-        // Destination (Field 6, 's')
-        if (self.destination) |dest| {
-            try appendHeaderField(&fields_buf, HeaderField.destination, "s", dest);
-        }
-        // Signature (Field 8, 'g')
+        if (self.path) |p| appendFieldRaw(&stack_fields, &fields_len, HeaderField.path, "o", p);
+        if (self.interface) |iface| appendFieldRaw(&stack_fields, &fields_len, HeaderField.interface, "s", iface);
+        if (self.member) |mem| appendFieldRaw(&stack_fields, &fields_len, HeaderField.member, "s", mem);
+        if (self.error_name) |err_n| appendFieldRaw(&stack_fields, &fields_len, HeaderField.error_name, "s", err_n);
+        if (self.reply_serial) |r_ser| appendFieldUint32Raw(&stack_fields, &fields_len, HeaderField.reply_serial, r_ser);
+        if (self.destination) |dest| appendFieldRaw(&stack_fields, &fields_len, HeaderField.destination, "s", dest);
         if (self.body_sig_buf) |*sig_b| {
-            if (sig_b.len > 0) {
-                try appendHeaderFieldSignature(&fields_buf, HeaderField.signature, sig_b.getSlice());
-            }
+            if (sig_b.len > 0) appendFieldSignatureRaw(&stack_fields, &fields_len, HeaderField.signature, sig_b.getSlice());
         }
-        // Unix FDs (Field 9, 'u')
-        if (self.fd_count > 0) {
-            try appendHeaderFieldUint32(&fields_buf, HeaderField.unix_fds, self.fd_count);
-        }
+        if (self.fd_count > 0) appendFieldUint32Raw(&stack_fields, &fields_len, HeaderField.unix_fds, self.fd_count);
 
-        const fields_len: u32 = @intCast(fields_buf.len);
-        self.fixed_header.fields_len = fields_len;
+        const fields_len_u32: u32 = @intCast(fields_len);
+        self.fixed_header.fields_len = fields_len_u32;
 
         const body_len: u32 = if (self.body_builder_buf) |*b| @intCast(b.len) else 0;
         self.fixed_header.body_len = body_len;
 
-        // 2. Encode fixed 16-byte header
-        var fixed_bytes: [16]u8 = undefined;
-        self.fixed_header.encode(&fixed_bytes);
-        try self.wire_bytes.appendSlice(&fixed_bytes);
+        const padding = header.calcHeaderPadding(fields_len_u32);
+        const total_size = 16 + fields_len + padding + body_len;
 
-        // 3. Append header fields
-        try self.wire_bytes.appendSlice(fields_buf.getSlice());
+        // 2. Pre-allocate exact wire buffer capacity in one shot
+        try self.wire_bytes.ensureTotalCapacity(total_size);
+        const out_dest = self.wire_bytes.data;
 
-        // 4. Insert computed padding up to next 8-byte offset for the body
-        const padding = header.calcHeaderPadding(fields_len);
+        // 3. Fast contiguous layout
+        self.fixed_header.encode(out_dest[0..16]);
+        @memcpy(out_dest[16 .. 16 + fields_len], stack_fields[0..fields_len]);
+
         if (padding > 0) {
-            try self.wire_bytes.appendNTimes(0, padding);
+            @memset(out_dest[16 + fields_len .. 16 + fields_len + padding], 0);
         }
 
-        // 5. Append body bytes
         if (self.body_builder_buf) |*b| {
-            try self.wire_bytes.appendSlice(b.getSlice());
+            const body_start = 16 + fields_len + padding;
+            @memcpy(out_dest[body_start .. body_start + body_len], b.getSlice());
         }
 
+        self.wire_bytes.len = total_size;
         return self.wire_bytes.getSlice();
     }
 
-    fn appendHeaderField(buf: *ByteBuffer, code: u8, sig: [:0]const u8, str_val: []const u8) !void {
-        const pad = types.paddingRequired(16 + buf.len, 8);
-        if (pad > 0) try buf.appendNTimes(0, pad);
+    inline fn appendFieldRaw(dest: []u8, cursor: *usize, code: u8, sig: [:0]const u8, str_val: []const u8) void {
+        const c = cursor.*;
+        const pad = types.paddingRequired(16 + c, 8);
+        @memset(dest[c .. c + pad], 0);
+        var cur = c + pad;
 
-        try buf.append(code); // y
-        try buf.append(@intCast(sig.len)); // Signature length
-        try buf.appendSlice(sig);
-        try buf.append(0); // null terminator
+        dest[cur] = code;
+        dest[cur + 1] = @intCast(sig.len);
+        cur += 2;
 
-        const str_pad = types.paddingRequired(16 + buf.len, 4);
-        if (str_pad > 0) try buf.appendNTimes(0, str_pad);
+        @memcpy(dest[cur .. cur + sig.len], sig);
+        cur += sig.len;
+        dest[cur] = 0;
+        cur += 1;
 
-        const len: u32 = @intCast(str_val.len);
-        var len_bytes: [4]u8 = undefined;
-        std.mem.writeInt(u32, &len_bytes, len, .little);
-        try buf.appendSlice(&len_bytes);
-        try buf.appendSlice(str_val);
-        try buf.append(0);
+        const str_pad = types.paddingRequired(16 + cur, 4);
+        @memset(dest[cur .. cur + str_pad], 0);
+        cur += str_pad;
+
+        std.mem.writeInt(u32, dest[cur .. cur + 4][0..4], @intCast(str_val.len), .little);
+        cur += 4;
+
+        @memcpy(dest[cur .. cur + str_val.len], str_val);
+        cur += str_val.len;
+        dest[cur] = 0;
+        cur += 1;
+
+        cursor.* = cur;
     }
 
-    fn appendHeaderFieldUint32(buf: *ByteBuffer, code: u8, val: u32) !void {
-        const pad = types.paddingRequired(16 + buf.len, 8);
-        if (pad > 0) try buf.appendNTimes(0, pad);
+    inline fn appendFieldUint32Raw(dest: []u8, cursor: *usize, code: u8, val: u32) void {
+        const c = cursor.*;
+        const pad = types.paddingRequired(16 + c, 8);
+        @memset(dest[c .. c + pad], 0);
+        var cur = c + pad;
 
-        try buf.append(code);
-        try buf.append(1); // Signature 'u' len
-        try buf.append('u');
-        try buf.append(0);
+        dest[cur] = code;
+        dest[cur + 1] = 1;
+        dest[cur + 2] = 'u';
+        dest[cur + 3] = 0;
+        cur += 4;
 
-        const val_pad = types.paddingRequired(16 + buf.len, 4);
-        if (val_pad > 0) try buf.appendNTimes(0, val_pad);
+        const val_pad = types.paddingRequired(16 + cur, 4);
+        @memset(dest[cur .. cur + val_pad], 0);
+        cur += val_pad;
 
-        var val_bytes: [4]u8 = undefined;
-        std.mem.writeInt(u32, &val_bytes, val, .little);
-        try buf.appendSlice(&val_bytes);
+        std.mem.writeInt(u32, dest[cur .. cur + 4][0..4], val, .little);
+        cur += 4;
+
+        cursor.* = cur;
     }
 
-    fn appendHeaderFieldSignature(buf: *ByteBuffer, code: u8, sig_val: []const u8) !void {
-        const pad = types.paddingRequired(16 + buf.len, 8);
-        if (pad > 0) try buf.appendNTimes(0, pad);
+    inline fn appendFieldSignatureRaw(dest: []u8, cursor: *usize, code: u8, sig_val: []const u8) void {
+        const c = cursor.*;
+        const pad = types.paddingRequired(16 + c, 8);
+        @memset(dest[c .. c + pad], 0);
+        var cur = c + pad;
 
-        try buf.append(code);
-        try buf.append(1); // Signature 'g' len
-        try buf.append('g');
-        try buf.append(0);
+        dest[cur] = code;
+        dest[cur + 1] = 1;
+        dest[cur + 2] = 'g';
+        dest[cur + 3] = 0;
+        cur += 4;
 
-        try buf.append(@intCast(sig_val.len));
-        try buf.appendSlice(sig_val);
-        try buf.append(0);
+        dest[cur] = @intCast(sig_val.len);
+        cur += 1;
+
+        @memcpy(dest[cur .. cur + sig_val.len], sig_val);
+        cur += sig_val.len;
+        dest[cur] = 0;
+        cur += 1;
+
+        cursor.* = cur;
     }
 };
 

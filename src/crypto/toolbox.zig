@@ -27,8 +27,8 @@ fn swapBuf(src: []const u8, dst: []u8) void {
 }
 
 fn xor128(a: *const [16]u8, b: *const [16]u8, out: *[16]u8) void {
-    const au = @as(*const align(1) u128, @ptrCast(a)).*;
-    const bu = @as(*const align(1) u128, @ptrCast(b)).*;
+    const au = @as(*align(1) const u128, @ptrCast(a)).*;
+    const bu = @as(*align(1) const u128, @ptrCast(b)).*;
     @as(*align(1) u128, @ptrCast(out)).* = au ^ bu;
 }
 

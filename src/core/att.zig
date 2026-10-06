@@ -1125,8 +1125,10 @@ test "ATT: FindInformationResponse iterator" {
     // Item 2: handle 0x0011, UUID 0x2A37 (Heart Rate Measurement)
     const raw = [_]u8{
         0x05, 0x01,
-        0x10, 0x00, 0x03, 0x28,
-        0x11, 0x00, 0x37, 0x2A,
+        0x10, 0x00,
+        0x03, 0x28,
+        0x11, 0x00,
+        0x37, 0x2A,
     };
     const parsed = try AttPdu.parse(&raw);
     var it = parsed.find_info_rsp.iterator();
@@ -1195,5 +1197,3 @@ test "ATT: SignedWriteCommand encode and decode roundtrip" {
     try std.testing.expectEqualStrings("AuthPayload", parsed.signed_write_cmd.value);
     try std.testing.expectEqual([_]u8{ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12 }, parsed.signed_write_cmd.signature);
 }
-
-

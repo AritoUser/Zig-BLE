@@ -378,4 +378,3 @@ test "Advertisement config with ServiceData" {
     try std.testing.expect(cfg.service_data.?.uuid.eql(UUID.from16(0xFEAA)));
     try std.testing.expectEqualSlices(u8, &eddystone_url, cfg.service_data.?.data);
 }
-

@@ -37,7 +37,7 @@ pub fn main() !void {
     // 3. Zero-Allocation Advertising Packet Parser
     const adv_packet = [_]u8{
         0x02, 0x01, 0x06, // Flags: General Discoverable + BR/EDR Not Supported
-        0x0D, 0x09, 'P',  'u',  'l', 's', 'e', ' ', 'S', 'e', 'n', 's', 'o', 'r', // Complete Local Name (12 chars + 1 type byte = 13 / 0x0D)
+        0x0D, 0x09, 'P', 'u', 'l', 's', 'e', ' ', 'S', 'e', 'n', 's', 'o', 'r', // Complete Local Name (12 chars + 1 type byte = 13 / 0x0D)
         0x03, 0x19, 0x40, 0x03, // Appearance: Heart Rate Sensor (832)
         0x05, 0xFF, 0x59, 0x00, 0x01, 0x02, // Manufacturer: Nordic Semiconductor (0x0059) + payload
     };
@@ -103,7 +103,7 @@ pub fn main() !void {
                     std.debug.print("      -> Device Name:  {s}\n", .{name});
                 }
                 std.debug.print("      -> Connected: {}, Paired: {}\n", .{ info.connected, info.paired });
-                std.debug.print("      -> ServicesResolved: {}\n", .{ info.services_resolved });
+                std.debug.print("      -> ServicesResolved: {}\n", .{info.services_resolved});
                 if (info.rssi) |rssi| {
                     std.debug.print("      -> RSSI: {d} dBm\n", .{rssi});
                 }
@@ -279,177 +279,177 @@ pub fn main() !void {
         } else {
             std.debug.print("-> Connection established (GAP Link established)!\n", .{});
 
-        std.debug.print("-> Waiting for GATT service discovery (ServicesResolved == true)...\n", .{});
-        dev.waitForServicesResolved(15000) catch |err| {
-            std.debug.print("Warning while waiting for ServicesResolved: {s}\n", .{@errorName(err)});
-        };
+            std.debug.print("-> Waiting for GATT service discovery (ServicesResolved == true)...\n", .{});
+            dev.waitForServicesResolved(15000) catch |err| {
+                std.debug.print("Warning while waiting for ServicesResolved: {s}\n", .{@errorName(err)});
+            };
 
-        const resolved = dev.areServicesResolved() catch false;
-        std.debug.print("-> ServicesResolved Status: {}\n", .{resolved});
+            const resolved = dev.areServicesResolved() catch false;
+            std.debug.print("-> ServicesResolved Status: {}\n", .{resolved});
 
-        std.debug.print("\n-> Exploring GATT structure of A-PC:\n", .{});
-        var gatt_reply = try conn.callMethod(
-            Zig_BLE.BlueZ.service_name,
-            Zig_BLE.BlueZ.root_path,
-            Zig_BLE.BlueZ.ObjectManager.interface_name,
-            Zig_BLE.BlueZ.ObjectManager.Methods.GetManagedObjects,
-            5000,
-        );
-        defer gatt_reply.deinit();
+            std.debug.print("\n-> Exploring GATT structure of A-PC:\n", .{});
+            var gatt_reply = try conn.callMethod(
+                Zig_BLE.BlueZ.service_name,
+                Zig_BLE.BlueZ.root_path,
+                Zig_BLE.BlueZ.ObjectManager.interface_name,
+                Zig_BLE.BlueZ.ObjectManager.Methods.GetManagedObjects,
+                5000,
+            );
+            defer gatt_reply.deinit();
 
-        const GattExplorer = struct {
-            target_path: [:0]const u8,
-            service_count: usize = 0,
-            char_count: usize = 0,
-            connection: *Zig_BLE.dbus.Connection,
+            const GattExplorer = struct {
+                target_path: [:0]const u8,
+                service_count: usize = 0,
+                char_count: usize = 0,
+                connection: *Zig_BLE.dbus.Connection,
 
-            notify_paths: [8][224]u8 = undefined,
-            notify_lens: [8]u8 = undefined,
-            notify_count: usize = 0,
+                notify_paths: [8][224]u8 = undefined,
+                notify_lens: [8]u8 = undefined,
+                notify_count: usize = 0,
 
-            pub fn onGattService(self: *@This(), s: Zig_BLE.GattServiceInfo) void {
-                if (std.mem.startsWith(u8, s.getDevicePath(), self.target_path)) {
-                    self.service_count += 1;
-                    const uuid_str = s.uuid.toString();
-                    const s_name = Zig_BLE.Services.getName(s.uuid) orelse "Vendor-Specific";
-                    std.debug.print("\n   [GATT SERVICE #{d}] UUID: {s} ({s})\n", .{
-                        self.service_count,
-                        &uuid_str,
-                        s_name,
-                    });
-                    std.debug.print("      Path: {s}, Primary: {}\n", .{ s.getObjectPath(), s.primary });
-                }
-            }
-
-            pub fn onGattCharacteristic(self: *@This(), c: Zig_BLE.GattCharacteristicInfo) void {
-                if (std.mem.startsWith(u8, c.getObjectPath(), self.target_path)) {
-                    self.char_count += 1;
-                    const uuid_str = c.uuid.toString();
-                    const c_name = Zig_BLE.Characteristics.getName(c.uuid) orelse "Custom Characteristic";
-                    std.debug.print("      * [CHARACTERISTIC] UUID: {s} ({s})\n", .{
-                        &uuid_str,
-                        c_name,
-                    });
-                    std.debug.print("        Properties: Read={}, Write={}, Notify={}, Indicate={}\n", .{
-                        c.flags.read,
-                        c.flags.write or c.flags.write_without_response,
-                        c.flags.notify,
-                        c.flags.indicate,
-                    });
-
-                    // Save notifiable / indicatable characteristics for Section 7
-                    if ((c.flags.notify or c.flags.indicate) and self.notify_count < self.notify_paths.len) {
-                        var buf: [224]u8 = undefined;
-                        const p = c.getObjectPath();
-                        const len = @min(buf.len - 1, p.len);
-                        @memcpy(buf[0..len], p[0..len]);
-                        buf[len] = 0;
-                        self.notify_paths[self.notify_count] = buf;
-                        self.notify_lens[self.notify_count] = @intCast(len);
-                        self.notify_count += 1;
+                pub fn onGattService(self: *@This(), s: Zig_BLE.GattServiceInfo) void {
+                    if (std.mem.startsWith(u8, s.getDevicePath(), self.target_path)) {
+                        self.service_count += 1;
+                        const uuid_str = s.uuid.toString();
+                        const s_name = Zig_BLE.Services.getName(s.uuid) orelse "Vendor-Specific";
+                        std.debug.print("\n   [GATT SERVICE #{d}] UUID: {s} ({s})\n", .{
+                            self.service_count,
+                            &uuid_str,
+                            s_name,
+                        });
+                        std.debug.print("      Path: {s}, Primary: {}\n", .{ s.getObjectPath(), s.primary });
                     }
+                }
 
-                    // If readable, attempt to read value directly without heap allocation!
-                    if (c.flags.read) {
-                        var char_client = Zig_BLE.GattCharacteristic.init(self.connection, c.getObjectPath());
-                        var val_buf: [128]u8 = undefined;
-                        if (char_client.readValue(&val_buf)) |read_len| {
-                            const val = val_buf[0..read_len];
-                            std.debug.print("        -> Read value ({d} bytes): ", .{read_len});
-                            var is_ascii = true;
-                            for (val) |b| {
-                                if (b < 0x20 or b > 0x7E) {
-                                    is_ascii = false;
-                                    break;
+                pub fn onGattCharacteristic(self: *@This(), c: Zig_BLE.GattCharacteristicInfo) void {
+                    if (std.mem.startsWith(u8, c.getObjectPath(), self.target_path)) {
+                        self.char_count += 1;
+                        const uuid_str = c.uuid.toString();
+                        const c_name = Zig_BLE.Characteristics.getName(c.uuid) orelse "Custom Characteristic";
+                        std.debug.print("      * [CHARACTERISTIC] UUID: {s} ({s})\n", .{
+                            &uuid_str,
+                            c_name,
+                        });
+                        std.debug.print("        Properties: Read={}, Write={}, Notify={}, Indicate={}\n", .{
+                            c.flags.read,
+                            c.flags.write or c.flags.write_without_response,
+                            c.flags.notify,
+                            c.flags.indicate,
+                        });
+
+                        // Save notifiable / indicatable characteristics for Section 7
+                        if ((c.flags.notify or c.flags.indicate) and self.notify_count < self.notify_paths.len) {
+                            var buf: [224]u8 = undefined;
+                            const p = c.getObjectPath();
+                            const len = @min(buf.len - 1, p.len);
+                            @memcpy(buf[0..len], p[0..len]);
+                            buf[len] = 0;
+                            self.notify_paths[self.notify_count] = buf;
+                            self.notify_lens[self.notify_count] = @intCast(len);
+                            self.notify_count += 1;
+                        }
+
+                        // If readable, attempt to read value directly without heap allocation!
+                        if (c.flags.read) {
+                            var char_client = Zig_BLE.GattCharacteristic.init(self.connection, c.getObjectPath());
+                            var val_buf: [128]u8 = undefined;
+                            if (char_client.readValue(&val_buf)) |read_len| {
+                                const val = val_buf[0..read_len];
+                                std.debug.print("        -> Read value ({d} bytes): ", .{read_len});
+                                var is_ascii = true;
+                                for (val) |b| {
+                                    if (b < 0x20 or b > 0x7E) {
+                                        is_ascii = false;
+                                        break;
+                                    }
                                 }
+                                if (is_ascii and val.len > 0) {
+                                    std.debug.print("\"{s}\" [Hex: ", .{val});
+                                } else {
+                                    std.debug.print("[Hex: ", .{});
+                                }
+                                for (val) |b| {
+                                    std.debug.print("{X:0>2} ", .{b});
+                                }
+                                std.debug.print("]\n", .{});
+                            } else |read_err| {
+                                std.debug.print("        -> Read attempt: {s}\n", .{@errorName(read_err)});
                             }
-                            if (is_ascii and val.len > 0) {
-                                std.debug.print("\"{s}\" [Hex: ", .{val});
-                            } else {
-                                std.debug.print("[Hex: ", .{});
-                            }
-                            for (val) |b| {
-                                std.debug.print("{X:0>2} ", .{b});
-                            }
-                            std.debug.print("]\n", .{});
-                        } else |read_err| {
-                            std.debug.print("        -> Read attempt: {s}\n", .{@errorName(read_err)});
                         }
                     }
-                }
-            }
-        };
-
-        var explorer = GattExplorer{
-            .target_path = target_path,
-            .connection = &conn,
-        };
-        var gatt_it = gatt_reply.iterator();
-        Zig_BLE.bluez.parseManagedObjects(&gatt_it, GattExplorer, &explorer);
-
-        std.debug.print("\n-> GATT exploration complete: {d} services, {d} characteristics.\n", .{
-            explorer.service_count,
-            explorer.char_count,
-        });
-
-        // 7. Live Notification-Streaming Test
-        if (explorer.notify_count > 0) {
-            std.debug.print("\n=== 7. Live Notification Streaming Test on A-PC ===\n", .{});
-            std.debug.print("-> Found notifiable/indicatable characteristics: {d}\n", .{explorer.notify_count});
-
-            const StreamContext = struct {
-                total_packets: usize = 0,
-
-                pub fn onPacket(self: *@This(), char_path: [:0]const u8, data: []const u8) void {
-                    self.total_packets += 1;
-                    std.debug.print("   [NOTIFICATION STREAM #{d}] from {s}\n", .{ self.total_packets, char_path });
-                    std.debug.print("      -> Payload ({d} bytes): [Hex: ", .{data.len});
-                    for (data) |b| std.debug.print("{X:0>2} ", .{b});
-                    std.debug.print("]\n", .{});
                 }
             };
 
-            var stream_ctx = StreamContext{};
-            var dispatcher = Zig_BLE.NotificationDispatcher.init();
-            var active_notif_char: ?Zig_BLE.GattCharacteristic = null;
+            var explorer = GattExplorer{
+                .target_path = target_path,
+                .connection = &conn,
+            };
+            var gatt_it = gatt_reply.iterator();
+            Zig_BLE.bluez.parseManagedObjects(&gatt_it, GattExplorer, &explorer);
 
-            for (0..explorer.notify_count) |i| {
-                const notif_path = explorer.notify_paths[i][0..explorer.notify_lens[i] :0];
-                std.debug.print("-> Testing startNotify() on: {s}...\n", .{notif_path});
-                var notif_char = Zig_BLE.GattCharacteristic.init(&conn, notif_path);
-                if (notif_char.startNotify()) {
-                    std.debug.print("   => StartNotify SUCCESSFUL on {s}!\n", .{notif_path});
-                    try dispatcher.subscribe(notif_path, struct {
-                        fn handle(char_path: [:0]const u8, data: []const u8, ctx: ?*anyopaque) void {
-                            const s: *StreamContext = @ptrCast(@alignCast(ctx.?));
-                            s.onPacket(char_path, data);
-                        }
-                    }.handle, &stream_ctx);
-                    active_notif_char = notif_char;
-                    break;
-                } else |err| {
-                    std.debug.print("   => StartNotify rejected: {s}\n", .{@errorName(err)});
-                }
-            }
+            std.debug.print("\n-> GATT exploration complete: {d} services, {d} characteristics.\n", .{
+                explorer.service_count,
+                explorer.char_count,
+            });
 
-            if (active_notif_char) |*notif_char| {
-                std.debug.print("-> Registering NotificationDispatcher and listening for 5 seconds...\n", .{});
-                var notif_iters: usize = 0;
-                while (notif_iters < 25) : (notif_iters += 1) {
-                    _ = conn.pollSocket(200);
-                    while (conn.popMessage()) |msg| {
-                        defer msg.deinit();
-                        _ = dispatcher.processMessage(&msg);
+            // 7. Live Notification-Streaming Test
+            if (explorer.notify_count > 0) {
+                std.debug.print("\n=== 7. Live Notification Streaming Test on A-PC ===\n", .{});
+                std.debug.print("-> Found notifiable/indicatable characteristics: {d}\n", .{explorer.notify_count});
+
+                const StreamContext = struct {
+                    total_packets: usize = 0,
+
+                    pub fn onPacket(self: *@This(), char_path: [:0]const u8, data: []const u8) void {
+                        self.total_packets += 1;
+                        std.debug.print("   [NOTIFICATION STREAM #{d}] from {s}\n", .{ self.total_packets, char_path });
+                        std.debug.print("      -> Payload ({d} bytes): [Hex: ", .{data.len});
+                        for (data) |b| std.debug.print("{X:0>2} ", .{b});
+                        std.debug.print("]\n", .{});
+                    }
+                };
+
+                var stream_ctx = StreamContext{};
+                var dispatcher = Zig_BLE.NotificationDispatcher.init();
+                var active_notif_char: ?Zig_BLE.GattCharacteristic = null;
+
+                for (0..explorer.notify_count) |i| {
+                    const notif_path = explorer.notify_paths[i][0..explorer.notify_lens[i] :0];
+                    std.debug.print("-> Testing startNotify() on: {s}...\n", .{notif_path});
+                    var notif_char = Zig_BLE.GattCharacteristic.init(&conn, notif_path);
+                    if (notif_char.startNotify()) {
+                        std.debug.print("   => StartNotify SUCCESSFUL on {s}!\n", .{notif_path});
+                        try dispatcher.subscribe(notif_path, struct {
+                            fn handle(char_path: [:0]const u8, data: []const u8, ctx: ?*anyopaque) void {
+                                const s: *StreamContext = @ptrCast(@alignCast(ctx.?));
+                                s.onPacket(char_path, data);
+                            }
+                        }.handle, &stream_ctx);
+                        active_notif_char = notif_char;
+                        break;
+                    } else |err| {
+                        std.debug.print("   => StartNotify rejected: {s}\n", .{@errorName(err)});
                     }
                 }
 
-                std.debug.print("-> Ending notification subscription via stopNotify()...\n", .{});
-                notif_char.stopNotify() catch {};
-                std.debug.print("-> Notifications ended. Received packets: {d}\n", .{stream_ctx.total_packets});
-            } else {
-                std.debug.print("-> No unprotected notifiable characteristic available (Windows requires pairing/bonding for protected paths).\n", .{});
+                if (active_notif_char) |*notif_char| {
+                    std.debug.print("-> Registering NotificationDispatcher and listening for 5 seconds...\n", .{});
+                    var notif_iters: usize = 0;
+                    while (notif_iters < 25) : (notif_iters += 1) {
+                        _ = conn.pollSocket(200);
+                        while (conn.popMessage()) |msg| {
+                            defer msg.deinit();
+                            _ = dispatcher.processMessage(&msg);
+                        }
+                    }
+
+                    std.debug.print("-> Ending notification subscription via stopNotify()...\n", .{});
+                    notif_char.stopNotify() catch {};
+                    std.debug.print("-> Notifications ended. Received packets: {d}\n", .{stream_ctx.total_packets});
+                } else {
+                    std.debug.print("-> No unprotected notifiable characteristic available (Windows requires pairing/bonding for protected paths).\n", .{});
+                }
             }
-        }
 
             std.debug.print("\n-> Disconnecting from A-PC...\n", .{});
             dev.disconnect() catch {};
@@ -518,7 +518,7 @@ pub fn main() !void {
         const loc_char = try my_hr_service.addCharacteristic(Zig_BLE.Characteristics.body_sensor_location, .{
             .read = true,
         });
-        loc_char.setValue(&[_]u8{ 0x01 }); // Location: Chest
+        loc_char.setValue(&[_]u8{0x01}); // Location: Chest
 
         std.debug.print("-> Registering GATT server application '/org/zig_ble/app0' with {s}...\n", .{adapter.getObjectPath()});
         if (gatt_app.register()) {
@@ -552,7 +552,7 @@ pub fn main() !void {
         std.debug.print("\n=== 10. Live Unified Peripheral Engine (All-In-One High-Level API) ===\n", .{});
         var peripheral = Zig_BLE.Peripheral.init(&conn, adapter.getObjectPath(), .{
             .local_name = "Zig-HRM-Pro",
-            .service_uuids = &[_]Zig_BLE.UUID{ Zig_BLE.Services.heart_rate },
+            .service_uuids = &[_]Zig_BLE.UUID{Zig_BLE.Services.heart_rate},
             .manufacturer_data = .{
                 .company_id = Zig_BLE.CompanyId.nordic_semiconductor,
                 .data = &[_]u8{ 0xAA, 0xBB },
@@ -590,8 +590,115 @@ pub fn main() !void {
         } else |err| {
             std.debug.print("-> Peripheral start failed: {s}\n", .{@errorName(err)});
         }
+    } else {
+        std.debug.print("\n=== 4. Cross-Platform Hardware Abstraction Layer (HAL) Showcase ===\n", .{});
+        std.debug.print("-> Windows OS detected: Probing native Windows Bluetooth Hardware via WindowsBackend...\n", .{});
+
+        var win_backend = Zig_BLE.WindowsBackend.init();
+        defer win_backend.deinit();
+
+        var win_adapter = Zig_BLE.UnifiedAdapter.init(win_backend.asBackend());
+        if (win_adapter.setPowered(true)) {
+            std.debug.print("-> Native Windows Backend initialized: {s}\n", .{win_adapter.getBackendName()});
+            if (win_backend.radio) |r| {
+                if (r.getInfo()) |info| {
+                    const radio_addr_str = info.address.toString();
+                    std.debug.print("   [RADIO FOUND] Local Bluetooth Controller:\n", .{});
+                    std.debug.print("      -> Hardware MAC:     {s}\n", .{&radio_addr_str});
+                    std.debug.print("      -> Friendly Name:    {s}\n", .{info.getName()});
+                    std.debug.print("      -> Manufacturer ID:  0x{X:0>4}\n", .{info.manufacturer});
+                    std.debug.print("      -> Powered Status:   {}\n", .{try win_adapter.isPowered()});
+                }
+            }
+
+            // Real live hardware scanning on Windows
+            std.debug.print("-> Starting REAL live Bluetooth scan on your PC radio...\n", .{});
+            const RealScanner = struct {
+                count: usize = 0,
+
+                fn onDevice(discovered: *const Zig_BLE.DiscoveredDevice, udata: ?*anyopaque) void {
+                    const self: *@This() = @ptrCast(@alignCast(udata));
+                    self.count += 1;
+                    const d_addr_str = discovered.address.toString();
+                    std.debug.print("   [REAL HARDWARE SCAN RESULT #{d}] Discovered device:\n", .{self.count});
+                    std.debug.print("      -> Name: \"{s}\"\n", .{discovered.getName() orelse "(No Name)"});
+                    std.debug.print("      -> MAC:  {s}\n", .{&d_addr_str});
+                }
+            };
+
+            var real_scanner = RealScanner{};
+            try win_adapter.startScan(.{}, RealScanner.onDevice, &real_scanner);
+            std.debug.print("-> Real hardware scan complete. Total real devices found: {d}\n", .{real_scanner.count});
+        } else |err| {
+            std.debug.print("-> Windows radio access: {s}\n", .{@errorName(err)});
+        }
+
+        std.debug.print("\n-> Testing UnifiedAdapter Virtual Simulator (Mock Backend)...\n", .{});
+        var mock = Zig_BLE.MockController.init();
+        var adapter = Zig_BLE.UnifiedAdapter.init(mock.asBackend());
+
+        try adapter.setPowered(true);
+        std.debug.print("-> Unified Adapter: {s} (Powered: {})\n", .{ adapter.getBackendName(), try adapter.isPowered() });
+
+        // Simulate registering a nearby BLE Device
+        const hr_addr = try Zig_BLE.Address.parse("E4:5F:01:22:33:44");
+        var dev = Zig_BLE.MockDevice{ .address = hr_addr, .rssi = -62 };
+        dev.setName("Nordic_HRM_Sensor");
+
+        var hr_char = Zig_BLE.MockCharacteristic{
+            .uuid = Zig_BLE.Characteristics.heart_rate_measurement,
+            .can_read = true,
+            .can_write = true,
+            .can_notify = true,
+        };
+        hr_char.setValue(&[_]u8{ 0x00, 78 }); // 78 bpm
+        _ = dev.addCharacteristic(hr_char);
+        _ = try mock.addDevice(dev);
+
+        // Discovery
+        const Scanner = struct {
+            fn onScan(discovered: *const Zig_BLE.DiscoveredDevice, udata: ?*anyopaque) void {
+                _ = udata;
+                const d_addr_str = discovered.address.toString();
+                std.debug.print("   [HAL SCAN RESULT] Found: {s} (MAC: {s}, RSSI: {?d} dBm)\n", .{
+                    discovered.getName() orelse "Unknown",
+                    &d_addr_str,
+                    discovered.rssi,
+                });
+            }
+        };
+
+        std.debug.print("-> Scanning for nearby BLE peripherals...\n", .{});
+        try adapter.startScan(.{}, Scanner.onScan, null);
+        try adapter.stopScan();
+
+        // Connect & Read
+        std.debug.print("-> Connecting to simulated device...\n", .{});
+        var connected_dev = try adapter.connect(hr_addr, 1000);
+        std.debug.print("   -> Connected: {}, RSSI: {?d} dBm\n", .{ connected_dev.isConnected(), connected_dev.getRSSI() });
+
+        var read_buf: [16]u8 = undefined;
+        const read_len = try connected_dev.readCharacteristic(Zig_BLE.Characteristics.heart_rate_measurement, &read_buf);
+        std.debug.print("   -> Read GATT Heart Rate: {d} bpm ({d} bytes)\n", .{ read_buf[1], read_len });
+
+        // Subscribe to notifications
+        const NotifyHandler = struct {
+            fn onNotify(uuid: Zig_BLE.UUID, data: []const u8, udata: ?*anyopaque) void {
+                _ = uuid;
+                _ = udata;
+                if (data.len >= 2) {
+                    std.debug.print("   [HAL NOTIFICATION EVENT] Live Telemetry: Heart Rate = {d} bpm\n", .{data[1]});
+                }
+            }
+        };
+        try connected_dev.subscribe(Zig_BLE.Characteristics.heart_rate_measurement, NotifyHandler.onNotify, null);
+
+        // Trigger simulation event
+        try mock.triggerNotification(hr_addr, Zig_BLE.Characteristics.heart_rate_measurement, &[_]u8{ 0x00, 84 });
+
+        try connected_dev.disconnect();
+        std.debug.print("-> Device disconnected gracefully!\n", .{});
     }
 
     std.debug.print("\nAll operations executed successfully!\n", .{});
 }
-

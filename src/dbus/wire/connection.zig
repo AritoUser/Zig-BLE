@@ -738,4 +738,3 @@ test "Connection: Mutex mutual exclusion" {
 
     try std.testing.expectEqual(@as(u32, 4000), counter);
 }
-

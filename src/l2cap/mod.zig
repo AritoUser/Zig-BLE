@@ -58,10 +58,15 @@ pub const ReconfigureResult = signaling.ReconfigureResult;
 pub const encodeFrame = signaling.encodeFrame;
 pub const decodeFrame = signaling.decodeFrame;
 
+pub const acl_reassembler = @import("acl_reassembler.zig");
+pub const AclReassembler = acl_reassembler.AclReassembler;
+pub const L2capFrame = acl_reassembler.L2capFrame;
+pub const PbFlag = acl_reassembler.PbFlag;
+
 test {
     const std = @import("std");
     std.testing.refAllDecls(@This());
     _ = socket;
     _ = signaling;
+    _ = acl_reassembler;
 }
-

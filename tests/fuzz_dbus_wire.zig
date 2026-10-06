@@ -64,7 +64,7 @@ pub fn fuzzOneInput(data: []const u8) void {
     if (data.len > body_offset) {
         const body_slice = data[body_offset..];
         const sig = fields.signature orelse "";
-        
+
         var iter = MessageIter.init(body_slice, 0, body_slice.len, sig);
         var steps: usize = 0;
         const max_steps = 1000;

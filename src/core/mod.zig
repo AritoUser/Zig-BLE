@@ -57,6 +57,12 @@ pub const CharacteristicPresentationFormat = format.CharacteristicPresentationFo
 pub const serialize = format.serialize;
 pub const deserialize = format.deserialize;
 
+pub const transfers = @import("transfers.zig");
+pub const LongWriteIterator = transfers.LongWriteIterator;
+pub const LongReadReassembler = transfers.LongReadReassembler;
+pub const ServerPrepareWriteQueue = transfers.ServerPrepareWriteQueue;
+pub const QueuedWriteChunk = transfers.QueuedWriteChunk;
+
 test {
     std.testing.refAllDecls(@This());
     _ = types;
@@ -65,4 +71,5 @@ test {
     _ = advertising;
     _ = format;
     _ = att;
+    _ = transfers;
 }

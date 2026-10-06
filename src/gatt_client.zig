@@ -550,5 +550,3 @@ test "GattDescriptor: init and path handling" {
     var desc = GattDescriptor.init(undefined, "/org/bluez/hci0/dev_XX/service0020/char0021/desc0022");
     try std.testing.expectEqualStrings("/org/bluez/hci0/dev_XX/service0020/char0021/desc0022", desc.getObjectPath());
 }
-
-

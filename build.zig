@@ -132,12 +132,38 @@ pub fn build(b: *std.Build) void {
     // A run step that will run the second test executable.
     const run_exe_tests = b.addRunArtifact(exe_tests);
 
+    const v1_e2e_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tests/test_v1_e2e_pipeline.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "Zig_BLE", .module = mod },
+            },
+        }),
+    });
+    const run_v1_e2e_tests = b.addRunArtifact(v1_e2e_tests);
+
+    const v1_edgecase_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tests/test_v1_edgecases.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "Zig_BLE", .module = mod },
+            },
+        }),
+    });
+    const run_v1_edgecase_tests = b.addRunArtifact(v1_edgecase_tests);
+
     // A top level step for running all tests. dependOn can be called multiple
     // times and since the two run steps do not depend on one another, this will
     // make the two of them run in parallel.
     const test_step = b.step("test", "Run tests");
     test_step.dependOn(&run_mod_tests.step);
     test_step.dependOn(&run_exe_tests.step);
+    test_step.dependOn(&run_v1_e2e_tests.step);
+    test_step.dependOn(&run_v1_edgecase_tests.step);
 
     // ========================================================================
     // Standalone Examples (run-scanner, run-heart-rate)
@@ -237,6 +263,91 @@ pub fn build(b: *std.Build) void {
     }
     const run_nus_step = b.step("run-nus", "Run the Nordic UART Service (NUS) serial console example");
     run_nus_step.dependOn(&run_nus_cmd.step);
+
+    // ========================================================================
+    // Real Hardware Windows Bluetooth Scanner (run-windows-scanner)
+    // ========================================================================
+    if (target.result.os.tag == .windows) {
+        const win_scanner_exe = b.addExecutable(.{
+            .name = "win-scanner",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("examples/windows_real_scanner.zig"),
+                .target = target,
+                .optimize = optimize,
+                .imports = &.{
+                    .{ .name = "Zig_BLE", .module = mod },
+                },
+            }),
+        });
+        b.installArtifact(win_scanner_exe);
+
+        const run_win_scanner_cmd = b.addRunArtifact(win_scanner_exe);
+        if (b.args) |args| {
+            run_win_scanner_cmd.addArgs(args);
+        }
+        const run_win_scanner_step = b.step("run-windows-scanner", "Run the real hardware Windows Bluetooth scanner");
+        run_win_scanner_step.dependOn(&run_win_scanner_cmd.step);
+
+        const v1_live_exe = b.addExecutable(.{
+            .name = "v1-live-verification",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("examples/v1_live_verification.zig"),
+                .target = target,
+                .optimize = optimize,
+                .imports = &.{
+                    .{ .name = "Zig_BLE", .module = mod },
+                },
+            }),
+        });
+        b.installArtifact(v1_live_exe);
+
+        const run_v1_live_cmd = b.addRunArtifact(v1_live_exe);
+        if (b.args) |args| {
+            run_v1_live_cmd.addArgs(args);
+        }
+        const run_v1_live_step = b.step("run-v1-live", "Run the official Zig-BLE v1.0.0 Live Verification Suite");
+        run_v1_live_step.dependOn(&run_v1_live_cmd.step);
+
+        const probe_ble_exe = b.addExecutable(.{
+            .name = "probe-ble",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("examples/probe_windows_ble_devices.zig"),
+                .target = target,
+                .optimize = optimize,
+                .imports = &.{
+                    .{ .name = "Zig_BLE", .module = mod },
+                },
+            }),
+        });
+        b.installArtifact(probe_ble_exe);
+
+        const run_probe_ble_cmd = b.addRunArtifact(probe_ble_exe);
+        if (b.args) |args| {
+            run_probe_ble_cmd.addArgs(args);
+        }
+        const run_probe_ble_step = b.step("run-probe-ble", "Probe native Windows BLE device interfaces and GATT");
+        run_probe_ble_step.dependOn(&run_probe_ble_cmd.step);
+
+        const read_phone_gatt_exe = b.addExecutable(.{
+            .name = "read-phone-gatt",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("examples/read_real_phone_gatt.zig"),
+                .target = target,
+                .optimize = optimize,
+                .imports = &.{
+                    .{ .name = "Zig_BLE", .module = mod },
+                },
+            }),
+        });
+        b.installArtifact(read_phone_gatt_exe);
+
+        const run_read_phone_gatt_cmd = b.addRunArtifact(read_phone_gatt_exe);
+        if (b.args) |args| {
+            run_read_phone_gatt_cmd.addArgs(args);
+        }
+        const run_read_phone_gatt_step = b.step("run-read-phone-gatt", "Read real live GATT characteristics from S25 Ultra over the air");
+        run_read_phone_gatt_step.dependOn(&run_read_phone_gatt_cmd.step);
+    }
 
     // ========================================================================
     // L2CAP Connection-Oriented Channels Streamer (run-l2cap)

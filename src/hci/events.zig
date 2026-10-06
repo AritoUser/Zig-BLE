@@ -562,4 +562,3 @@ test "HciEvent: parse LE Extended Advertising Report" {
         else => unreachable,
     }
 }
-

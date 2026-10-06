@@ -12,4 +12,3 @@ pub const MessageBuilder = wire.MessageBuilder;
 test {
     _ = wire;
 }
-

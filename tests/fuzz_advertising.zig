@@ -173,7 +173,7 @@ pub const SeedCorpus = struct {
         // 6. Valid standard 31-byte legacy advertising packet
         &[_]u8{
             0x02, 0x01, 0x06, // Flags
-            0x09, 0x09, 'Z',  'i',  'g',  '-',  'B',  'L', 'E', '1', // Complete Local Name
+            0x09, 0x09, 'Z', 'i', 'g', '-', 'B', 'L', 'E', '1', // Complete Local Name
             0x03, 0x19, 0x40, 0x03, // Appearance (Heart Rate Sensor)
             0x05, 0xFF, 0x59, 0x00, 0x01, 0x02, // Nordic Semi Mfg Data
             0x00, 0x00, 0x00, 0x00, // Padding
@@ -183,8 +183,14 @@ pub const SeedCorpus = struct {
             0x05, 0x16, 0x0D, 0x18, 0x12, 0x34, // Service Data 16
             0x06, 0x20, 0x78, 0x56, 0x34, 0x12, 0xAA, // Service Data 32
             0x13, 0x21, // Service Data 128 (16-byte UUID + 2 bytes data)
-            0xFB, 0x34, 0x9B, 0x5F, 0x80, 0x00, 0x00, 0x80,
-            0x00, 0x10, 0x00, 0x00, 0x0D, 0x18, 0x00, 0x00,
+            0xFB, 0x34,
+            0x9B, 0x5F,
+            0x80, 0x00,
+            0x00, 0x80,
+            0x00, 0x10,
+            0x00, 0x00,
+            0x0D, 0x18,
+            0x00, 0x00,
             0xCA, 0xFE,
         },
         // 8. Service UUID Lists (16, 32, 128)
@@ -192,8 +198,14 @@ pub const SeedCorpus = struct {
             0x05, 0x03, 0x0D, 0x18, 0x0F, 0x18, // Complete 16-bit UUIDs
             0x05, 0x05, 0x11, 0x22, 0x33, 0x44, // Complete 32-bit UUIDs
             0x11, 0x07, // Complete 128-bit UUIDs
-            0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
-            0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10,
+            0x01, 0x02,
+            0x03, 0x04,
+            0x05, 0x06,
+            0x07, 0x08,
+            0x09, 0x0A,
+            0x0B, 0x0C,
+            0x0D, 0x0E,
+            0x0F, 0x10,
         },
         // 9. Malformed UTF-8 in local name (overlong / invalid sequence)
         &[_]u8{
@@ -202,8 +214,14 @@ pub const SeedCorpus = struct {
         // 10. Truncated UUID in Service Data 128 (15 bytes instead of 16)
         &[_]u8{
             0x10, 0x21, // Length 16 (1 type + 15 bytes data: truncated 128-bit UUID!)
-            0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
-            0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F,
+            0x01, 0x02,
+            0x03, 0x04,
+            0x05, 0x06,
+            0x07, 0x08,
+            0x09, 0x0A,
+            0x0B, 0x0C,
+            0x0D, 0x0E,
+            0x0F,
         },
         // 11. Truncated Company ID (< 2 bytes)
         &[_]u8{
@@ -212,9 +230,9 @@ pub const SeedCorpus = struct {
         // 12. Duplicate headers
         &[_]u8{
             0x02, 0x01, 0x06, // Flags #1
-            0x05, 0x09, 'N',  'a',  'm', 'e', // Name #1
+            0x05, 0x09, 'N', 'a', 'm', 'e', // Name #1
             0x02, 0x01, 0x02, // Flags #2
-            0x06, 0x09, 'N',  'e',  'w', 'e', 'r', // Name #2
+            0x06, 0x09, 'N', 'e', 'w', 'e', 'r', // Name #2
         },
     };
 };
@@ -317,7 +335,7 @@ pub const Mutator = struct {
         const pos = self.rand.intRangeAtMost(usize, 0, len - delete_count);
 
         // Shift left
-        for (pos .. len - delete_count) |i| {
+        for (pos..len - delete_count) |i| {
             buf[i] = buf[i + delete_count];
         }
 
@@ -366,7 +384,7 @@ pub const Mutator = struct {
             buf[cursor + 1] = self.rand.int(u8); // Random AD type
 
             // Fill payload
-            for (cursor + 2 .. cursor + 1 + elem_len) |idx| {
+            for (cursor + 2..cursor + 1 + elem_len) |idx| {
                 if (idx < actual_len) {
                     buf[idx] = self.rand.int(u8);
                 }

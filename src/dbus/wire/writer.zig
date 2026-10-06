@@ -626,6 +626,3 @@ test "MessageBuilder: Non-empty array preserves alignment and roundtrips" {
 
     try std.testing.expectEqual(@as(?u32, 12345), it.getUInt32());
 }
-
-
-

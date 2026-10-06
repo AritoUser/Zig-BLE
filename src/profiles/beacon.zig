@@ -99,10 +99,10 @@ pub const Eddystone = struct {
     };
 
     pub const UrlScheme = enum(u8) {
-        http_www = 0x00,  // "http://www."
+        http_www = 0x00, // "http://www."
         https_www = 0x01, // "https://www."
-        http = 0x02,      // "http://"
-        https = 0x03,     // "https://"
+        http = 0x02, // "http://"
+        https = 0x03, // "https://"
     };
 
     /// Eddystone-UID Frame (16 bytes ID + Tx power).
