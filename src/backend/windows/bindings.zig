@@ -5,7 +5,10 @@
 //! Zero external C dependencies, zero SDK requirements, pure Zig.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const windows = std.os.windows;
+
+pub const winapi_cc: std.builtin.CallingConvention = if (builtin.os.tag == .windows) .winapi else .c;
 
 pub const GUID = extern struct {
     Data1: u32,
@@ -86,16 +89,16 @@ pub const BLUETOOTH_RADIO_INFO = extern struct {
 pub const BluetoothFindFirstRadioFn = *const fn (
     pbtfrp: *const BLUETOOTH_FIND_RADIO_PARAMS,
     phRadio: *windows.HANDLE,
-) callconv(.winapi) ?windows.HANDLE;
+) callconv(winapi_cc) ?windows.HANDLE;
 
 pub const BluetoothFindRadioCloseFn = *const fn (
     hFind: windows.HANDLE,
-) callconv(.winapi) windows.BOOL;
+) callconv(winapi_cc) windows.BOOL;
 
 pub const BluetoothGetRadioInfoFn = *const fn (
     hRadio: windows.HANDLE,
     pRadioInfo: *BLUETOOTH_RADIO_INFO,
-) callconv(.winapi) windows.DWORD;
+) callconv(winapi_cc) windows.DWORD;
 
 pub const BluetoothGATTGetServicesFn = *const fn (
     hDevice: windows.HANDLE,
@@ -103,7 +106,7 @@ pub const BluetoothGATTGetServicesFn = *const fn (
     ServicesBuffer: ?[*]BTH_LE_GATT_SERVICE,
     ServicesBufferActual: *windows.USHORT,
     Flags: windows.ULONG,
-) callconv(.winapi) i32;
+) callconv(winapi_cc) i32;
 
 pub const BluetoothGATTGetCharacteristicsFn = *const fn (
     hDevice: windows.HANDLE,
@@ -112,7 +115,7 @@ pub const BluetoothGATTGetCharacteristicsFn = *const fn (
     CharacteristicsBuffer: ?[*]BTH_LE_GATT_CHARACTERISTIC,
     CharacteristicsBufferActual: *windows.USHORT,
     Flags: windows.ULONG,
-) callconv(.winapi) i32;
+) callconv(winapi_cc) i32;
 
 pub const BluetoothGATTGetCharacteristicValueFn = *const fn (
     hDevice: windows.HANDLE,
@@ -121,7 +124,7 @@ pub const BluetoothGATTGetCharacteristicValueFn = *const fn (
     CharacteristicValue: ?*BTH_LE_GATT_CHARACTERISTIC_VALUE,
     CharacteristicValueSizeRequired: *windows.USHORT,
     Flags: windows.ULONG,
-) callconv(.winapi) i32;
+) callconv(winapi_cc) i32;
 
 pub const BluetoothGATTSetCharacteristicValueFn = *const fn (
     hDevice: windows.HANDLE,
@@ -129,7 +132,7 @@ pub const BluetoothGATTSetCharacteristicValueFn = *const fn (
     CharacteristicValue: *const BTH_LE_GATT_CHARACTERISTIC_VALUE,
     ReliableWriteContext: ?*anyopaque,
     Flags: windows.ULONG,
-) callconv(.winapi) i32;
+) callconv(winapi_cc) i32;
 
 // Device inquiry structures
 pub const BLUETOOTH_DEVICE_INFO = extern struct {
@@ -176,22 +179,20 @@ pub const BLUETOOTH_DEVICE_SEARCH_PARAMS = extern struct {
 pub const BluetoothFindFirstDeviceFn = *const fn (
     pbtsp: *const BLUETOOTH_DEVICE_SEARCH_PARAMS,
     pbtdi: *BLUETOOTH_DEVICE_INFO,
-) callconv(.winapi) ?windows.HANDLE;
+) callconv(winapi_cc) ?windows.HANDLE;
 
 pub const BluetoothFindNextDeviceFn = *const fn (
     hFind: windows.HANDLE,
     pbtdi: *BLUETOOTH_DEVICE_INFO,
-) callconv(.winapi) windows.BOOL;
+) callconv(winapi_cc) windows.BOOL;
 
 pub const BluetoothFindDeviceCloseFn = *const fn (
     hFind: windows.HANDLE,
-) callconv(.winapi) windows.BOOL;
-
-const builtin = @import("builtin");
+) callconv(winapi_cc) windows.BOOL;
 
 // Win32 dynamic loader (conditionally linked on Windows only)
 pub const LoadLibraryA = if (builtin.os.tag == .windows) struct {
-    pub extern "kernel32" fn LoadLibraryA(lpLibFileName: [*:0]const u8) callconv(.winapi) ?windows.HMODULE;
+    pub extern "kernel32" fn LoadLibraryA(lpLibFileName: [*:0]const u8) callconv(winapi_cc) ?windows.HMODULE;
 }.LoadLibraryA else struct {
     pub fn LoadLibraryA(_: [*:0]const u8) ?windows.HMODULE {
         return null;
@@ -199,7 +200,7 @@ pub const LoadLibraryA = if (builtin.os.tag == .windows) struct {
 }.LoadLibraryA;
 
 pub const FreeLibrary = if (builtin.os.tag == .windows) struct {
-    pub extern "kernel32" fn FreeLibrary(hLibModule: windows.HMODULE) callconv(.winapi) windows.BOOL;
+    pub extern "kernel32" fn FreeLibrary(hLibModule: windows.HMODULE) callconv(winapi_cc) windows.BOOL;
 }.FreeLibrary else struct {
     pub fn FreeLibrary(_: windows.HMODULE) windows.BOOL {
         return .FALSE;
@@ -207,7 +208,7 @@ pub const FreeLibrary = if (builtin.os.tag == .windows) struct {
 }.FreeLibrary;
 
 pub const GetProcAddress = if (builtin.os.tag == .windows) struct {
-    pub extern "kernel32" fn GetProcAddress(hModule: windows.HMODULE, lpProcName: [*:0]const u8) callconv(.winapi) ?windows.FARPROC;
+    pub extern "kernel32" fn GetProcAddress(hModule: windows.HMODULE, lpProcName: [*:0]const u8) callconv(winapi_cc) ?windows.FARPROC;
 }.GetProcAddress else struct {
     pub fn GetProcAddress(_: windows.HMODULE, _: [*:0]const u8) ?windows.FARPROC {
         return null;
@@ -215,7 +216,7 @@ pub const GetProcAddress = if (builtin.os.tag == .windows) struct {
 }.GetProcAddress;
 
 pub const CloseHandle = if (builtin.os.tag == .windows) struct {
-    pub extern "kernel32" fn CloseHandle(hObject: windows.HANDLE) callconv(.winapi) windows.BOOL;
+    pub extern "kernel32" fn CloseHandle(hObject: windows.HANDLE) callconv(winapi_cc) windows.BOOL;
 }.CloseHandle else struct {
     pub fn CloseHandle(_: windows.HANDLE) windows.BOOL {
         return .FALSE;

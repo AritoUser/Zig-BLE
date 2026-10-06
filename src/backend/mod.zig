@@ -55,7 +55,11 @@ test {
     _ = types;
     _ = vtable;
     _ = mock;
-    _ = bluez;
-    _ = windows;
+    if (builtin.os.tag == .linux) {
+        _ = bluez;
+    }
+    if (builtin.os.tag == .windows) {
+        _ = windows;
+    }
     _ = unified;
 }

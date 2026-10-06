@@ -14,27 +14,28 @@ pub const VERSION_MAJOR: u16 = 2;
 pub const VERSION_MINOR: u16 = 4;
 pub const LINKTYPE_BLUETOOTH_HCI_H4: u32 = 187;
 
-pub extern "kernel32" fn GetSystemTimeAsFileTime(lpSystemTimeAsFileTime: *std.os.windows.FILETIME) callconv(.winapi) void;
+const winapi_cc: std.builtin.CallingConvention = if (builtin.os.tag == .windows) .winapi else .c;
 
 /// Returns current wall-clock seconds and microseconds (Unix epoch).
 pub fn getMicroTimestamp() struct { sec: u32, usec: u32 } {
     if (builtin.os.tag == .windows) {
+        const K32 = struct {
+            extern "kernel32" fn GetSystemTimeAsFileTime(lpSystemTimeAsFileTime: *std.os.windows.FILETIME) callconv(winapi_cc) void;
+        };
         var ft: std.os.windows.FILETIME = undefined;
-        GetSystemTimeAsFileTime(&ft);
+        K32.GetSystemTimeAsFileTime(&ft);
         const intervals: u64 = (@as(u64, ft.dwHighDateTime) << 32) | ft.dwLowDateTime;
-        // 116444736000000000 is 100ns intervals between Jan 1 1601 and Jan 1 1970
         const unix_100ns = if (intervals > 116444736000000000) intervals - 116444736000000000 else 0;
         const total_us = unix_100ns / 10;
-        const sec: u32 = @intCast(@divTrunc(total_us, 1_000_000));
-        const usec: u32 = @intCast(@mod(total_us, 1_000_000));
+        const sec: u32 = @truncate(total_us / 1_000_000);
+        const usec: u32 = @truncate(total_us % 1_000_000);
         return .{ .sec = sec, .usec = usec };
     } else if (builtin.os.tag == .linux) {
-        var ts: std.posix.timespec = undefined;
-        _ = std.posix.clock_gettime(std.posix.CLOCK.REALTIME, &ts);
-        return .{
-            .sec = @intCast(ts.sec),
-            .usec = @intCast(@divTrunc(ts.nsec, 1000)),
-        };
+        var ts: std.os.linux.timespec = undefined;
+        _ = std.os.linux.clock_gettime(std.os.linux.CLOCK.REALTIME, &ts);
+        const s: u32 = @truncate(@as(u64, @intCast(@max(0, ts.sec))));
+        const us: u32 = @truncate(@as(u64, @intCast(@max(0, @divTrunc(ts.nsec, 1000)))));
+        return .{ .sec = s, .usec = us };
     } else {
         return .{ .sec = 0, .usec = 0 };
     }
