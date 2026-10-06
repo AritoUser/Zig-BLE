@@ -22,19 +22,24 @@
    - [Pfeiler 5: KeyStore, Bonding & CCCD-Persistenz](#pfeiler-5-keystore-bonding--cccd-persistenz)
    - [Pfeiler 6: Virtual Mock Controller & Headless CI-Harness](#pfeiler-6-virtual-mock-controller--headless-ci-harness)
    - [Pfeiler 7: Developer Tooling (PCAP & Declarative GATT Server)](#pfeiler-7-developer-tooling-pcap--declarative-gatt-server)
-4. [Meilenstein v1.x: Durchsatz, Wearables & Profil-Ausbau](#4-meilenstein-v1x-durchsatz-wearables--profil-ausbau)
-   - [BT 5.2: Enhanced Attribute Protocol (EATT)](#bt-52-enhanced-attribute-protocol-eatt)
-   - [BT 5.3: Connection Subrating](#bt-53-connection-subrating)
-   - [Automatischer MTU-, DLE- & PHY-Tuner](#automatischer-mtu--dle--phy-tuner)
-   - [Bluetooth SIG Health- & Fitness-Profile (PLXP, FTMS, CPP, RSCP, BCS, CGMP)](#bluetooth-sig-health--fitness-profile)
-   - [Tier-2 Plattform: macOS (CoreBluetooth)](#tier-2-plattform-macos-corebluetooth)
-5. [Meilenstein v2.0+: Next-Gen Technologien & Nischen-Erweiterungen](#5-meilenstein-v20-next-gen-technologien--nischen-erweiterungen)
-   - [BT 5.2: Isochronous Channels & LE Audio (CIS / BIS / Auracast)](#bt-52-isochronous-channels--le-audio)
-   - [BT 5.4: Encrypted Advertising Data (EAD) & PAwR](#bt-54-encrypted-advertising-data-ead--pawr)
-   - [BT 6.0: Channel Sounding (CS)](#bt-60-channel-sounding-cs)
-   - [Android NDK / JNI Adapter](#android-ndk--jni-adapter)
-6. [Gap-Analyse & Feature-Vergleichsmatrix](#6-gap-analyse--feature-vergleichsmatrix)
-7. [Priorisierte Implementierungs-Phasen (P1 – P8)](#7-priorisierte-implementierungs-phasen-p1--p8)
+4. [Meilenstein v1.1.0: High-Throughput Engine, EATT & Connection Subrating](#4-meilenstein-v110-high-throughput-engine-eatt--connection-subrating)
+   - [Automatischer ConnectionOptimizer (MTU, DLE & PHY)](#41-automatischer-connectionoptimizer-mtu-dle--phy)
+   - [BT 5.2: Enhanced Attribute Protocol (EATT)](#42-bt-52-enhanced-attribute-protocol-eatt)
+   - [BT 5.3: Connection Subrating (Power & Latency Transition)](#43-bt-53-connection-subrating-power--latency-transition)
+5. [Meilenstein v1.2.0: Bluetooth SIG Fitness, Ergometer & Health Suite](#5-meilenstein-v120-bluetooth-sig-fitness-ergometer--health-suite)
+   - [Fitness Machine Profile (FTMS v1.0, Service 0x1826)](#51-fitness-machine-profile-ftms-v10-service-0x1826)
+   - [Cycling Power Profile (CPP v1.0, Service 0x1818)](#52-cycling-power-profile-cpp-v10-service-0x1818)
+   - [Pulse Oximeter Profile (PLXP v1.0) & Health-Sensoren](#53-pulse-oximeter-profile-plxp-v10-service-0x1822--health-sensoren)
+6. [Meilenstein v1.3.0 & v1.4.0: Erweiterte Plattformen & Direction Finding](#6-meilenstein-v130--v140-erweiterte-plattformen--direction-finding)
+   - [Tier-2 Plattform: macOS & iOS (CoreBluetooth via Objective-C ABI)](#61-tier-2-plattform-macos--ios-corebluetooth-via-objective-c-abi)
+   - [Android NDK / Direct Byte Buffer Bridge](#62-android-ndk--direct-byte-buffer-bridge)
+   - [BT 5.1 Direction Finding: Angle of Arrival (AoA) & Angle of Departure (AoD)](#63-bt-51-direction-finding-angle-of-arrival-aoa--angle-of-departure-aod)
+7. [Meilenstein v2.0.0: Next-Gen Bluetooth Radio, LE Audio & Channel Sounding](#7-meilenstein-v200-next-gen-bluetooth-radio-le-audio--channel-sounding)
+   - [BT 5.2 LE Audio & Auracast Broadcast Architektur](#71-bt-52-le-audio--auracast-broadcast-architektur)
+   - [BT 5.4: Encrypted Advertising Data (EAD) & PAwR](#72-bt-54-encrypted-advertising-data-ead--pawr)
+   - [BT 6.0: Channel Sounding (CS) — Nanosekunden-Entfernungsmessung](#73-bt-60-channel-sounding-cs--nanosekunden-entfernungsmessung)
+8. [Master-Release- & Feature-Matrix (v1.0.0 bis v2.0.0)](#8-master-release--feature-matrix-v100-bis-v200)
+9. [Detaillierte Implementierungs-Phasen (P1 bis P16)](#9-detaillierte-implementierungs-phasen-p1-bis-p16)
 
 ---
 
@@ -302,98 +307,328 @@ try server.addService(Services.heart_rate)
 
 ---
 
-## 4. Meilenstein v1.x: Durchsatz, Wearables & Profil-Ausbau
+## 4. Meilenstein v1.1.0: High-Throughput Engine, EATT & Connection Subrating
 
-Nach der Stabilisierung des Core-Stacks in v1.0.0 folgen Optimierungen für Datendurchsatz, Akkulaufzeit und standardisierte Sport-Profile.
+Nach dem erfolgreichen Core-Release v1.0.0 konzentriert sich **v1.1.0** auf die maximale Ausschöpfung der physikalischen Bandbreite, Latenzreduktion und Akkulaufzeit-Optimierung über die neuesten Bluetooth Core Spezifikationen (v5.2 & v5.3).
 
-### BT 5.2: Enhanced Attribute Protocol (EATT)
-* **Problem bei Legacy ATT:** Alle Anfragen laufen sequenziell über einen blockierenden L2CAP-Kanal (CID `0x0004`).
-* **EATT-Lösung:** Nutzt L2CAP Enhanced Credit-Based Flow Control (CIDs ab `0x0027`).
-* **Nutzen:** Parallele, nicht-blockierende GATT-Transaktionen (z. B. simultanes Lesen großer Firmware-Blöcke während hochfrequente Sensor-Notifications eintreffen).
+```mermaid
+graph TD
+    subgraph "v1.1.0 Throughput & Power Architecture"
+        Opt[ConnectionOptimizer Engine] --> MTU[ATT MTU 517 Negotiation]
+        Opt --> DLE[HCI LE Set Data Length 251 Octets / 2120 µs]
+        Opt --> PHY[HCI LE Set PHY 2M Uncoded]
+        
+        EATT_Mux[EATT Multi-Channel Multiplexer] --> CIDs[L2CAP Enhanced Credit Channels 0x0027..0x007F]
+        CIDs --> ParallelTrans[Parallele Non-Blocking GATT Requests]
+        
+        Subrate_Engine[Connection Subrating Manager] --> Burst[Active Burst Mode: 15 ms Interval]
+        Subrate_Engine --> Sleep[Idle Subrate Mode: 1000 ms Interval]
+    end
+```
 
-### BT 5.3: Connection Subrating
-* **Relevanz für Wearables:** Extrem hoch zur Akkuschonung.
-* Erlaubt den blitzschnellen Wechsel zwischen niedriger Latenz (z. B. 15 ms beim Workout) und stromsparendem Schlafmodus (z. B. 1000 ms), ohne langwierige `Connection Parameter Update`-Zyklen zu durchlaufen.
-* **HCI-Commands:** `LE_Set_Default_Subrate_Parameters`, `LE_Subrate_Request`.
+### 4.1 Automatischer `ConnectionOptimizer` (MTU, DLE & PHY)
 
-### Automatischer MTU-, DLE- & PHY-Tuner
-Ein automatischer `ConnectionOptimizer`, der nach Verbindungsaufbau die maximale Bandbreite aushandelt:
-1. `att.ExchangeMtuRequest(517)`
-2. `hci.LE_Set_Data_Length(conn_handle, 251, 2120)`
-3. `hci.LE_Set_PHY(conn_handle, .phy_2m)`
-* Steigert den realen Durchsatz von ~2 kB/s auf über **120 kB/s**.
+In der Bluetooth-Praxis starten Verbindungen standardmäßig mit minimalen Parametern (ATT MTU = 23 Bytes, Data Length = 27 Bytes, 1M PHY), was den Netto-Datendurchsatz auf ca. 2–4 kB/s drosselt. Der `ConnectionOptimizer` automatisiert die Verhandlung für maximalen Durchsatz:
 
-### Bluetooth SIG Health- & Fitness-Profile
+```zig
+pub const ConnectionOptimizerConfig = struct {
+    target_mtu: u16 = 517,
+    target_tx_octets: u16 = 251,
+    target_tx_time_us: u16 = 2120,
+    preferred_rx_phys: u8 = 0b010, // 2M PHY
+    preferred_tx_phys: u8 = 0b010, // 2M PHY
+    auto_subrate: bool = true,
+};
 
-| Profil / Service | UUID | Merkmale & Eigenschaften | Anwendungsbereich |
-| :--- | :---: | :--- | :--- |
-| **Pulse Oximeter (PLXP)** | `0x1822` | SpO2 (0.1 %), Puls (bpm), Pulse Amplitude Index | Pulsoximeter, Smartwatches |
-| **Fitness Machine (FTMS)** | `0x1826` | Treadmill (`0x2ACD`), Bike (`0x2AD2`), Rower (`0x2AD1`), Control Point (`0x2AD9`) | Smart Trainer, Laufbänder, Ergometer, Zwift |
-| **Cycling Power (CPP)** | `0x1818` | Power Measurement (`0x2A63`, Watt), Pedal-Balance, Kurbeldrehmoment | Leistungsmesser am Fahrrad |
-| **Running Speed & Cadence (RSCP)**| `0x1814` | Speed (`0x2A53`), Trittfrequenz, Schrittlänge, Gesamtdistanz | Laufsensoren, Stride-Pods |
-| **Body Composition (BCS)** | `0x181B` | Körperfett (`0x2A9C`), Muskelmasse, BMR, Impedanz | Smarte Personenwaagen |
-| **Continuous Glucose (CGMP)** | `0x181F` | CGM Measurement (`0x2AA7`), Trend-Rate, Status | Kontinuierliche Blutzuckersensoren |
+pub const ConnectionOptimizer = struct {
+    config: ConnectionOptimizerConfig,
+    state: enum { idle, exchanging_mtu, updating_dle, setting_phy, complete },
 
-### Tier-2 Plattform: macOS (CoreBluetooth)
-* Anbindung an das macOS/iOS `CoreBluetooth`-Framework über Zigs Objective-C / C-ABI Bindings (`CBCentralManager`, `CBPeripheral`).
+    pub fn execute(self: *ConnectionOptimizer, conn_handle: u16, client: *GattClient) !void {
+        // 1. Asymmetrische ATT MTU Aushandlung (bis zu 517 Bytes)
+        try client.exchangeMtu(self.config.target_mtu);
 
----
+        // 2. Data Length Extension (DLE) via HCI Command 0x2022
+        try client.controller.leSetDataLength(
+            conn_handle,
+            self.config.target_tx_octets,
+            self.config.target_tx_time_us,
+        );
 
-## 5. Meilenstein v2.0+: Next-Gen Technologien & Nischen-Erweiterungen
-
-> [!NOTE]
-> Diese Features setzen spezielle Controller-Hardware oder dedizierte Audio-Pipelines voraus und gehören **nicht** in v1.0.0.
-
-### BT 5.2: Isochronous Channels & LE Audio
-* **Connected Isochronous Streams (CIS / CIG):** Punkt-zu-Punkt zeitsensitive Audio- und Datenübertragung.
-* **Broadcast Isochronous Streams (BIS / BIG):** Basis für **Auracast** (Audio-Broadcast an unbegrenzt viele Empfänger).
-* **Erfordert:** LC3-Audio-Codec, BAP (Basic Audio Profile) und ISO Data Paths (`HCI_LE_Setup_ISO_Data_Path`).
-
-### BT 5.4: Encrypted Advertising Data (EAD) & PAwR
-* **EAD (Typ `0x31`):** AES-CCM verschlüsselte Broadcast-Daten direkt im Werbepaket.
-* **PAwR:** Periodic Advertising with Responses für extrem stromsparende Sensornetzwerke und elektronische Preisschilder (ESL).
-
-### BT 6.0: Channel Sounding (CS) *(Neuer Standard 2024)*
-* Ersetzt ungenaue RSSI-Schätzungen durch Hochfrequenz-Distanzmessung:
-  * **PBR (Phase-Based Ranging):** Phasenverschiebung über mehrere Frequenzen.
-  * **RTT (Round-Trip Time):** Nanosekunden-Laufzeitmessung.
-* Ermöglicht hochpräzise Distanzbestimmung auf **Zentimeter-Ebene** mit Schutz vor Relay-Angriffen (digitaler Autoschlüssel).
-
-### Android NDK / JNI Adapter
-* JNI-Bridge zu `android.bluetooth.BluetoothGatt` für Non-Root Android-Geräte.
-
----
-
-## 6. Gap-Analyse & Feature-Vergleichsmatrix
-
-| Komponente / Feature | Stand v1.0.0 (Core Release) | Status v1.0.0 | Ziel v1.x (Optimierung) | Ziel v2.0+ (Next-Gen) |
-| :--- | :--- | :---: | :--- | :--- |
-| **Backend-Architektur** | **Pluggable HAL (`BackendVTable`)** | ✅ ABGESCHLOSSEN | HAL Dynamic Extensions | Native Embedded OS Bindings |
-| **Linux Support** | **Tier 1 (Pure-Zig D-Bus Wire & Raw HCI)** | ✅ ABGESCHLOSSEN | Zero-Copy epoll Tuner | Native Kernel AF_BLUETOOTH |
-| **Windows Support** | **Tier 1 (Windows 11 Native WinRT)** | ✅ ABGESCHLOSSEN | Background Advertisement Filter | Background GATT Tasks |
-| **macOS Support** | In Konzeption (Tier 2) | ⏳ Geplant v1.3 | **Tier 2 (CoreBluetooth)** | Objective-C ABI Direct |
-| **Bare-Metal / UART H4** | **Pure-Zig Host-Stack & Reassembler** | ✅ ABGESCHLOSSEN | High-Speed Baud Tuner | FreeRTOS / Zephyr Package |
-| **GATT Long Read/Write** | **Automatisch (Blob & Prepare/Execute)** | ✅ ABGESCHLOSSEN | Parallel Pipelining | EATT Multiplexing Chunks |
-| **CCCD / Bond Store** | **`BondStore` Interface & NVS (`ZBGR`)** | ✅ ABGESCHLOSSEN | Encrypted Flash Backend | Hardware Secure Element (TPM) |
-| **CI Mock Testing** | **Virtual Mock Controller (146 Tests)** | ✅ ABGESCHLOSSEN | Automated Link Fuzzing | RF Physical Noise Simulator |
-| **Wireshark PCAP** | **PCAP Exporter (DLT 187 `HCI_H4`)** | ✅ ABGESCHLOSSEN | PCAPNG Multi-Interface | Live Wireshark Pipe Streaming |
-| **Durchsatz-Optimierung** | **2.82 ns D-Bus finalize / MTU 517** | ✅ ABGESCHLOSSEN | **Auto-Tuner (MTU/DLE/PHY)** | EATT Multi-Channel Striping |
-| **Standard-Profile** | **HRP, BAS, DIS, CTS, HID, ESS, NUS** | ✅ ABGESCHLOSSEN | **PLXP, FTMS, CPP, BCS** | Audio Profiles (BAP, PACS, CAP) |
-| **LE Audio / Auracast** | Zurückgestellt auf v2.0+ | 🔜 Roadmap v2.0 | Standard LC3 Codec Parser | **Vollständiger Auracast Host** |
-| **BT 6.0 Channel Sounding**| Zurückgestellt auf v2.0+ | 🔜 Roadmap v2.0 | Spec Monitoring (2024/2025) | **CS Command Builder & PBR Engine** |
+        // 3. PHY Update (2 Msym/s High-Speed) via HCI Command 0x2032
+        try client.controller.leSetPhy(
+            conn_handle,
+            0, // All PHYs allowed
+            self.config.preferred_tx_phys,
+            self.config.preferred_rx_phys,
+            0, // PHY options
+        );
+    }
+};
+```
+* **Performance-Sprung:** Steigert die Übertragungsrate über die physikalische Luftschnittstelle von **~2,5 kB/s auf über 128 kB/s** (Steigerung um Faktor 50x).
 
 ---
 
-## 7. Implementierungs-Phasen & Status-Tracking (P1 – P8)
+### 4.2 BT 5.2: Enhanced Attribute Protocol (EATT)
 
-| Phase | Meilenstein | Modul / Arbeitspaket | Status | Verifikation & Auswirkung |
-| :---: | :---: | :--- | :---: | :--- |
-| **P1** | **v1.0.0** | **Wireshark PCAP Exporter** | ✅ **VERIFIZIERT** | Schreibt RFC-konformes `DLT_BLUETOOTH_HCI_H4` Binärformat. |
-| **P2** | **v1.0.0** | **Pluggable Backend HAL & Unified API** | ✅ **VERIFIZIERT** | Entkoppelt alle Plattformen über `BackendVTable` und `UnifiedAdapter`. |
-| **P3** | **v1.0.0** | **Virtual Mock Controller & CI-Harness** | ✅ **VERIFIZIERT** | 146/146 automatisierte Tests (`zig build test`) deterministisch im RAM. |
-| **P4** | **v1.0.0** | **GATT Long Transfers & Disconnect-Lifecycle** | ✅ **VERIFIZIERT** | `LongWriteIterator`, `ServerPrepareWriteQueue` & `LongReadReassembler`. |
-| **P5** | **v1.0.0** | **Natives Windows Backend (WinRT)** | ✅ **VERIFIZIERT** | Live Over-the-Air getestet mit Samsung Galaxy S25 Ultra (8 Services, 38 Chars). |
-| **P6** | **v1.0.0** | **Pure-Zig Host Stack für UART H4** | ✅ **VERIFIZIERT** | Streaming-Parser `H4StreamParser` + `AclReassembler` (0 Byte Alloc). |
-| **P7** | **v1.1.0** | **Auto-Tuner & BT 5.2/5.3 (EATT, Subrating)** | 🚧 **IN ARBEIT** | Dynamische Durchsatzoptimierung (> 120 kB/s) und Connection Subrating. |
-| **P8** | **v1.2.0** | **Sport- & Fitness-Profile (FTMS, CPP, PLXP, BCS)** | 📋 **GEPLANT** | Standardisierte Fitness-Machine- und Leistungsmesser-Profile. |
+* **Das Head-of-Line-Blocking Problem von Legacy ATT:**  
+  Bei klassischem ATT (CID `0x0004`) darf pro Verbindung immer nur eine einzige Anfrage (Request) ausstehen. Ein langes Firmware-Update oder ein ReadBlob blockiert alle Sensor-Notifications.
+* **EATT Architektur:**  
+  EATT operiert über L2CAP Enhanced Credit-Based Flow Control Kanäle (CIDs `0x0027` bis `0x007F`). Jede Transaktion besitzt einen eigenen Kanal mit individuellem Credit-Pool.
+* **Spezifikation & Modul-Design (`src/core/eatt.zig`):**
+```zig
+pub const EattChannel = struct {
+    cid: u16,
+    peer_cid: u16,
+    mtu: u16,
+    mps: u16,
+    local_credits: std.atomic.Value(u16),
+    peer_credits: std.atomic.Value(u16),
+    busy: bool = false,
+};
+
+pub const EattMultiplexer = struct {
+    channels: [8]EattChannel = undefined,
+    channel_count: u8 = 0,
+
+    pub fn sendRequestParallel(self: *EattMultiplexer, pdu: []const u8) !void {
+        const chan = self.findIdleChannel() orelse return error.AllChannelsBusy;
+        try chan.sendCreditPdu(pdu);
+    }
+};
+```
+* **Nutzen:** Völlig verzögerungsfreies Eintreffen hochfrequenter Telemetriedaten, selbst während parallelem Streaming großer Blobs.
+
+---
+
+### 4.3 BT 5.3: Connection Subrating (Power & Latency Transition)
+
+* **Herausforderung bei Wearables:**  
+  Sensoren benötigen bei Aktivitäten (z. B. Sportler startet Sprint) extrem niedrige Latenzen (10–15 ms Intervalle), im Ruhezustand jedoch Schlafintervalle (1.000 ms), um die Batterie nicht zu leeren. Konventionelle `Connection Parameter Updates` benötigen 1–3 Sekunden Verhandlungszeit.
+* **Subrating Mechanismus:**  
+  Connection Subrating erlaubt den unterbrechungsfreien Wechsel zwischen schnellem Burst und Subrate-Schlafmodus innerhalb eines einzigen Connection-Events ohne Neuverhandlung:
+  * **HCI Opcodes:**
+    * `HCI_LE_Set_Default_Subrate_Parameters` (`0x207D`): Definiert `subrate_min`, `subrate_max`, `max_latency`, `continuation_number`, `supervision_timeout`.
+    * `HCI_LE_Subrate_Request` (`0x207E`): Aktiviert die Subrate-Ratio on-the-fly.
+* **Batterieeinsparung:** Bis zu **85 % Stromersparnis** im Standby bei sofortiger Ansprechbarkeit (< 15 ms Reaktionszeit bei Tastendruck oder Bewegung).
+
+---
+
+## 5. Meilenstein v1.2.0: Bluetooth SIG Fitness, Ergometer & Health Suite
+
+**v1.2.0** erweitert Zig-BLE um standardisierte Bluetooth SIG Profile für Sport-, Ergometer- und medizinische Sensorik. Alle Encoder und Parser arbeiten strikt nach dem **Zero-Allocation-Prinzip** und transformieren Festkomma-Gleitkommawerte ohne Heap-Speicher.
+
+```mermaid
+graph LR
+    subgraph "Bluetooth SIG Fitness & Health Suite"
+        FTMS["FTMS 0x1826: Fitness Machine (Ergometer, Treadmill, Rower)"]
+        CPP["CPP 0x1818: Cycling Power (Watt, Balance, Drehmoment)"]
+        RSCP["RSCP 0x1814: Running Speed & Cadence (Stride-Pods)"]
+        PLXP["PLXP 0x1822: Pulse Oximeter (SpO2 & Puls-Amplitude)"]
+        BCS["BCS 0x181B: Body Composition (Körperfett, Muskelmasse)"]
+        CGMP["CGMP 0x181F: Continuous Glucose (Blutzucker-Telemetrie)"]
+    end
+```
+
+### 5.1 Fitness Machine Profile (FTMS v1.0, Service `0x1826`)
+
+Das universelle Profil für smarte Rollentrainer, Fahrradergometer, Laufbänder und Rudergeräte (z. B. Tacx, Wahoo KICKR, Concept2, Zwift, Kinomap).
+
+#### Datenstrukturen (`src/profiles/ftms.zig`):
+* **Indoor Bike Data (`0x2AD2`):**
+  * Instantaneous Speed ($0.01\text{ km/h}$), Average Speed, Instantaneous Cadence ($0.5\text{ U/min}$), Instantaneous Power ($1\text{ Watt}$), Heart Rate ($1\text{ bpm}$), Expended Energy ($1\text{ kcal}$), Elapsed Time.
+* **Treadmill Data (`0x2ACD`) & Rower Data (`0x2AD1`):**
+  * Steigung ($0.1\text{ \%}$), Schlagfrequenz ($0.5\text{ SPM}$), Pace ($0.1\text{ km/h}$).
+* **Fitness Machine Control Point (`0x2AD9`):**
+  * Interaktive Steuerungs-Zustandsmaschine:
+    * `0x00`: Request Control (Exklusive Steuerung übernehmen).
+    * `0x01`: Reset.
+    * `0x02`: Set Target Speed.
+    * `0x03`: Set Target Inclination (Simulierte Steigung für Streckensimulation).
+    * `0x04`: Set Target Resistance Level (Widerstandsstufe).
+    * `0x05`: Set Target Power (ERG-Modus Watt-Vorgabe, z. B. $250\text{ W}$).
+    * `0x07`: Start or Resume / Stop or Pause.
+
+---
+
+### 5.2 Cycling Power Profile (CPP v1.0, Service `0x1818`)
+
+Standard für professionelle Leistungsmesser (Kurbel-, Pedal- und Naben-Leistungsmesser wie Garmin Vector, SRM, Stages, Favero Assioma).
+
+* **Cycling Power Measurement (`0x2A63`):**
+  * Instantaneous Power: Vorzeichenbehafteter 16-Bit Wert ($-32768\text{ W}$ bis $+32767\text{ W}$).
+  * Pedal Power Balance: Prozentuale Verteilung Links/Rechts ($0.5\text{ \%}$ Auflösung).
+  * Accumulated Torque: Kumulatives Drehmoment ($1/32\text{ Nm}$).
+  * Cumulative Wheel & Crank Revolutions mit Event-Timestamps ($1/1024\text{ s}$) zur präzisen Berechnung von Trittfrequenz und Durchschnittsleistung.
+
+---
+
+### 5.3 Pulse Oximeter Profile (PLXP v1.0, Service `0x1822`) & Health-Sensoren
+
+* **PLX Continuous Measurement (`0x2A5F`):**
+  * $\text{SpO}_2$ Blutsauerstoffsättigung ($0.1\text{ \%}$ Auflösung, $0.0\text{ \%} \dots 100.0\text{ \%}$).
+  * Pulsfrequenz ($0.1\text{ bpm}$ Auflösung).
+  * Puls-Amplituden-Index ($0.01\text{ \%}$).
+  * Status-Flags: Sensor Disconnected, Motion Artifacts Detected, Pulse Amplitude Low.
+* **Continuous Glucose Monitoring (CGMP v1.0, `0x181F`):**
+  * Glukose-Konzentration ($1\text{ mg/dL}$ oder $0.1\text{ mmol/L}$), Trend-Rate, Hypo-/Hyperglykämie-Alarmierung.
+* **Body Composition Service (BCS v1.0, `0x181B`):**
+  * Körperfettanteil ($0.1\text{ \%}$), Muskelmasse ($0.005\text{ kg}$), Basal Metabolic Rate (BMR kcal).
+
+---
+
+## 6. Meilenstein v1.3.0 & v1.4.0: Erweiterte Plattformen & Direction Finding
+
+### 6.1 Tier-2 Plattform: macOS & iOS (`CoreBluetooth` via Objective-C ABI)
+
+* **Architektur:**  
+  Direkte Anbindung an macOS `IOBluetooth` und iOS `CoreBluetooth.framework` über Zigs native C-ABI und Objective-C Runtime (`objc_msgSend`).
+* **Vorteil:** Erfordert keine C++-Wrapper und keine Swift-Zwischenschicht.
+* **Klassen-Mappings:**
+  * `CBCentralManager` $\to$ `Adapter`
+  * `CBPeripheral` $\to$ `Device`
+  * `CBService` / `CBCharacteristic` $\to$ `GattService` / `GattCharacteristic`
+
+---
+
+### 6.2 Android NDK / Direct Byte Buffer Bridge
+
+* **High-Throughput JNI Direct-Buffer Interface:**  
+  Übergabe von Zeigern aus Kotlin/Java über `env.GetDirectBufferAddress(byte_buffer)` ohne Speicher-Kopien direkt an den Pure-Zig L2CAP- und ATT-Decoder.
+* **Native CoC Sockets:** Handover des POSIX File Descriptors aus `BluetoothSocket.createL2capChannel()` für maximale Datenrate ohne JVM-Overhead.
+
+---
+
+### 6.3 BT 5.1 Direction Finding: Angle of Arrival (AoA) & Angle of Departure (AoD)
+
+Bluetooth 5.1 ermöglicht hochpräzise Richtungsbestimmung durch Phasenanalyse auf der 2.4 GHz Luftschnittstelle:
+
+```mermaid
+graph TD
+    Ant1[Antenne 1] --> Switch[RF Switch Array]
+    Ant2[Antenne 2] --> Switch
+    Ant3[Antenne 3] --> Switch
+    Switch --> IQ_Engine[I/Q Sample Engine: In-Phase & Quadrature]
+    IQ_Engine --> Phase_Calc[Phase Angle Calculation Delta Phi]
+    Phase_Calc --> Trig[AoA Azimuth & Elevation Estimation]
+```
+
+* **Constant Tone Extension (CTE):**  
+  Anhängen eines unmodulierten Hochfrequenz-Trägers ($16\text{ \mu s}$ bis $160\text{ \mu s}$) an das Ende normaler BLE-Pakete.
+* **I/Q Sampling Engine (`src/hci/direction_finding.zig`):**
+  * Auslesen der In-Phase ($I$) und Quadrature ($Q$) 8-Bit Abtastwerte pro Antennen-Schaltintervall ($1\text{ \mu s}$ oder $2\text{ \mu s}$).
+  * Berechnung der Phasenverschiebung $\Delta \psi = \arctan2(Q, I)$.
+  * Trigonometrische Bestimmung von Azimut- und Elevationswinkeln für Ortungssysteme in Hallen und Logistikzentren.
+
+---
+
+## 7. Meilenstein v2.0.0: Next-Gen Bluetooth Radio, LE Audio & Channel Sounding
+
+**v2.0.0** stellt die technologische Spitze moderner Bluetooth-Entwicklung dar und integriert High-End Audio, Mesh-ähnliche Sensornetze und Nanosekunden-Laufzeitmessung.
+
+```mermaid
+graph TD
+    subgraph "v2.0.0 Next-Gen Core Pillars"
+        Audio["BT 5.2 LE Audio & Auracast (CIS/BIS & LC3)"]
+        PAwR["BT 5.4 PAwR & Encrypted Advertising Data (EAD)"]
+        CS["BT 6.0 Channel Sounding: Nanosekunden RTT & PBR"]
+    end
+```
+
+### 7.1 BT 5.2 LE Audio & Auracast Broadcast Architektur
+
+Ersetzt das über 20 Jahre alte Bluetooth Classic (A2DP / SBC) durch moderne isochrone Audio-Pipelines:
+
+* **Connected Isochronous Streams (CIS / CIG):**  
+  Synchronisierte Punkt-zu-Punkt Audio-Streams mit deterministischer Latenz (z. B. True Wireless Stereo Earbuds für linkes und rechtes Ohr separat ohne Relaying).
+* **Broadcast Isochronous Streams (BIS / BIG) — Auracast:**  
+  Audio-Broadcasts an unbegrenzt viele Empfänger ohne vorheriges Pairing (z. B. Stumm geschaltete TVs in Flughäfen/Fitnessstudios, Hörgeräteunterstützung in Theatern).
+* **Pure-Zig LC3 Codec Einbindung (`src/audio/lc3.zig`):**
+  * Low Complexity Communication Codec: Bietet bei $64\text{ kbps}$ höhere Audioqualität als SBC bei $345\text{ kbps}$.
+  * Native Frame-Kapselung in Isochronous Adaptation Layer (ISOAL) Pakete.
+* **Profile-Implementierung:**
+  * Basic Audio Profile (BAP v1.0).
+  * Common Audio Profile (CAP v1.0).
+  * Published Audio Capabilities (PACS, `0x1850`).
+
+---
+
+### 7.2 BT 5.4: Encrypted Advertising Data (EAD) & PAwR
+
+* **Encrypted Advertising Data (EAD, AD-Type `0x31`):**  
+  Ermöglicht die sichere Verschlüsselung beliebiger Werbedaten (Sensordaten, Akkustände) direkt im Broadcast-Paket mittels AES-CCM. Nur autorisierte Zentralgeräte mit dem Shared Key können den Payload entschlüsseln.
+* **Periodic Advertising with Responses (PAwR):**  
+  * Reines Broadcast-BLE war bisher eine Einbahnstraße. PAwR teilt periodische Werbepakete in strukturierte **Sub-Events** und **Response Slots** auf.
+  * Ermöglicht einem Zentralgerät die synchrone Kommunikation mit **Zehntausenden Niedrigstenergie-Knoten** (z. B. elektronische Preisschilder / ESL in Supermärkten).
+  * **Electronic Shelf Label Profile (ESL, Service `0x1857`):** Direkte Ansteuerung von E-Ink Displays über PAwR.
+
+---
+
+### 7.3 BT 6.0: Channel Sounding (CS) — Nanosekunden-Entfernungsmessung
+
+Der offizielle **Bluetooth 6.0 Standard (2024)** revolutioniert die Abstands- und Positionserkennung und macht ungenaue RSSI-Schätzungen überflüssig.
+
+```mermaid
+graph LR
+    subgraph "Channel Sounding (CS) Architecture"
+        PBR["Phase-Based Ranging (PBR): 72 Kanäle Phasendifferenz Delta theta"]
+        RTT["Round-Trip Time (RTT): Time-of-Flight mit Nanosekunden-Auflösung"]
+        Security["DRBG Sounding Sequences: Schutz vor Relay-Angriffen"]
+    end
+    PBR --> Fusion[Multi-Mode Sensor Fusion]
+    RTT --> Fusion
+    Security --> Fusion
+    Fusion --> Distance[Zentimeter-genaue Distanzmessung: +- 10 cm]
+```
+
+#### Mathematische & Physikalische Grundlagen:
+1. **Phase-Based Ranging (PBR):**  
+   Zwei Geräte tauschen unmodulierte Trägerwellen über bis zu 72 unterschiedliche Frequenzkanäle aus. Aus der gemessenen Phasenverschiebung $\Delta \theta$ über die Frequenzstufen $\Delta f$ wird die Distanz $d$ berechnet:
+   $$d = \frac{c \cdot \Delta \theta}{4\pi \Delta f}$$
+   Ermöglicht eine Auflösung im Bereich von **$\pm 10$ bis $30\text{ cm}$**.
+2. **Round-Trip Time (RTT) Time-of-Flight:**  
+   Messung der physikalischen Signallaufzeit im Sub-Nanosekunden-Bereich:
+   $$d = \frac{c \cdot (T_{\text{Empfang}} - T_{\text{Senden}})}{2}$$
+3. **Schutz vor Relay-Angriffen (Man-in-the-Middle):**  
+   Kryptografisch gesicherte Sounding-Sequenzen über deterministische Zufallsbitgeneratoren (DRBG). Verhindert das unbefugte Öffnen moderner Fahrzeuge (Digital Car Key) durch Funk-Verlängerungen.
+4. **Zig-BLE Modul-Plan (`src/hci/channel_sounding.zig`):**
+   * Opcodes: `HCI_LE_CS_Read_Local_Supported_Capabilities`, `HCI_LE_CS_Set_Default_Settings`, `HCI_LE_CS_Create_Config`, `HCI_LE_CS_Security_Enable`.
+   * Real-Time Distanz-Schätzer mit Kalibrierungs- und Mehrwege-Korrektur (Multipath Interference Filter).
+
+---
+
+## 8. Master-Release- & Feature-Matrix (v1.0.0 bis v2.0.0)
+
+| Version | Release-Titel | Kernfokus | Neu implementierte Standards | Status |
+| :---: | :--- | :--- | :--- | :---: |
+| **v1.0.0** | **Production Core Release** | Multi-OS HAL, Long Transfers, Resilienz, Hardware-Proof | BT 5.0 Core, GAP/GATT, H4 UART, D-Bus Wire, NVS BondStore | ✅ **FREIGEGEBEN** |
+| **v1.1.0** | **Throughput & Power Engine** | Durchsatz-Tuning (>120 kB/s), EATT, Subrating | BT 5.2 EATT (Parallel CIDs), BT 5.3 Connection Subrating, DLE 251 | 🚧 **IN ARBEIT** |
+| **v1.2.0** | **Fitness & Health Ecosystem** | Ergometer, Smart-Trainer, Wattmessung, SpO2 | FTMS (`0x1826`), CPP (`0x1818`), RSCP (`0x1814`), PLXP (`0x1822`), BCS | 📋 **KONZIPIERT** |
+| **v1.3.0** | **Tier-2 OS Expansion** | Native macOS & Android Hochleistungs-Adapter | macOS `CoreBluetooth` ObjC-ABI, Android NDK Direct Buffer & CoC | 📋 **KONZIPIERT** |
+| **v1.4.0** | **Direction Finding Engine** | Lokalisierung & Raumorientierung (Indoor Tracking)| BT 5.1 AoA / AoD, Constant Tone Extension (CTE), I/Q Sample Processing | 📋 **KONZIPIERT** |
+| **v2.0.0** | **Next-Gen Bluetooth Core** | LE Audio, Auracast, ESL Preisschilder, Nanosekunden CS | BT 5.2 LE Audio / LC3 / Auracast, BT 5.4 EAD & PAwR, BT 6.0 Channel Sounding | 📋 **STRATEGISCH** |
+
+---
+
+## 9. Detaillierte Implementierungs-Phasen (P1 bis P16)
+
+| Phase | Zielversion | Arbeitspaket | Modulpfad | Komplexität | Verifikations-Strategie |
+| :---: | :---: | :--- | :--- | :---: | :--- |
+| **P1** | **v1.0.0** | Wireshark PCAP Exporter | `src/tooling/pcap.zig` | Gering | ✅ Standard DLT 187 PCAP verifiziert |
+| **P2** | **v1.0.0** | Pluggable Backend HAL | `src/backend/` | Mittel | ✅ Polymorphe VTable für Linux & Win |
+| **P3** | **v1.0.0** | Virtual Mock CI Controller | `src/backend/mock/` | Mittel | ✅ 146 Tests deterministisch im RAM |
+| **P4** | **v1.0.0** | GATT Long Transfers | `src/core/transfers.zig` | Mittel | ✅ Prepare/Execute Queue verifiziert |
+| **P5** | **v1.0.0** | Windows 11 WinRT Backend | `src/backend/windows/` | Hoch | ✅ Live Galaxy S25 Ultra Over-the-Air |
+| **P6** | **v1.0.0** | Pure-Zig Host-Stack UART H4 | `src/hci/h4.zig`, `src/l2cap/` | Hoch | ✅ Streaming Parser & ACL Reassembly |
+| **P7** | **v1.1.0** | Auto ConnectionOptimizer | `src/core/optimizer.zig` | Mittel | Benchmark-Test: Durchsatz > 120 kB/s |
+| **P8** | **v1.1.0** | BT 5.2 EATT Multiplexer | `src/core/eatt.zig` | Hoch | Parallel Mock Request Unit Tests |
+| **P9** | **v1.1.0** | BT 5.3 Connection Subrating | `src/hci/subrating.zig` | Mittel | HCI Command & Event Validation |
+| **P10** | **v1.2.0** | FTMS Fitness Machine Service | `src/profiles/ftms.zig` | Mittel | Indoor Bike & Control Point FSM |
+| **P11** | **v1.2.0** | Cycling Power (CPP) & SpO2 | `src/profiles/cpp.zig`, `plxp.zig`| Mittel | Festkomma-Präzision & Masken-Tests |
+| **P12** | **v1.3.0** | macOS CoreBluetooth Bridge | `src/backend/macos/` | Hoch | Native macOS CI Runner Execution |
+| **P13** | **v1.4.0** | BT 5.1 Direction Finding AoA | `src/hci/direction_finding.zig` | Hoch | I/Q Phasensimulation & Azimut-Test |
+| **P14** | **v2.0.0** | BT 5.2 LE Audio & LC3 Codec | `src/audio/` | Sehr Hoch | Auracast Packetizer & Frame Slicing |
+| **P15** | **v2.0.0** | BT 5.4 EAD & PAwR Engine | `src/advertising/pawr.zig` | Hoch | Sub-Event Synchronisation & ESL FSM |
+| **P16** | **v2.0.0** | BT 6.0 Channel Sounding (CS) | `src/hci/channel_sounding.zig`| Sehr Hoch | PBR Phase & RTT Time-of-Flight Tests |
 
