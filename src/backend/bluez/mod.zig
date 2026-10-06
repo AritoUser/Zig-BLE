@@ -63,20 +63,23 @@ pub const BluezBackend = struct {
         const self: *BluezBackend = @ptrCast(@alignCast(ctx));
         const conn = self.conn orelse return BleError.NotConnected;
 
-        var msg = try Connection.createSetProperty(
+        var msg = try Connection.createMethodCall(
             BlueZ.service_name,
             self.getAdapterPath(),
-            BlueZ.Adapter1.interface_name,
-            BlueZ.Adapter1.Properties.Powered,
-            "b",
+            BlueZ.Properties.interface_name,
+            BlueZ.Properties.Methods.Set,
         );
         defer msg.deinit();
 
         var b = msg.builder();
-        try b.appendBasic(bool, powered);
+        try b.appendString(BlueZ.Adapter1.interface_name);
+        try b.appendString(BlueZ.Adapter1.Properties.Powered);
+        var v = try b.openVariant("b");
+        try v.appendBool(powered);
+        try b.closeContainer(&v);
 
         var reply = try conn.sendMessage(&msg, 5000);
-        defer reply.deinit();
+        reply.deinit();
         self.powered = powered;
     }
 
@@ -125,8 +128,8 @@ pub const BluezBackend = struct {
         const conn = self.conn orelse return BleError.NotConnected;
 
         // Path format: /org/bluez/hci0/dev_XX_XX_XX_XX_XX_XX
-        var dev_path: [128]u8 = undefined;
-        const dev_path_str = std.fmt.bufPrint(
+        var dev_path: [128:0]u8 = undefined;
+        const dev_path_str = std.fmt.bufPrintZ(
             &dev_path,
             "{s}/dev_{X:0>2}_{X:0>2}_{X:0>2}_{X:0>2}_{X:0>2}_{X:0>2}",
             .{
@@ -145,7 +148,7 @@ pub const BluezBackend = struct {
             dev_path_str,
             BlueZ.Device1.interface_name,
             BlueZ.Device1.Methods.Connect,
-            timeout_ms,
+            @intCast(@min(timeout_ms, std.math.maxInt(i32))),
         );
         reply.deinit();
 
