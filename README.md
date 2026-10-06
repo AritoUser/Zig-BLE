@@ -122,7 +122,7 @@ Total Interrogation Time:    3236.92 ms (~3.2 seconds for full device profile)
 ```
 
 **Real Live Payload Sample Extracted Over-the-Air:**
-* **GAP Device Name (0x2A00):** `"S25 Ultra von Attila"` (20 bytes UTF-8)
+* **GAP Device Name (0x2A00):** `"S25 Ultra "` (20 bytes UTF-8)
 * **Telephony Bearer Provider (0x2BB4):** `"E.164"` (ITU-T standard)
 * **Telephony Bearer Technology (0x2BB5):** `0x06` (5G NR / LTE active radio)
 * **GATT Database Hash (0x2B2A):** `95 79 53 91 F5 F0 94 08 41 E4 DB D4 7D F6 D8 C3` (16 bytes)
