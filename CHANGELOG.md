@@ -7,6 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.0.1] - 2026-10-07
+
+### Patch Milestone: Cross-Platform CI Stabilization & Roadmap Expansion
+This maintenance and patch release resolves cross-compilation errors across multi-platform CI matrix runners (Linux Native, macOS ARM64, and Windows 11), fixes POSIX timestamping and BlueZ property handling, and introduces the comprehensive technical master blueprint for Zig-BLE v1.1.0 through v2.0.0.
+
+---
+
+### Fixed
+
+* **macOS ARM64 Cross-Compilation ABI (`src/backend/windows/bindings.zig`)**:
+  * Resolved LLVM backend rejection of the `.winapi` calling convention (`aarch64_aapcs_win`) when compiling Windows backend declarations on Darwin / aarch64 runners.
+  * Replaced unconditional `callconv(.winapi)` with OS-conditional `callconv(winapi_cc)` (`if (builtin.os.tag == .windows) .winapi else .c`).
+* **Cross-Platform PCAP Timestamping (`src/tooling/pcap.zig`)**:
+  * Unified high-resolution packet capture timestamp retrieval across operating systems.
+  * Replaced direct Windows WinAPI calls under non-Windows targets with cross-platform branches (`std.posix.clock_gettime` / Linux syscalls vs. `QueryPerformanceCounter` on Windows).
+* **BlueZ Wire Backend Property Method Call (`src/backend/bluez/mod.zig`)**:
+  * Corrected invalid method helper invocation by leveraging `Connection.createMethodCall(BlueZ.Properties.Methods.Set)` with standardized signature `ssv`.
+  * Utilized null-terminated formatting (`bufPrintZ`) for D-Bus object device paths.
+* **Backend Test Isolation (`src/backend/mod.zig`)**:
+  * Enclosed platform-specific backend test references under conditional compile-time guards (`if (builtin.os.tag == .linux)` and `if (builtin.os.tag == .windows)`), preventing compilation failures on unsupported target OS runners.
+* **Documentation Formatting (`README.md`)**:
+  * Corrected GAP Device Name formatting in quickstart examples.
+
+---
+
+### Added
+
+* **Technical Master Roadmap & Architectural Blueprint (`docs/BLE_ROADMAP_AND_EXTENSIONS.md`)**:
+  * Expanded 630+ line deep-dive technical blueprint with memory layouts, packet formats, and state machines covering:
+    * **v1.1.0**: Dynamic MTU & PHY Auto-Tuner, Enhanced ATT (EATT / L2CAP CoC multiplexing), Connection Subrating (BT 5.3).
+    * **v1.2.0**: Standardized Fitness & Medical GATT Profiles (FTMS Fitness Machine, CPP Cycling Power, Pulse Oximeter SpO2).
+    * **v1.3.0 & v1.4.0**: Native macOS CoreBluetooth backend, Android NDK backend, and Direction Finding (AoA / AoD BT 5.1).
+    * **v2.0.0**: LE Audio Host Stack (ISO Channels, LC3 codec interface, BAP, CAP, Auracast Broadcast Audio), Periodic Advertising with Responses (PAwR BT 5.4), and Bluetooth 6.0 Channel Sounding (PBR / RTT cm-accurate distance measurement).
+
+---
+
+### Verified
+
+* **100% Green CI Matrix**: Verified all GitHub Actions matrix jobs passing across:
+  * Ubuntu latest (Linux Native tests & compilation)
+  * macOS latest (Darwin ARM64 cross-platform checks)
+  * Windows latest (Windows 11 native WinRT/Win32 tests)
+* **Unit & E2E Test Suite**: All 145/145 tests pass with 0 errors, 0 memory leaks, and 0 warnings.
+
+---
+
 ## [1.0.0] - 2026-10-06
 
 ### Major Milestone: Production Release
