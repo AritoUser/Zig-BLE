@@ -69,7 +69,9 @@ pub const L2capStream = struct {
         switch (self.backend) {
             .native_fd => |fd| {
                 if (builtin.os.tag == .linux) {
-                    return std.posix.write(fd, data);
+                    const rc = std.posix.system.write(fd, data.ptr, data.len);
+                    if (std.posix.errno(rc) != .SUCCESS) return error.WriteFailed;
+                    return @intCast(rc);
                 }
                 return error.NotSupported;
             },
@@ -143,12 +145,7 @@ pub const L2capListener = struct {
 /// Connects an L2CAP CoC client to a remote peer on the given PSM.
 pub fn connectL2cap(addr: Address, psm: u16, config: L2capConfig) !L2capStream {
     if (builtin.os.tag == .linux) {
-        var sock = try socket.L2capSocket.open(.seqpacket);
-        errdefer sock.close();
-
-        try sock.setSecurity(config.security);
-        try sock.connect(addr, psm, .public);
-
+        const sock = try socket.L2capSocket.connectLe(addr, psm, .public);
         return L2capStream{
             .backend = .{ .native_fd = sock.fd },
             .mtu = config.mtu,
@@ -164,7 +161,6 @@ pub fn listenL2cap(psm: u16, config: L2capConfig) !L2capListener {
         var sock = try socket.L2capSocket.open(.seqpacket);
         errdefer sock.close();
 
-        try sock.setSecurity(config.security);
         const any_addr = Address{ .bytes = [_]u8{0} ** 6 };
         try sock.bind(any_addr, psm, .public);
         try sock.listen(4);
