@@ -221,6 +221,32 @@ pub const WindowsBackend = struct {
         _ = char_uuid;
     }
 
+    pub fn exchangeMtu(ctx: *anyopaque, dev_handle: *anyopaque, target_mtu: u16) anyerror!u16 {
+        _ = ctx;
+        _ = dev_handle;
+        if (builtin.os.tag != .windows) return BleError.NotSupported;
+        return target_mtu;
+    }
+
+    pub fn pairDevice(ctx: *anyopaque, dev_handle: *anyopaque, io_cap: types.IoCapability) anyerror!void {
+        _ = ctx;
+        _ = dev_handle;
+        _ = io_cap;
+        if (builtin.os.tag != .windows) return BleError.NotSupported;
+    }
+
+    pub fn unpairDevice(ctx: *anyopaque, dev_handle: *anyopaque) anyerror!void {
+        _ = ctx;
+        _ = dev_handle;
+        if (builtin.os.tag != .windows) return BleError.NotSupported;
+    }
+
+    pub fn getBondState(ctx: *anyopaque, dev_handle: *anyopaque) types.BondState {
+        _ = ctx;
+        _ = dev_handle;
+        return .not_bonded;
+    }
+
     pub const vtable: BackendVTable = .{
         .name = "Windows_Native",
         .openAdapter = openAdapter,
@@ -238,6 +264,10 @@ pub const WindowsBackend = struct {
         .writeCharacteristic = writeCharacteristic,
         .subscribeNotifications = subscribeNotifications,
         .unsubscribeNotifications = unsubscribeNotifications,
+        .exchangeMtu = exchangeMtu,
+        .pairDevice = pairDevice,
+        .unpairDevice = unpairDevice,
+        .getBondState = getBondState,
     };
 
     pub fn asBackend(self: *WindowsBackend) Backend {

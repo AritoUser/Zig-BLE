@@ -63,10 +63,20 @@ pub const AclReassembler = acl_reassembler.AclReassembler;
 pub const L2capFrame = acl_reassembler.L2capFrame;
 pub const PbFlag = acl_reassembler.PbFlag;
 
+pub const stream = @import("stream.zig");
+pub const L2capConfig = stream.L2capConfig;
+pub const L2capStream = stream.L2capStream;
+pub const L2capListener = stream.L2capListener;
+pub const connectL2cap = stream.connectL2cap;
+pub const listenL2cap = stream.listenL2cap;
+pub const createMockStreamPair = stream.createMockStreamPair;
+pub const MockChannel = stream.MockChannel;
+
 test {
     const std = @import("std");
     std.testing.refAllDecls(@This());
     _ = socket;
     _ = signaling;
     _ = acl_reassembler;
+    _ = stream;
 }

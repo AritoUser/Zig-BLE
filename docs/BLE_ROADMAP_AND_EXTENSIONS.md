@@ -600,35 +600,40 @@ graph LR
 
 ## 8. Master-Release- & Feature-Matrix (v1.0.0 bis v2.0.0)
 
-| Version | Release-Titel | Kernfokus | Neu implementierte Standards | Status |
+| Version | Release-Titel | Kernfokus für Zig-BLE | FitLib-Bausteine | Status |
 | :---: | :--- | :--- | :--- | :---: |
-| **v1.0.0** | **Production Core Release** | Multi-OS HAL, Long Transfers, Resilienz, Hardware-Proof | BT 5.0 Core, GAP/GATT, H4 UART, D-Bus Wire, NVS BondStore | ✅ **FREIGEGEBEN** |
-| **v1.1.0** | **Throughput & Power Engine** | Durchsatz-Tuning (>120 kB/s), EATT, Subrating | BT 5.2 EATT (Parallel CIDs), BT 5.3 Connection Subrating, DLE 251 | 🚧 **IN ARBEIT** |
-| **v1.2.0** | **Fitness & Health Ecosystem** | Ergometer, Smart-Trainer, Wattmessung, SpO2 | FTMS (`0x1826`), CPP (`0x1818`), RSCP (`0x1814`), PLXP (`0x1822`), BCS | 📋 **KONZIPIERT** |
-| **v1.3.0** | **Tier-2 OS Expansion** | Native macOS & Android Hochleistungs-Adapter | macOS `CoreBluetooth` ObjC-ABI, Android NDK Direct Buffer & CoC | 📋 **KONZIPIERT** |
+| **v1.0.0** | **Production Core Release** | Multi-OS HAL, Long Transfers, Resilienz, Hardware-Proof | Basis-HAL, ATT, SMP, H4 UART, Windows & BlueZ | ✅ **FREIGEGEBEN** |
+| **v1.0.1** | **Cross-Platform CI Patch** | macOS ARM64 Calling Conventions, POSIX Timestamps, BlueZ Fix | CI-Matrix 100 % grün auf Ubuntu, macOS & Windows | ✅ **FREIGEGEBEN** |
+| **v1.1.0** | **High-Throughput & Ingestion Engine** | Durchsatz-Tuning (>120 kB/s), EATT, Subrating, VTable-Security | **Nr. 1** (MTU Exchange), **Nr. 2** (Bonding VTable), **Nr. 3** (`AcquireNotify`), **Nr. 5** (L2CAP CoC API), **Nr. 6** (PCAP/Btsnoop Replay) | ✅ **IMPLEMENTIERT** |
+| **v1.2.0** | **Fitness & Health Ecosystem** | Ergometer, Smart-Trainer, Wattmessung, SpO2 | **Nr. 7** (PLXP `0x1822`), FTMS (`0x1826`), CPP (`0x1818`), RSCP (`0x1814`) | 📋 **KONZIPIERT** |
+| **v1.3.0** | **Mobile & Extended OS** | Native Android NDK & macOS CoreBluetooth Backends | **Nr. 4** (Android JNI Zero-Copy Bridge & Wear OS CoC), macOS ObjC-ABI | 📋 **KONZIPIERT** |
 | **v1.4.0** | **Direction Finding Engine** | Lokalisierung & Raumorientierung (Indoor Tracking)| BT 5.1 AoA / AoD, Constant Tone Extension (CTE), I/Q Sample Processing | 📋 **KONZIPIERT** |
 | **v2.0.0** | **Next-Gen Bluetooth Core** | LE Audio, Auracast, ESL Preisschilder, Nanosekunden CS | BT 5.2 LE Audio / LC3 / Auracast, BT 5.4 EAD & PAwR, BT 6.0 Channel Sounding | 📋 **STRATEGISCH** |
 
 ---
 
-## 9. Detaillierte Implementierungs-Phasen (P1 bis P16)
+## 9. Detaillierte Implementierungs-Phasen (P1 bis P20)
 
-| Phase | Zielversion | Arbeitspaket | Modulpfad | Komplexität | Verifikations-Strategie |
-| :---: | :---: | :--- | :--- | :---: | :--- |
-| **P1** | **v1.0.0** | Wireshark PCAP Exporter | `src/tooling/pcap.zig` | Gering | ✅ Standard DLT 187 PCAP verifiziert |
-| **P2** | **v1.0.0** | Pluggable Backend HAL | `src/backend/` | Mittel | ✅ Polymorphe VTable für Linux & Win |
-| **P3** | **v1.0.0** | Virtual Mock CI Controller | `src/backend/mock/` | Mittel | ✅ 146 Tests deterministisch im RAM |
-| **P4** | **v1.0.0** | GATT Long Transfers | `src/core/transfers.zig` | Mittel | ✅ Prepare/Execute Queue verifiziert |
-| **P5** | **v1.0.0** | Windows 11 WinRT Backend | `src/backend/windows/` | Hoch | ✅ Live Galaxy S25 Ultra Over-the-Air |
-| **P6** | **v1.0.0** | Pure-Zig Host-Stack UART H4 | `src/hci/h4.zig`, `src/l2cap/` | Hoch | ✅ Streaming Parser & ACL Reassembly |
-| **P7** | **v1.1.0** | Auto ConnectionOptimizer | `src/core/optimizer.zig` | Mittel | Benchmark-Test: Durchsatz > 120 kB/s |
-| **P8** | **v1.1.0** | BT 5.2 EATT Multiplexer | `src/core/eatt.zig` | Hoch | Parallel Mock Request Unit Tests |
-| **P9** | **v1.1.0** | BT 5.3 Connection Subrating | `src/hci/subrating.zig` | Mittel | HCI Command & Event Validation |
-| **P10** | **v1.2.0** | FTMS Fitness Machine Service | `src/profiles/ftms.zig` | Mittel | Indoor Bike & Control Point FSM |
-| **P11** | **v1.2.0** | Cycling Power (CPP) & SpO2 | `src/profiles/cpp.zig`, `plxp.zig`| Mittel | Festkomma-Präzision & Masken-Tests |
-| **P12** | **v1.3.0** | macOS CoreBluetooth Bridge | `src/backend/macos/` | Hoch | Native macOS CI Runner Execution |
-| **P13** | **v1.4.0** | BT 5.1 Direction Finding AoA | `src/hci/direction_finding.zig` | Hoch | I/Q Phasensimulation & Azimut-Test |
-| **P14** | **v2.0.0** | BT 5.2 LE Audio & LC3 Codec | `src/audio/` | Sehr Hoch | Auracast Packetizer & Frame Slicing |
-| **P15** | **v2.0.0** | BT 5.4 EAD & PAwR Engine | `src/advertising/pawr.zig` | Hoch | Sub-Event Synchronisation & ESL FSM |
-| **P16** | **v2.0.0** | BT 6.0 Channel Sounding (CS) | `src/hci/channel_sounding.zig`| Sehr Hoch | PBR Phase & RTT Time-of-Flight Tests |
+| Phase | Zielversion | FitLib-Nr. | Arbeitspaket | Modulpfad in `Zig-BLE` | Komplexität | Verifikations-Strategie |
+| :---: | :---: | :---: | :--- | :--- | :---: | :--- |
+| **P1** | **v1.0.0** | — | Wireshark PCAP Exporter | `src/tooling/pcap.zig` | Gering | ✅ Standard DLT 187 PCAP verifiziert |
+| **P2** | **v1.0.0** | — | Pluggable Backend HAL | `src/backend/` | Mittel | ✅ Polymorphe VTable für Linux & Win |
+| **P3** | **v1.0.0** | — | Virtual Mock CI Controller | `src/backend/mock/` | Mittel | ✅ 146 Tests deterministisch im RAM |
+| **P4** | **v1.0.0** | — | GATT Long Transfers | `src/core/transfers.zig` | Mittel | ✅ Prepare/Execute Queue verifiziert |
+| **P5** | **v1.0.0** | — | Windows 11 WinRT Backend | `src/backend/windows/` | Hoch | ✅ Live Galaxy S25 Ultra Over-the-Air |
+| **P6** | **v1.0.0** | — | Pure-Zig Host-Stack UART H4 | `src/hci/h4.zig`, `src/l2cap/` | Hoch | ✅ Streaming Parser & ACL Reassembly |
+| **P7** | **v1.1.0** | **Nr. 1** | ATT MTU Exchange in HAL | `src/backend/vtable.zig`, OS-Backends | Mittel | ✅ `exchangeMtu` verifiziert bis 517 Bytes |
+| **P8** | **v1.1.0** | **Nr. 2** | Security & Bonding VTable | `src/backend/vtable.zig`, `types.zig` | Mittel | ✅ `pair`/`unpair`/`BondState` & ATT Errors |
+| **P9** | **v1.1.0** | **Nr. 3** | BlueZ `AcquireNotify` FD | `src/backend/bluez/mod.zig` | Mittel | ✅ SCM_RIGHTS FD Handover Schnittstelle |
+| **P10** | **v1.1.0** | **Nr. 5** | High-Level L2CAP CoC API | `src/l2cap/stream.zig`, `mod.zig` | Hoch | ✅ `L2capStream` Loopback-Test (PSM 0x1001) |
+| **P11** | **v1.1.0** | **Nr. 6** | PCAP & Btsnoop Trace Reader | `src/tooling/pcap.zig` | Mittel | ✅ PCAP DLT 187 & Android Btsnoop Decoder |
+| **P12** | **v1.1.0** | — | BT 5.2 EATT Multiplexer | `src/core/eatt.zig` | Hoch | ✅ Parallele Bearer ohne HoL-Blocking |
+| **P13** | **v1.1.0** | — | BT 5.3 Connection Subrating | `src/hci/subrating.zig` | Mittel | ✅ Subrate Request & Change Event |
+| **P14** | **v1.2.0** | **Nr. 7** | Pulse Oximeter Profile (PLXP) | `src/profiles/pulse_oximeter.zig` | Gering | Spot-Check (`0x2A5E`) & Continuous (`0x2A5F`) |
+| **P15** | **v1.2.0** | — | FTMS Fitness Machine Service | `src/profiles/ftms.zig` | Mittel | Indoor Bike & Control Point FSM |
+| **P16** | **v1.2.0** | — | Cycling Power (CPP) & RSCP | `src/profiles/cpp.zig`, `rscp.zig`| Mittel | Festkomma-Präzision & Masken-Tests |
+| **P17** | **v1.3.0** | **Nr. 4** | Android NDK & JNI Bridge | `src/backend/android/mod.zig` | Hoch | Zero-Copy JNI Buffer & Wear OS CoC |
+| **P18** | **v1.3.0** | — | macOS CoreBluetooth Bridge | `src/backend/macos/mod.zig` | Hoch | Objective-C Runtime ABI (`objc_msgSend`) |
+| **P19** | **v1.4.0** | — | BT 5.1 Direction Finding AoA | `src/hci/direction_finding.zig` | Hoch | I/Q Phasensimulation & Azimut-Test |
+| **P20** | **v2.0.0** | — | Next-Gen Core (LE Audio, CS) | `src/audio/`, `channel_sounding.zig`| Sehr Hoch | LC3 Codec, Auracast, Nanosekunden-RTT |
 

@@ -36,6 +36,30 @@ pub const BleError = error{
     OutOfMemory,
     IoError,
     GattError,
+
+    // Granular ATT & Security errors (v1.1.0)
+    InsufficientAuthentication, // ATT 0x05
+    InsufficientEncryption, // ATT 0x0F
+    CccdImproperlyConfigured, // ATT 0xFD
+    ValueNotAllowed, // ATT 0x13
+    MtuExchangeFailed,
+    PairingFailed,
+};
+
+/// Bond state of a remote BLE peer device.
+pub const BondState = enum(u8) {
+    not_bonded = 0,
+    bonding = 1,
+    bonded = 2,
+};
+
+/// IO Capabilities for BLE Security Manager (SMP) pairing.
+pub const IoCapability = enum(u8) {
+    display_only = 0,
+    display_yes_no = 1,
+    keyboard_only = 2,
+    no_input_no_output = 3,
+    keyboard_display = 4,
 };
 
 /// BLE GAP Scanning Configuration Filter

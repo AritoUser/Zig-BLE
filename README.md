@@ -1,12 +1,12 @@
-# Zig-BLE v1.0.1
+# Zig-BLE v1.1.0
 
 A high-performance, allocation-conscious, native Bluetooth Low Energy (BLE) protocol engine and systems library for **Zig 0.16.0+**, strictly adhering to the **Bluetooth Core Specification (v5.4 / v6.0)**, Windows 11 Native APIs, and the Linux **BlueZ D-Bus Wire Protocol**.
 
 Supports both **Central (Client)** and **Peripheral (Server & Broadcaster)** roles across **Desktop (Windows & Linux)** and **Bare-Metal (UART H4/H5)** with a zero-allocation domain model, non-blocking event loops, and full physical over-the-air hardware verification.
 
 [![CI](https://github.com/AritoUser/Zig-BLE/actions/workflows/ci.yml/badge.svg)](https://github.com/AritoUser/Zig-BLE/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/badge/Release-v1.0.1-brightgreen.svg)](https://github.com/AritoUser/Zig-BLE/releases)
-[![Tests](https://img.shields.io/badge/Tests-146%2F146%20Passing-success.svg)](tests/)
+[![Release](https://img.shields.io/badge/Release-v1.1.0-brightgreen.svg)](https://github.com/AritoUser/Zig-BLE/releases)
+[![Tests](https://img.shields.io/badge/Tests-156%2F156%20Passing-success.svg)](tests/)
 [![Zero-Allocation](https://img.shields.io/badge/Hot--Path-0%20Bytes%20Heap-blue.svg)](examples/benchmark.zig)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![White Paper](https://img.shields.io/badge/White%20Paper-Architecture%20%26%20Design-orange.svg)](docs/WHITEPAPER.md)
@@ -16,7 +16,7 @@ Supports both **Central (Client)** and **Peripheral (Server & Broadcaster)** rol
 > * [**Technical White Paper**](docs/WHITEPAPER.md): Deep-dive into the zero-allocation D-Bus Wire Protocol engine, bi-endian decoding, SCM_RIGHTS pipe streaming, and microsecond benchmarks.
 > * [**Architecture & Protocol Manual**](docs/ARCHITECTURE_AND_PROTOCOL_MANUAL.md): Systems reference covering memory layout, lock-free SPSC ring buffers, unaligned trap prevention, GATT finite state machines, and byte-level packet specifications.
 > * [**Roadmap & Extensions Matrix**](docs/BLE_ROADMAP_AND_EXTENSIONS.md): Technical roadmap from v1.0.0 through v1.x (EATT, Subrating, FTMS, CPP) to v2.0+ (LE Audio, Channel Sounding).
-> * [**Changelog**](CHANGELOG.md): Detailed release notes and evolution from v0.3.1 to v1.0.1 adhering to Keep a Changelog.
+> * [**Changelog**](CHANGELOG.md): Detailed release notes and evolution from v0.3.1 to v1.1.0 adhering to Keep a Changelog.
 > * [**Contributing Guidelines**](CONTRIBUTING.md): Engineering standards for zero-allocation hot-paths, testing, formatting, and commit conventions.
 > * **Interactive HTML API Reference**: Run `zig build docs` to generate searchable, type-safe API documentation in `zig-out/docs/`.
 

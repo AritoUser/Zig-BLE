@@ -51,6 +51,26 @@ pub const UnifiedDevice = struct {
     pub fn unsubscribe(self: *UnifiedDevice, uuid: UUID) !void {
         return self.backend.unsubscribeNotifications(self.handle, uuid);
     }
+
+    pub fn exchangeMtu(self: *UnifiedDevice, target_mtu: u16) !u16 {
+        return self.backend.exchangeMtu(self.handle, target_mtu);
+    }
+
+    pub fn pair(self: *UnifiedDevice, io_cap: types.IoCapability) !void {
+        return self.backend.pairDevice(self.handle, io_cap);
+    }
+
+    pub fn unpair(self: *UnifiedDevice) !void {
+        return self.backend.unpairDevice(self.handle);
+    }
+
+    pub fn getBondState(self: *UnifiedDevice) types.BondState {
+        return self.backend.getBondState(self.handle);
+    }
+
+    pub fn acquireNotifyFd(self: *UnifiedDevice, uuid: UUID, out_mtu: *u16) !std.posix.fd_t {
+        return self.backend.acquireNotifyFd(self.handle, uuid, out_mtu);
+    }
 };
 
 pub const UnifiedAdapter = struct {

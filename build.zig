@@ -156,6 +156,18 @@ pub fn build(b: *std.Build) void {
     });
     const run_v1_edgecase_tests = b.addRunArtifact(v1_edgecase_tests);
 
+    const v1_1_feature_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tests/test_v1_1_features.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "Zig_BLE", .module = mod },
+            },
+        }),
+    });
+    const run_v1_1_feature_tests = b.addRunArtifact(v1_1_feature_tests);
+
     // A top level step for running all tests. dependOn can be called multiple
     // times and since the two run steps do not depend on one another, this will
     // make the two of them run in parallel.
@@ -164,6 +176,7 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_exe_tests.step);
     test_step.dependOn(&run_v1_e2e_tests.step);
     test_step.dependOn(&run_v1_edgecase_tests.step);
+    test_step.dependOn(&run_v1_1_feature_tests.step);
 
     // ========================================================================
     // Standalone Examples (run-scanner, run-heart-rate)

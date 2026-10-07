@@ -51,6 +51,10 @@ pub const MockDevice = struct {
     notify_user_data: ?*anyopaque = null,
     subscribed_uuid: ?UUID = null,
 
+    mtu: u16 = 23,
+    bond_state: types.BondState = .not_bonded,
+    io_capability: types.IoCapability = .no_input_no_output,
+
     pub fn getName(self: *const MockDevice) []const u8 {
         return self.name[0..self.name_len];
     }
@@ -256,6 +260,35 @@ pub const MockController = struct {
         }
     }
 
+    pub fn exchangeMtu(ctx: *anyopaque, dev_handle: *anyopaque, target_mtu: u16) anyerror!u16 {
+        _ = ctx;
+        const dev: *MockDevice = @ptrCast(@alignCast(dev_handle));
+        if (!dev.is_connected) return BleError.NotConnected;
+        const negotiated = @min(@max(target_mtu, 23), 517);
+        dev.mtu = negotiated;
+        return negotiated;
+    }
+
+    pub fn pairDevice(ctx: *anyopaque, dev_handle: *anyopaque, io_cap: types.IoCapability) anyerror!void {
+        _ = ctx;
+        const dev: *MockDevice = @ptrCast(@alignCast(dev_handle));
+        if (!dev.is_connected) return BleError.NotConnected;
+        dev.io_capability = io_cap;
+        dev.bond_state = .bonded;
+    }
+
+    pub fn unpairDevice(ctx: *anyopaque, dev_handle: *anyopaque) anyerror!void {
+        _ = ctx;
+        const dev: *MockDevice = @ptrCast(@alignCast(dev_handle));
+        dev.bond_state = .not_bonded;
+    }
+
+    pub fn getBondState(ctx: *anyopaque, dev_handle: *anyopaque) types.BondState {
+        _ = ctx;
+        const dev: *MockDevice = @ptrCast(@alignCast(dev_handle));
+        return dev.bond_state;
+    }
+
     pub const vtable: BackendVTable = .{
         .name = "MockController",
         .openAdapter = openAdapter,
@@ -273,6 +306,10 @@ pub const MockController = struct {
         .writeCharacteristic = writeCharacteristic,
         .subscribeNotifications = subscribeNotifications,
         .unsubscribeNotifications = unsubscribeNotifications,
+        .exchangeMtu = exchangeMtu,
+        .pairDevice = pairDevice,
+        .unpairDevice = unpairDevice,
+        .getBondState = getBondState,
     };
 
     pub fn asBackend(self: *MockController) Backend {

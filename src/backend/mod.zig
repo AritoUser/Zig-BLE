@@ -17,6 +17,8 @@ pub const ScanCallback = types.ScanCallback;
 pub const NotificationCallback = types.NotificationCallback;
 pub const ConnectionParameters = types.ConnectionParameters;
 pub const ConnectionEvent = types.ConnectionEvent;
+pub const BondState = types.BondState;
+pub const IoCapability = types.IoCapability;
 
 pub const vtable = @import("vtable.zig");
 pub const BackendVTable = vtable.BackendVTable;

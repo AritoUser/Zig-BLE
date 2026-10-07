@@ -262,3 +262,199 @@ test "PcapWriter writeAttPdu encapsulating into L2CAP and HCI ACL" {
     // ATT Opcode at offset 49
     try std.testing.expectEqual(@as(u8, 0x02), buffer[49]);
 }
+
+// ============================================================================
+// Capture Readers: PCAP & Android Btsnoop (RFC 1761)
+// ============================================================================
+
+/// Parsed PCAP packet borrowing directly from the capture buffer.
+pub const PcapPacket = struct {
+    sec: u32,
+    usec: u32,
+    orig_len: u32,
+    data: []const u8,
+};
+
+/// Zero-allocation, streaming reader for standard .pcap captures.
+pub const PcapReader = struct {
+    bytes: []const u8,
+    cursor: usize = 0,
+    endian: std.builtin.Endian = .little,
+    nanoseconds: bool = false,
+    link_type: u32 = 0,
+
+    pub fn init(bytes: []const u8) !PcapReader {
+        if (bytes.len < 24) return error.PayloadTooShort;
+
+        const magic_le = std.mem.readInt(u32, bytes[0..4], .little);
+        var endian: std.builtin.Endian = .little;
+        var nano = false;
+
+        if (magic_le == MAGIC_MICROSECONDS) {
+            endian = .little;
+            nano = false;
+        } else if (magic_le == MAGIC_NANOSECONDS) {
+            endian = .little;
+            nano = true;
+        } else if (magic_le == 0xD4C3B2A1) {
+            endian = .big;
+            nano = false;
+        } else if (magic_le == 0x4D3CB2A1) {
+            endian = .big;
+            nano = true;
+        } else {
+            return error.InvalidPcapMagic;
+        }
+
+        const link = std.mem.readInt(u32, bytes[20..24], endian);
+
+        return .{
+            .bytes = bytes,
+            .cursor = 24,
+            .endian = endian,
+            .nanoseconds = nano,
+            .link_type = link,
+        };
+    }
+
+    /// Reads the next packet record. Returns `null` at EOF.
+    pub fn next(self: *PcapReader) !?PcapPacket {
+        if (self.cursor >= self.bytes.len) return null;
+        if (self.bytes.len - self.cursor < 16) return error.UnexpectedEof;
+
+        const hdr = self.bytes[self.cursor .. self.cursor + 16];
+        const sec = std.mem.readInt(u32, hdr[0..4], self.endian);
+        const usec = std.mem.readInt(u32, hdr[4..8], self.endian);
+        const incl_len = std.mem.readInt(u32, hdr[8..12], self.endian);
+        const orig_len = std.mem.readInt(u32, hdr[12..16], self.endian);
+
+        self.cursor += 16;
+        if (self.bytes.len - self.cursor < incl_len) return error.UnexpectedEof;
+
+        const data = self.bytes[self.cursor .. self.cursor + incl_len];
+        self.cursor += incl_len;
+
+        return PcapPacket{
+            .sec = sec,
+            .usec = usec,
+            .orig_len = orig_len,
+            .data = data,
+        };
+    }
+};
+
+/// Parsed Android HCI Btsnoop packet record.
+pub const BtsnoopPacket = struct {
+    is_received: bool,
+    orig_len: u32,
+    timestamp_us: u64,
+    data: []const u8,
+};
+
+/// Zero-allocation streaming reader for Android `btsnoop_hci.log` files (RFC 1761).
+pub const BtsnoopReader = struct {
+    bytes: []const u8,
+    cursor: usize = 0,
+    datalink_type: u32 = 0,
+
+    const BTSNOOP_MAGIC = "btsnoop\x00";
+
+    pub fn init(bytes: []const u8) !BtsnoopReader {
+        if (bytes.len < 16) return error.PayloadTooShort;
+        if (!std.mem.eql(u8, bytes[0..8], BTSNOOP_MAGIC)) return error.InvalidBtsnoopMagic;
+
+        const version = std.mem.readInt(u32, bytes[8..12], .big);
+        if (version != 1) return error.UnsupportedBtsnoopVersion;
+
+        const datalink = std.mem.readInt(u32, bytes[12..16], .big);
+
+        return .{
+            .bytes = bytes,
+            .cursor = 16,
+            .datalink_type = datalink,
+        };
+    }
+
+    /// Reads next btsnoop packet record. Returns `null` at EOF.
+    pub fn next(self: *BtsnoopReader) !?BtsnoopPacket {
+        if (self.cursor >= self.bytes.len) return null;
+        if (self.bytes.len - self.cursor < 24) return error.UnexpectedEof;
+
+        const hdr = self.bytes[self.cursor .. self.cursor + 24];
+        const orig_len = std.mem.readInt(u32, hdr[0..4], .big);
+        const incl_len = std.mem.readInt(u32, hdr[4..8], .big);
+        const flags = std.mem.readInt(u32, hdr[8..12], .big);
+        // drops = hdr[12..16]
+        const ts = std.mem.readInt(u64, hdr[16..24], .big);
+
+        self.cursor += 24;
+        if (self.bytes.len - self.cursor < incl_len) return error.UnexpectedEof;
+
+        const data = self.bytes[self.cursor .. self.cursor + incl_len];
+        self.cursor += incl_len;
+
+        return BtsnoopPacket{
+            .is_received = (flags & 0x01) != 0,
+            .orig_len = orig_len,
+            .timestamp_us = ts,
+            .data = data,
+        };
+    }
+};
+
+test "PcapReader roundtrip verification against PcapWriter" {
+    var buffer: [512]u8 = undefined;
+    var writer = BufferWriter.init(&buffer);
+
+    var pcap = PcapWriter(*BufferWriter).init(&writer);
+    try pcap.writeHeader();
+
+    const sample1 = [_]u8{ 0x01, 0x02, 0x03 };
+    const sample2 = [_]u8{ 0xAA, 0xBB, 0xCC, 0xDD };
+
+    try pcap.writePacketWithTimestamp(.command, &sample1, 1000, 2000);
+    try pcap.writePacketWithTimestamp(.acl_data, &sample2, 1001, 3000);
+
+    var reader = try PcapReader.init(writer.getWritten());
+    try std.testing.expectEqual(LINKTYPE_BLUETOOTH_HCI_H4, reader.link_type);
+
+    const pkt1 = (try reader.next()).?;
+    try std.testing.expectEqual(@as(u32, 1000), pkt1.sec);
+    try std.testing.expectEqual(@as(u32, 2000), pkt1.usec);
+    try std.testing.expectEqual(@as(u8, 0x01), pkt1.data[0]); // H4 command indicator
+    try std.testing.expectEqualSlices(u8, &sample1, pkt1.data[1..]);
+
+    const pkt2 = (try reader.next()).?;
+    try std.testing.expectEqual(@as(u32, 1001), pkt2.sec);
+    try std.testing.expectEqual(@as(u32, 3000), pkt2.usec);
+    try std.testing.expectEqual(@as(u8, 0x02), pkt2.data[0]); // H4 acl indicator
+    try std.testing.expectEqualSlices(u8, &sample2, pkt2.data[1..]);
+
+    try std.testing.expectEqual(@as(?PcapPacket, null), try reader.next());
+}
+
+test "BtsnoopReader decoding test" {
+    var fake_btsnoop: [64]u8 = undefined;
+    @memcpy(fake_btsnoop[0..8], "btsnoop\x00");
+    std.mem.writeInt(u32, fake_btsnoop[8..12], 1, .big); // version 1
+    std.mem.writeInt(u32, fake_btsnoop[12..16], 1002, .big); // datalink: HCI UART
+
+    // Packet record: 24 bytes header + 4 bytes payload = 28 bytes
+    const p_offset = 16;
+    std.mem.writeInt(u32, fake_btsnoop[p_offset .. p_offset + 4], 4, .big); // orig len
+    std.mem.writeInt(u32, fake_btsnoop[p_offset + 4 .. p_offset + 8], 4, .big); // incl len
+    std.mem.writeInt(u32, fake_btsnoop[p_offset + 8 .. p_offset + 12], 1, .big); // flags: received (bit 0 = 1)
+    std.mem.writeInt(u32, fake_btsnoop[p_offset + 12 .. p_offset + 16], 0, .big); // drops
+    std.mem.writeInt(u64, fake_btsnoop[p_offset + 16 .. p_offset + 24], 12345678, .big); // ts
+    @memcpy(fake_btsnoop[p_offset + 24 .. p_offset + 28], &[_]u8{ 0x04, 0x3E, 0x01, 0x00 }); // LE Meta Event
+
+    var reader = try BtsnoopReader.init(fake_btsnoop[0 .. p_offset + 28]);
+    try std.testing.expectEqual(@as(u32, 1002), reader.datalink_type);
+
+    const pkt = (try reader.next()).?;
+    try std.testing.expect(pkt.is_received);
+    try std.testing.expectEqual(@as(u64, 12345678), pkt.timestamp_us);
+    try std.testing.expectEqualSlices(u8, &[_]u8{ 0x04, 0x3E, 0x01, 0x00 }, pkt.data);
+
+    try std.testing.expectEqual(@as(?BtsnoopPacket, null), try reader.next());
+}

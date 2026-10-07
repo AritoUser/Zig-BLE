@@ -36,6 +36,17 @@ pub const BackendVTable = struct {
     writeCharacteristic: *const fn (ctx: *anyopaque, dev_handle: *anyopaque, char_uuid: UUID, data: []const u8, with_response: bool) anyerror!void,
     subscribeNotifications: *const fn (ctx: *anyopaque, dev_handle: *anyopaque, char_uuid: UUID, cb: NotificationCallback, user_data: ?*anyopaque) anyerror!void,
     unsubscribeNotifications: *const fn (ctx: *anyopaque, dev_handle: *anyopaque, char_uuid: UUID) anyerror!void,
+
+    // ATT MTU & Throughput Negotiation (v1.1.0)
+    exchangeMtu: ?*const fn (ctx: *anyopaque, dev_handle: *anyopaque, target_mtu: u16) anyerror!u16 = null,
+
+    // Security Manager & Bonding Lifecycle (v1.1.0)
+    pairDevice: ?*const fn (ctx: *anyopaque, dev_handle: *anyopaque, io_cap: types.IoCapability) anyerror!void = null,
+    unpairDevice: ?*const fn (ctx: *anyopaque, dev_handle: *anyopaque) anyerror!void = null,
+    getBondState: ?*const fn (ctx: *anyopaque, dev_handle: *anyopaque) types.BondState = null,
+
+    // High-Throughput Linux SCM_RIGHTS FD Handover (v1.1.0)
+    acquireNotifyFd: ?*const fn (ctx: *anyopaque, dev_handle: *anyopaque, char_uuid: UUID, out_mtu: *u16) anyerror!std.posix.fd_t = null,
 };
 
 /// Type-erased, zero-allocation Backend handle
@@ -105,5 +116,30 @@ pub const Backend = struct {
 
     pub inline fn unsubscribeNotifications(self: Backend, dev_handle: *anyopaque, char_uuid: UUID) !void {
         return self.vtable.unsubscribeNotifications(self.ptr, dev_handle, char_uuid);
+    }
+
+    pub inline fn exchangeMtu(self: Backend, dev_handle: *anyopaque, target_mtu: u16) !u16 {
+        if (self.vtable.exchangeMtu) |f| return f(self.ptr, dev_handle, target_mtu);
+        return types.BleError.NotSupported;
+    }
+
+    pub inline fn pairDevice(self: Backend, dev_handle: *anyopaque, io_cap: types.IoCapability) !void {
+        if (self.vtable.pairDevice) |f| return f(self.ptr, dev_handle, io_cap);
+        return types.BleError.NotSupported;
+    }
+
+    pub inline fn unpairDevice(self: Backend, dev_handle: *anyopaque) !void {
+        if (self.vtable.unpairDevice) |f| return f(self.ptr, dev_handle);
+        return types.BleError.NotSupported;
+    }
+
+    pub inline fn getBondState(self: Backend, dev_handle: *anyopaque) types.BondState {
+        if (self.vtable.getBondState) |f| return f(self.ptr, dev_handle);
+        return .not_bonded;
+    }
+
+    pub inline fn acquireNotifyFd(self: Backend, dev_handle: *anyopaque, char_uuid: UUID, out_mtu: *u16) !std.posix.fd_t {
+        if (self.vtable.acquireNotifyFd) |f| return f(self.ptr, dev_handle, char_uuid, out_mtu);
+        return types.BleError.NotSupported;
     }
 };

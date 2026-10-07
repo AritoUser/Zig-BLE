@@ -214,6 +214,41 @@ pub const BluezBackend = struct {
         _ = ctx;
     }
 
+    pub fn exchangeMtu(ctx: *anyopaque, dev_handle: *anyopaque, target_mtu: u16) anyerror!u16 {
+        _ = ctx;
+        _ = dev_handle;
+        if (builtin.os.tag != .linux) return BleError.NotSupported;
+        return target_mtu;
+    }
+
+    pub fn pairDevice(ctx: *anyopaque, dev_handle: *anyopaque, io_cap: types.IoCapability) anyerror!void {
+        _ = ctx;
+        _ = dev_handle;
+        _ = io_cap;
+        if (builtin.os.tag != .linux) return BleError.NotSupported;
+    }
+
+    pub fn unpairDevice(ctx: *anyopaque, dev_handle: *anyopaque) anyerror!void {
+        _ = ctx;
+        _ = dev_handle;
+        if (builtin.os.tag != .linux) return BleError.NotSupported;
+    }
+
+    pub fn getBondState(ctx: *anyopaque, dev_handle: *anyopaque) types.BondState {
+        _ = ctx;
+        _ = dev_handle;
+        return .not_bonded;
+    }
+
+    pub fn acquireNotifyFd(ctx: *anyopaque, dev_handle: *anyopaque, char_uuid: UUID, out_mtu: *u16) anyerror!std.posix.fd_t {
+        _ = dev_handle;
+        _ = char_uuid;
+        _ = out_mtu;
+        if (builtin.os.tag != .linux) return BleError.NotSupported;
+        _ = ctx;
+        return BleError.NotSupported;
+    }
+
     pub const vtable: BackendVTable = .{
         .name = "BlueZ_DBus",
         .openAdapter = openAdapter,
@@ -231,6 +266,11 @@ pub const BluezBackend = struct {
         .writeCharacteristic = writeCharacteristic,
         .subscribeNotifications = subscribeNotifications,
         .unsubscribeNotifications = unsubscribeNotifications,
+        .exchangeMtu = exchangeMtu,
+        .pairDevice = pairDevice,
+        .unpairDevice = unpairDevice,
+        .getBondState = getBondState,
+        .acquireNotifyFd = acquireNotifyFd,
     };
 
     pub fn asBackend(self: *BluezBackend) Backend {

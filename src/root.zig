@@ -114,7 +114,19 @@ pub const MockCharacteristic = backend.MockCharacteristic;
 pub const ScanFilter = backend.ScanFilter;
 pub const DiscoveredDevice = backend.DiscoveredDevice;
 pub const BleError = backend.BleError;
+pub const BondState = backend.BondState;
 pub const WindowsBackend = backend.WindowsBackend;
+
+// BT 5.2 Enhanced ATT (EATT)
+pub const eatt = core.eatt;
+pub const EattBearer = core.EattBearer;
+pub const EattMultiplexer = core.EattMultiplexer;
+
+// Capture Readers (PCAP & Btsnoop)
+pub const PcapReader = tooling.PcapReader;
+pub const PcapPacket = tooling.PcapPacket;
+pub const BtsnoopReader = tooling.BtsnoopReader;
+pub const BtsnoopPacket = tooling.BtsnoopPacket;
 
 const builtin = @import("builtin");
 
@@ -615,6 +627,11 @@ pub const L2capHeader = l2cap.L2capHeader;
 pub const AclReassembler = l2cap.AclReassembler;
 pub const L2capFrame = l2cap.L2capFrame;
 pub const PbFlag = l2cap.PbFlag;
+pub const L2capStream = l2cap.L2capStream;
+pub const L2capListener = l2cap.L2capListener;
+pub const L2capConfig = l2cap.L2capConfig;
+pub const connectL2cap = l2cap.connectL2cap;
+pub const listenL2cap = l2cap.listenL2cap;
 
 // Raw HCI Subsystem (Zero-Daemon / Embedded Mode)
 pub const hci = @import("hci/mod.zig");
@@ -630,6 +647,10 @@ pub const H4Type = hci.H4Type;
 pub const H4Packet = hci.H4Packet;
 pub const H4StreamParser = hci.H4StreamParser;
 pub const H4Serializer = hci.H4Serializer;
+pub const subrating = hci.subrating;
+pub const SubrateParameters = hci.SubrateParameters;
+pub const encodeSubrateRequest = hci.encodeSubrateRequest;
+pub const decodeSubrateChangeEvent = hci.decodeSubrateChangeEvent;
 
 // Bluetooth Cryptography & Security Manager Protocol (SMP)
 pub const crypto = @import("crypto/mod.zig");

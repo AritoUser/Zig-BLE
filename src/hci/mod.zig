@@ -51,6 +51,14 @@ pub const LeSubevent = constants.LeSubevent;
 pub const Status = constants.Status;
 pub const makeOpcode = constants.makeOpcode;
 
+pub const subrating = @import("subrating.zig");
+pub const SubrateParameters = subrating.SubrateParameters;
+pub const SubrateOpcode = subrating.SubrateOpcode;
+pub const SubrateChangeEvent = subrating.SubrateChangeEvent;
+pub const encodeSubrateRequest = subrating.encodeSubrateRequest;
+pub const encodeSetDefaultSubrate = subrating.encodeSetDefaultSubrate;
+pub const decodeSubrateChangeEvent = subrating.decodeSubrateChangeEvent;
+
 test {
     std.testing.refAllDecls(@This());
     _ = constants;
@@ -60,4 +68,5 @@ test {
     _ = socket;
     _ = controller;
     _ = h4;
+    _ = subrating;
 }

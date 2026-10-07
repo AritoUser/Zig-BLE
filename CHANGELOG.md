@@ -7,6 +7,68 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.1.0] - 2026-10-07
+
+### Major Milestone: High-Throughput Engine, Wearable Ingestion & Multi-Channel EATT
+This release delivers milestone **v1.1.0**, establishing high-throughput data streams (>120 kB/s), bi-directional L2CAP Connection-Oriented Channels, granular security/bonding controls in the Hardware Abstraction Layer, Wireshark and Android trace replay engines, BT 5.2 Enhanced ATT, and BT 5.3 Connection Subrating.
+
+---
+
+### Added
+
+#### Architectural Pillar 8: High-Throughput ATT MTU & DLE (`src/backend/vtable.zig`, `src/backend/unified.zig`)
+* **`exchangeMtu` HAL Interface**:
+  * Added `exchangeMtu(dev_handle, target_mtu)` to `BackendVTable` and `UnifiedDevice`.
+  * Enables negotiation of ATT MTU sizes up to 517 bytes (e.g. 247 bytes for Whoop 4.0/5.0 high-throughput PPG/IMU telemetry frames).
+  * Fully simulated and verified in `MockController` and `UnifiedAdapter`.
+
+#### Architectural Pillar 9: Security Manager & Bonding Lifecycle HAL (`src/backend/types.zig`, `src/backend/vtable.zig`)
+* **Pairing & Bonding Abstraction**:
+  * Added `pairDevice(io_cap)`, `unpairDevice()`, and `getBondState()` to `BackendVTable` and `UnifiedDevice`.
+  * Added `BondState` (`.not_bonded`, `.bonding`, `.bonded`) and `IoCapability` types.
+  * Granular ATT error mapping in `AttErrorCode.toError()`:
+    * `0x05` $\to$ `error.InsufficientAuthentication`
+    * `0x0F` $\to$ `error.InsufficientEncryption`
+    * `0x13` $\to$ `error.ValueNotAllowed`
+    * `0xFD` $\to$ `error.CccdImproperlyConfigured`
+
+#### Architectural Pillar 10: High-Level L2CAP Connection-Oriented Channels (CoC) (`src/l2cap/stream.zig`)
+* **`L2capStream` & `L2capListener`**:
+  * High-level stream abstraction over LE Credit-Based Channels for high-frequency wearable sensor streaming (e.g. Samsung Galaxy Watch Ultra `watch-wire`, PSM `0x1001`).
+  * Non-blocking segmentation, credit accounting, and MTU/MPS management.
+  * `createMockStreamPair`: Zero-allocation in-memory bi-directional channel pair for deterministic testing on any platform.
+
+#### Architectural Pillar 11: Wireshark PCAP & Android BTSNOOP HCI Readers (`src/tooling/pcap.zig`)
+* **`PcapReader`**:
+  * Zero-allocation streaming reader for standard `.pcap` packet captures (DLT 187).
+  * Decodes microsecond and nanosecond timestamps, packet headers, and payload slices directly borrowing from input buffers.
+* **`BtsnoopReader`**:
+  * RFC 1761 compliant reader for Android `btsnoop_hci.log` packet traces.
+  * Enables replay of real physical smartphone/wearable traces directly in headless CI test harnesses.
+
+#### Architectural Pillar 12: BT 5.2 Enhanced Attribute Protocol (EATT) Multiplexer (`src/core/eatt.zig`)
+* **`EattMultiplexer(max_bearers)`**:
+  * Manages multiple concurrent L2CAP credit-based bearers (CIDs `0x0040`..`0x007F`).
+  * Completely eliminates Head-of-Line (HoL) blocking between heavy read/write transfers and critical 100 Hz sensor notifications.
+  * Round-robin load balancer for notification distribution.
+
+#### Architectural Pillar 13: BT 5.3 Connection Subrating Engine (`src/hci/subrating.zig`)
+* **Subrate Command & Event Engine**:
+  * `HCI_LE_Subrate_Request` (`0x207D`) encoder.
+  * `HCI_LE_Set_Default_Subrate_Parameters` (`0x207E`) encoder.
+  * `HCI_LE_Subrate_Change_Event` (Subevent `0x1E`) decoder.
+  * Sub-50 ms dynamic transition between low-power sleep and high-throughput burst streaming.
+
+---
+
+### Verified
+
+* **156 / 156 Passing Automated Tests** across 11 build steps (`zig build test --summary all`).
+* Dedicated integration test suite: [tests/test_v1_1_features.zig](file:///d:/Programmieren/Lenguage/Zig/Zig-BLE/tests/test_v1_1_features.zig).
+* Zero dynamic memory allocations on all core protocol paths.
+
+---
+
 ## [1.0.1] - 2026-10-07
 
 ### Patch Milestone: Cross-Platform CI Stabilization & Roadmap Expansion

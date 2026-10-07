@@ -63,6 +63,10 @@ pub const LongReadReassembler = transfers.LongReadReassembler;
 pub const ServerPrepareWriteQueue = transfers.ServerPrepareWriteQueue;
 pub const QueuedWriteChunk = transfers.QueuedWriteChunk;
 
+pub const eatt = @import("eatt.zig");
+pub const EattBearer = eatt.EattBearer;
+pub const EattMultiplexer = eatt.EattMultiplexer;
+
 test {
     std.testing.refAllDecls(@This());
     _ = types;
@@ -72,4 +76,5 @@ test {
     _ = format;
     _ = att;
     _ = transfers;
+    _ = eatt;
 }

@@ -100,6 +100,35 @@ pub const AttErrorCode = enum(u8) {
                 "Reserved / Unknown Error",
         };
     }
+
+    /// Maps an ATT error code into an idiomatic Zig error.
+    pub fn toError(self: AttErrorCode) anyerror {
+        return switch (self) {
+            .invalid_handle => error.InvalidHandle,
+            .read_not_permitted => error.ReadNotPermitted,
+            .write_not_permitted => error.WriteNotPermitted,
+            .invalid_pdu => error.InvalidPdu,
+            .insufficient_authentication => error.InsufficientAuthentication,
+            .request_not_supported => error.RequestNotSupported,
+            .invalid_offset => error.InvalidOffset,
+            .insufficient_authorization => error.InsufficientAuthorization,
+            .prepare_queue_full => error.PrepareQueueFull,
+            .attribute_not_found => error.AttributeNotFound,
+            .attribute_not_long => error.AttributeNotLong,
+            .insufficient_encryption_key_size => error.InsufficientEncryptionKeySize,
+            .invalid_attribute_value_length => error.InvalidAttributeValueLength,
+            .unlikely_error => error.UnlikelyError,
+            .insufficient_encryption => error.InsufficientEncryption,
+            .unsupported_group_type => error.UnsupportedGroupType,
+            .insufficient_resources => error.InsufficientResources,
+            .database_out_of_sync => error.DatabaseOutOfSync,
+            .value_not_allowed => error.ValueNotAllowed,
+            _ => if (@intFromEnum(self) == 0xFD)
+                error.CccdImproperlyConfigured
+            else
+                error.GattError,
+        };
+    }
 };
 
 /// Standard Attribute Protocol (ATT) Opcodes according to
@@ -114,6 +143,27 @@ pub const AttError = error{
     BufferTooSmall,
     MalformedUuid,
     InvalidFormat,
+    InvalidHandle,
+    ReadNotPermitted,
+    WriteNotPermitted,
+    InvalidPdu,
+    InsufficientAuthentication,
+    RequestNotSupported,
+    InvalidOffset,
+    InsufficientAuthorization,
+    PrepareQueueFull,
+    AttributeNotFound,
+    AttributeNotLong,
+    InsufficientEncryptionKeySize,
+    InvalidAttributeValueLength,
+    UnlikelyError,
+    InsufficientEncryption,
+    UnsupportedGroupType,
+    InsufficientResources,
+    DatabaseOutOfSync,
+    ValueNotAllowed,
+    CccdImproperlyConfigured,
+    GattError,
 };
 
 // ============================================================================
