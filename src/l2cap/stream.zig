@@ -48,7 +48,7 @@ pub const L2capStream = struct {
         switch (self.backend) {
             .native_fd => |fd| {
                 if (builtin.os.tag == .linux) {
-                    return std.posix.recv(fd, buf, 0) catch |err| switch (err) {
+                    return std.posix.read(fd, buf) catch |err| switch (err) {
                         error.ConnectionResetByPeer => error.ConnectionClosed,
                         else => err,
                     };
@@ -69,7 +69,7 @@ pub const L2capStream = struct {
         switch (self.backend) {
             .native_fd => |fd| {
                 if (builtin.os.tag == .linux) {
-                    return std.posix.send(fd, data, 0);
+                    return std.posix.write(fd, data);
                 }
                 return error.NotSupported;
             },
@@ -86,7 +86,7 @@ pub const L2capStream = struct {
         switch (self.backend) {
             .native_fd => |fd| {
                 if (builtin.os.tag == .linux) {
-                    _ = std.posix.close(fd);
+                    _ = std.posix.system.close(fd);
                 }
             },
             .mock_channel => |chan| {
@@ -143,11 +143,11 @@ pub const L2capListener = struct {
 /// Connects an L2CAP CoC client to a remote peer on the given PSM.
 pub fn connectL2cap(addr: Address, psm: u16, config: L2capConfig) !L2capStream {
     if (builtin.os.tag == .linux) {
-        var sock = try socket.L2capSocket.create(.le);
+        var sock = try socket.L2capSocket.open(.seqpacket);
         errdefer sock.close();
 
         try sock.setSecurity(config.security);
-        try sock.connect(addr, psm);
+        try sock.connect(addr, psm, .public);
 
         return L2capStream{
             .backend = .{ .native_fd = sock.fd },
@@ -161,11 +161,12 @@ pub fn connectL2cap(addr: Address, psm: u16, config: L2capConfig) !L2capStream {
 /// Listens for incoming L2CAP CoC connections on a given PSM.
 pub fn listenL2cap(psm: u16, config: L2capConfig) !L2capListener {
     if (builtin.os.tag == .linux) {
-        var sock = try socket.L2capSocket.create(.le);
+        var sock = try socket.L2capSocket.open(.seqpacket);
         errdefer sock.close();
 
         try sock.setSecurity(config.security);
-        try sock.bind(null, psm);
+        const any_addr = Address{ .bytes = [_]u8{0} ** 6 };
+        try sock.bind(any_addr, psm, .public);
         try sock.listen(4);
 
         return L2capListener{
