@@ -5,9 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.2] - 2026-10-09
+
+### Feature Release: Native Windows WinRT COM BLE Engine (Zero-C# / Zero External Process)
+This release delivers milestone **v1.1.2**, implementing a 100% Pure Zig Windows BLE backend driven directly by the Windows Runtime (WinRT) COM object model. This completely eliminates all external helper processes, subprocess wrappers, and C#/.NET companion tools across Windows 10 and 11 environments.
+
+---
+
+### Added
+
+#### Pure Zig WinRT COM Engine (`src/backend/windows/bindings.zig`, `src/backend/windows/mod.zig`)
+* **Dynamic COM Loader (`WindowsWinRtApis`)**:
+  * Direct dynamic loading of `combase.dll` via `LoadLibraryA` / `GetProcAddress`.
+  * Multi-threaded COM initialization with `RoInitialize(RO_INIT_MULTITHREADED)` and `RoGetActivationFactory`.
+  * Zero C/C++ runtime or MSVC toolchain dependencies.
+* **WinRT COM Interfaces & VTables**:
+  * Full COM interface definitions matching Windows 10 SDK (10.0.19041.0): `IBluetoothLEAdvertisementWatcher`, `IBluetoothLEDevice`, `IBluetoothLEDevice3`, `IGattDeviceService`, `IGattDeviceService3`, `IGattCharacteristic`, `IGattCharacteristic3`, `IBuffer`, and `IBufferByteAccess`.
+* **Zero-Allocation Notification & Event Sinks**:
+  * Native COM `IEventHandler` delegate sinks (`AdvReceivedHandler`, `GattValueChangedHandler`) delivering advertisement and characteristic notifications directly into Zig callback pipelines without heap allocations on the hot-path.
+* **Complete Backend VTable Operations**:
+  * **Scanning**: Active BLE advertising discovery via `BluetoothLEAdvertisementWatcher` with MAC address, RSSI, and raw payload forwarding.
+  * **Device Connection**: Asynchronous connection by MAC address via `BluetoothLEDevice.FromBluetoothAddressAsync` and clean lifecycle cleanup via `IClosable.Close()`.
+  * **GATT Discovery**: Recursive resolution and caching of GATT services and characteristics via `GetGattServicesWithCacheModeAsync` and `GetCharacteristicsWithCacheModeAsync`.
+  * **Characteristics I/O**: Direct memory reads via `IBufferByteAccess` and writes (with/without response) via `ICryptographicBufferStatics.CreateFromByteArray`.
+  * **Notifications**: Subscription registration with automatic hardware CCCD descriptor programming (`Notify` / `None`).
+* **Kernel Monotonic Timing**:
+  * Sub-millisecond timeout tracking using Win32 `kernel32.GetTickCount64()` and low-overhead kernel sleep with zero standard library deprecation issues.
+
 ---
 
 ## [1.1.1] - 2026-10-09
+
 
 ### Maintenance & Toolchain Upgrade: Full Compatibility with Zig 0.17.0
 This release provides official, turnkey support for **Zig 0.17.0** across all modules, tests, benchmarks, and multi-OS CI matrix runners, addressing language syntax removals, standard library reorganizations, and build system decoupling.
