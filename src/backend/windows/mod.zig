@@ -666,7 +666,10 @@ pub const WindowsBackend = struct {
         const dev: *WindowsDevice = @ptrCast(@alignCast(dev_handle));
         const winrt = dev.backend.winrt orelse return BleError.NotSupported;
 
-        const char_entry = dev.characteristics.get(char_uuid) orelse return BleError.CharacteristicNotFound;
+        const char_entry = dev.characteristics.get(char_uuid) orelse {
+            std.debug.print("  [DEBUG] subscribe: CharacteristicNotFound for UUID\n", .{});
+            return BleError.CharacteristicNotFound;
+        };
         if (dev.subscriptions.contains(char_uuid)) return;
 
         const sub_ctx = try dev.allocator.create(WindowsDevice.SubscriptionContext);
@@ -681,31 +684,53 @@ pub const WindowsBackend = struct {
         handler.* = bindings.GattValueChangedHandler.init(onValueChangedNotification, @ptrCast(sub_ctx));
 
         var cookie: bindings.EventRegistrationToken = undefined;
-        if (char_entry.char.lpVtbl.add_ValueChanged(char_entry.char_obj, handler, &cookie) != bindings.S_OK) {
+        const hr_add = char_entry.char.lpVtbl.add_ValueChanged(char_entry.char_obj, handler, &cookie);
+        if (hr_add != bindings.S_OK) {
+            std.debug.print("  [DEBUG] subscribe: add_ValueChanged hr=0x{X}\n", .{@as(u32, @bitCast(hr_add))});
             dev.allocator.destroy(handler);
             dev.allocator.destroy(sub_ctx);
             return BleError.NotificationFailed;
         }
 
-        // Write CCCD (Notify = 1) to enable hardware notification streaming
-        var cccd_op: ?*anyopaque = null;
-        if (char_entry.char.lpVtbl.WriteClientCharacteristicConfigurationDescriptorAsync(
-            char_entry.char_obj,
-            .Notify,
-            &cccd_op,
-        ) != bindings.S_OK or cccd_op == null) {
-            _ = char_entry.char.lpVtbl.remove_ValueChanged(char_entry.char_obj, cookie);
-            dev.allocator.destroy(handler);
-            dev.allocator.destroy(sub_ctx);
-            return BleError.NotificationFailed;
-        }
+        // Write CCCD (Notify = 1) to enable hardware notification streaming with retry on Unreachable
+        var attempts: usize = 0;
+        var cccd_status: bindings.GattCommunicationStatus = .Unreachable;
+        while (attempts < 4) : (attempts += 1) {
+            var cccd_op: ?*anyopaque = null;
+            const hr_cccd = char_entry.char.lpVtbl.WriteClientCharacteristicConfigurationDescriptorAsync(
+                char_entry.char_obj,
+                .Notify,
+                &cccd_op,
+            );
+            if (hr_cccd != bindings.S_OK or cccd_op == null) {
+                if (attempts < 3) {
+                    bindings.Sleep(600);
+                    continue;
+                }
+                _ = char_entry.char.lpVtbl.remove_ValueChanged(char_entry.char_obj, cookie);
+                dev.allocator.destroy(handler);
+                dev.allocator.destroy(sub_ctx);
+                return BleError.NotificationFailed;
+            }
 
-        const cccd_status = winrt.awaitAsync(bindings.GattCommunicationStatus, cccd_op.?, 5000) catch {
-            _ = char_entry.char.lpVtbl.remove_ValueChanged(char_entry.char_obj, cookie);
-            dev.allocator.destroy(handler);
-            dev.allocator.destroy(sub_ctx);
-            return BleError.NotificationFailed;
-        };
+            cccd_status = winrt.awaitAsync(bindings.GattCommunicationStatus, cccd_op.?, 5000) catch {
+                if (attempts < 3) {
+                    bindings.Sleep(600);
+                    continue;
+                }
+                _ = char_entry.char.lpVtbl.remove_ValueChanged(char_entry.char_obj, cookie);
+                dev.allocator.destroy(handler);
+                dev.allocator.destroy(sub_ctx);
+                return BleError.NotificationFailed;
+            };
+
+            if (cccd_status == .Success) break;
+            if (cccd_status == .Unreachable and attempts < 3) {
+                bindings.Sleep(800);
+                continue;
+            }
+            break;
+        }
 
         if (cccd_status != .Success) {
             _ = char_entry.char.lpVtbl.remove_ValueChanged(char_entry.char_obj, cookie);
