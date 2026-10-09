@@ -120,11 +120,15 @@ pub const WindowsBackend = struct {
     powered: bool = false,
 
     pub fn init() WindowsBackend {
-        return .{
+        var self = WindowsBackend{
             .radio = WindowsRadio.init(),
             .winrt = bindings.WindowsWinRtApis.load(),
             .allocator = std.heap.page_allocator,
         };
+        if (self.winrt != null) {
+            self.powered = true;
+        }
+        return self;
     }
 
     pub fn deinit(self: *WindowsBackend) void {
@@ -172,8 +176,15 @@ pub const WindowsBackend = struct {
             self.radio = WindowsRadio.init();
         }
         if (self.radio) |*r| {
-            try r.openDefault();
-            self.powered = r.isPowered();
+            if (r.openDefault()) |_| {
+                self.powered = r.isPowered();
+            } else |_| {
+                if (self.winrt != null) {
+                    self.powered = true;
+                } else {
+                    return BleError.AdapterNotFound;
+                }
+            }
         } else {
             // If Win32 radio not found but WinRT is loaded, consider it powered
             if (self.winrt != null) {
@@ -420,7 +431,8 @@ pub const WindowsBackend = struct {
         _ = ctx;
         const dev: *WindowsDevice = @ptrCast(@alignCast(dev_handle));
         var status: i32 = 0;
-        if (dev.device.lpVtbl.get_ConnectionStatus(dev.device_obj, &status) == bindings.S_OK) {
+        const dev_this = @as(*anyopaque, @ptrCast(@constCast(dev.device)));
+        if (dev.device.lpVtbl.get_ConnectionStatus(dev_this, &status) == bindings.S_OK) {
             return status == 1; // 1 = Connected, 0 = Disconnected
         }
         return true;
@@ -439,10 +451,15 @@ pub const WindowsBackend = struct {
         const winrt = dev.backend.winrt orelse return BleError.NotSupported;
         const device3 = dev.device3 orelse return BleError.NotSupported;
 
-        // Query services uncached (1 = Uncached)
+        const dev3_obj = @as(*anyopaque, @ptrCast(@constCast(device3)));
         var services_op: ?*anyopaque = null;
-        if (device3.lpVtbl.GetGattServicesWithCacheModeAsync(dev.device_obj, 1, &services_op) != bindings.S_OK or services_op == null) {
-            return BleError.ServiceNotFound;
+        // Try Cached mode (0 = Cached) first to prevent dropping link on bonded Whoop
+        var hr = device3.lpVtbl.GetGattServicesWithCacheModeAsync(dev3_obj, 0, &services_op);
+        if (hr != bindings.S_OK or services_op == null) {
+            hr = device3.lpVtbl.GetGattServicesWithCacheModeAsync(dev3_obj, 1, &services_op);
+            if (hr != bindings.S_OK or services_op == null) {
+                return BleError.ServiceNotFound;
+            }
         }
 
         const res_obj = try winrt.awaitAsync(?*anyopaque, services_op.?, 15000);
@@ -486,9 +503,12 @@ pub const WindowsBackend = struct {
             const svc: *const bindings.IGattDeviceService = @ptrCast(@alignCast(svc_raw));
 
             // Discover characteristics for this service
+            const svc3_obj = svc3_ptr.?;
             var char_op: ?*anyopaque = null;
-            if (svc3.lpVtbl.GetCharacteristicsWithCacheModeAsync(svc_raw, 1, &char_op) != bindings.S_OK or char_op == null) {
-                continue;
+            var hr_ch = svc3.lpVtbl.GetCharacteristicsWithCacheModeAsync(svc3_obj, 0, &char_op);
+            if (hr_ch != bindings.S_OK or char_op == null) {
+                hr_ch = svc3.lpVtbl.GetCharacteristicsWithCacheModeAsync(svc3_obj, 1, &char_op);
+                if (hr_ch != bindings.S_OK or char_op == null) continue;
             }
 
             const char_res_obj = winrt.awaitAsync(?*anyopaque, char_op.?, 15000) catch continue;
@@ -527,10 +547,11 @@ pub const WindowsBackend = struct {
                 _ = ch_unk.lpVtbl.QueryInterface(char_raw, &bindings.IID_IGattCharacteristic3, &ch3_ptr);
 
                 var guid_val: bindings.GUID = undefined;
-                if (ch.lpVtbl.get_Uuid(char_raw, &guid_val) == bindings.S_OK) {
+                const ch_this = ch_ptr.?;
+                if (ch.lpVtbl.get_Uuid(ch_this, &guid_val) == bindings.S_OK) {
                     const char_uuid = guid_val.toUUID();
                     try dev.characteristics.put(char_uuid, .{
-                        .char_obj = char_raw,
+                        .char_obj = ch_this,
                         .char = ch,
                         .char3 = if (ch3_ptr) |p| @ptrCast(@alignCast(p)) else null,
                         .service_obj = svc_raw,

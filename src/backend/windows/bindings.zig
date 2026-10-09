@@ -30,16 +30,17 @@ pub const GUID = extern struct {
     Data4: [8]u8,
 
     pub fn toUUID(self: GUID) types.UUID {
-        // Windows GUID has mixed-endian fields: Data1 (LE), Data2 (LE), Data3 (LE), Data4 (BE)
+        // Windows GUID has Data1 (u32), Data2 (u16), Data3 (u16), Data4 ([8]u8).
+        // Standard RFC 4122 UUID is a 16-byte big-endian sequence:
         var bytes: [16]u8 = undefined;
-        bytes[0] = @intCast(self.Data1 & 0xFF);
-        bytes[1] = @intCast((self.Data1 >> 8) & 0xFF);
-        bytes[2] = @intCast((self.Data1 >> 16) & 0xFF);
-        bytes[3] = @intCast((self.Data1 >> 24) & 0xFF);
-        bytes[4] = @intCast(self.Data2 & 0xFF);
-        bytes[5] = @intCast((self.Data2 >> 8) & 0xFF);
-        bytes[6] = @intCast(self.Data3 & 0xFF);
-        bytes[7] = @intCast((self.Data3 >> 8) & 0xFF);
+        bytes[0] = @intCast((self.Data1 >> 24) & 0xFF);
+        bytes[1] = @intCast((self.Data1 >> 16) & 0xFF);
+        bytes[2] = @intCast((self.Data1 >> 8) & 0xFF);
+        bytes[3] = @intCast(self.Data1 & 0xFF);
+        bytes[4] = @intCast((self.Data2 >> 8) & 0xFF);
+        bytes[5] = @intCast(self.Data2 & 0xFF);
+        bytes[6] = @intCast((self.Data3 >> 8) & 0xFF);
+        bytes[7] = @intCast(self.Data3 & 0xFF);
         @memcpy(bytes[8..16], self.Data4[0..8]);
         return .{ .bytes = bytes };
     }
@@ -47,9 +48,9 @@ pub const GUID = extern struct {
     pub fn fromUUID(uuid: types.UUID) GUID {
         const b = uuid.bytes;
         return .{
-            .Data1 = @as(u32, b[0]) | (@as(u32, b[1]) << 8) | (@as(u32, b[2]) << 16) | (@as(u32, b[3]) << 24),
-            .Data2 = @as(u16, b[4]) | (@as(u16, b[5]) << 8),
-            .Data3 = @as(u16, b[6]) | (@as(u16, b[7]) << 8),
+            .Data1 = (@as(u32, b[0]) << 24) | (@as(u32, b[1]) << 16) | (@as(u32, b[2]) << 8) | @as(u32, b[3]),
+            .Data2 = (@as(u16, b[4]) << 8) | @as(u16, b[5]),
+            .Data3 = (@as(u16, b[6]) << 8) | @as(u16, b[7]),
             .Data4 = .{ b[8], b[9], b[10], b[11], b[12], b[13], b[14], b[15] },
         };
     }
@@ -635,7 +636,9 @@ pub const GattValueChangedHandler = struct {
     };
 
     fn qi(this_opaque: *anyopaque, riid: *const GUID, ppvObject: ?*?*anyopaque) callconv(winapi_cc) HRESULT {
-        _ = riid;
+        if (riid.Data1 == 0xECC8691B or riid.Data1 == 0x0000001B or riid.Data1 == 0x00000039) {
+            return E_NOINTERFACE;
+        }
         const out = ppvObject orelse return E_POINTER;
         _ = addRef(this_opaque);
         out.* = this_opaque;
@@ -711,7 +714,9 @@ pub const AdvReceivedHandler = struct {
     };
 
     fn qi(this_opaque: *anyopaque, riid: *const GUID, ppvObject: ?*?*anyopaque) callconv(winapi_cc) HRESULT {
-        _ = riid;
+        if (riid.Data1 == 0xECC8691B or riid.Data1 == 0x0000001B or riid.Data1 == 0x00000039) {
+            return E_NOINTERFACE;
+        }
         const out = ppvObject orelse return E_POINTER;
         _ = addRef(this_opaque);
         out.* = this_opaque;
