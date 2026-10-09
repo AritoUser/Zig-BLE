@@ -1,9 +1,9 @@
 # Zig-BLE: Roadmap, Architektur-Spezifikation & Release-Matrix
 
 > **Dokumenttyp:** Technische Spezifikation, Release-Matrix & Entwicklungs-Roadmap  
-> **Aktueller Release-Status:** Zig-BLE v1.0.0 (Produktionsreife — 100 % Freigegeben & Hardware-Verifiziert)  
-> **Roadmap-Horizont:** v1.1.0 (Throughput & Profiles) bis v2.0.0+ (Next-Gen & Audio)  
-> **Compiler-Basis:** Zig 0.16.0+  
+> **Aktueller Release-Status:** Zig-BLE v1.1.1 (High-Throughput, L2CAP CoC, EATT & Zig 0.17.0+ Toolchain — Freigegeben)  
+> **Roadmap-Horizont:** v1.1.2 (Native Windows WinRT COM) bis v2.0.0+ (Next-Gen & Audio)  
+> **Compiler-Basis:** Zig 0.17.0+  
 > **Bezugsnormen:** Bluetooth Core Specification (v5.0 – v6.0) & Bluetooth SIG Profile  
 
 ---
@@ -13,7 +13,7 @@
 1. [Executive Summary & Release-Philosophie](#1-executive-summary--release-philosophie)
 2. [Status Quo & Architektur-Audit](#2-status-quo--architektur-audit)
    - [Bestehendes Fundament](#bestehendes-fundament)
-   - [Im Meilenstein v1.0.0 gelöste Architektur-Herausforderungen](#im-meilenstein-v100-gelöste-architektur-herausforderungen)
+   - [Im Meilenstein v1.0.0 & v1.1.x gelöste Architektur-Herausforderungen](#im-meilenstein-v100--v11x-gelöste-architektur-herausforderungen)
 3. [Meilenstein v1.0.0: Die Produktionsreife (Core Release) — STATUS: ABGESCHLOSSEN](#3-meilenstein-v100-die-produktionsreife-core-release--status-abgeschlossen)
    - [Pfeiler 1: Pluggable Backend Architecture (HAL & VTable)](#pfeiler-1-pluggable-backend-architecture-hal--vtable)
    - [Pfeiler 2: Tier-1 Betriebssysteme (Linux BlueZ & Windows WinRT)](#pfeiler-2-tier-1-betriebssysteme-linux-bluez--windows-winrt)
@@ -22,10 +22,11 @@
    - [Pfeiler 5: KeyStore, Bonding & CCCD-Persistenz](#pfeiler-5-keystore-bonding--cccd-persistenz)
    - [Pfeiler 6: Virtual Mock Controller & Headless CI-Harness](#pfeiler-6-virtual-mock-controller--headless-ci-harness)
    - [Pfeiler 7: Developer Tooling (PCAP & Declarative GATT Server)](#pfeiler-7-developer-tooling-pcap--declarative-gatt-server)
-4. [Meilenstein v1.1.0: High-Throughput Engine, EATT & Connection Subrating](#4-meilenstein-v110-high-throughput-engine-eatt--connection-subrating)
-   - [Automatischer ConnectionOptimizer (MTU, DLE & PHY)](#41-automatischer-connectionoptimizer-mtu-dle--phy)
-   - [BT 5.2: Enhanced Attribute Protocol (EATT)](#42-bt-52-enhanced-attribute-protocol-eatt)
-   - [BT 5.3: Connection Subrating (Power & Latency Transition)](#43-bt-53-connection-subrating-power--latency-transition)
+4. [Meilenstein v1.1.0 – v1.1.2: High-Throughput Engine, EATT & Native Windows WinRT COM](#4-meilenstein-v110--v112-high-throughput-engine-eatt--native-windows-winrt-com)
+   - [4.1 Automatischer ConnectionOptimizer (MTU, DLE & PHY)](#41-automatischer-connectionoptimizer-mtu-dle--phy)
+   - [4.2 BT 5.2: Enhanced Attribute Protocol (EATT)](#42-bt-52-enhanced-attribute-protocol-eatt)
+   - [4.3 BT 5.3: Connection Subrating (Power & Latency Transition)](#43-bt-53-connection-subrating-power--latency-transition)
+   - [4.4 Meilenstein v1.1.2: Native Windows WinRT COM Engine (Zero-C# / Pure-Zig Hardware Ingestion)](#44-meilenstein-v112-native-windows-winrt-com-engine-zero-c--pure-zig-hardware-ingestion)
 5. [Meilenstein v1.2.0: Bluetooth SIG Fitness, Ergometer & Health Suite](#5-meilenstein-v120-bluetooth-sig-fitness-ergometer--health-suite)
    - [Fitness Machine Profile (FTMS v1.0, Service 0x1826)](#51-fitness-machine-profile-ftms-v10-service-0x1826)
    - [Cycling Power Profile (CPP v1.0, Service 0x1818)](#52-cycling-power-profile-cpp-v10-service-0x1818)
@@ -39,7 +40,7 @@
    - [BT 5.4: Encrypted Advertising Data (EAD) & PAwR](#72-bt-54-encrypted-advertising-data-ead--pawr)
    - [BT 6.0: Channel Sounding (CS) — Nanosekunden-Entfernungsmessung](#73-bt-60-channel-sounding-cs--nanosekunden-entfernungsmessung)
 8. [Master-Release- & Feature-Matrix (v1.0.0 bis v2.0.0)](#8-master-release--feature-matrix-v100-bis-v200)
-9. [Detaillierte Implementierungs-Phasen (P1 bis P16)](#9-detaillierte-implementierungs-phasen-p1-bis-p16)
+9. [Detaillierte Implementierungs-Phasen (P1 bis P20)](#9-detaillierte-implementierungs-phasen-p1-bis-p20)
 
 ---
 
@@ -159,17 +160,19 @@ pub const BackendVTable = struct {
 #### A. Linux Backend (BlueZ D-Bus Wire Protocol)
 * Bereits implementiert via native Unix Domain Sockets (`/var/run/dbus/system_bus_socket`).
 * **Anpassung für v1.0.0:** Kapselung der D-Bus-Nachrichten hinter dem HAL-Interface.
+* **Erweiterung für v1.1.0:** Direkter `AcquireNotify` Socket-Handover (`unix_fd`) zur D-Bus-Bypass-Latenzreduktion auf < 50 µs.
 
-#### B. Windows Backend (WinRT & Win32 BLE)
-* **Ziel:** Nativer Betrieb auf Windows 10/11 ohne WSL und ohne C-Runtimes.
+#### B. Windows Backend (WinRT COM ABI & Win32 BLE)
+* **Ziel:** Nativer Betrieb auf Windows 10/11 ohne WSL, ohne C-Runtimes und ohne externe C#/.NET-Zwischenschichten.
 * **Architektur:**
-  * **Option A: WinRT COM ABI (`Windows.Devices.Bluetooth`):**
-    * Zugriff über Zigs C-ABI / COM-Support (`IInspectable`, `IBluetoothLEDevice`, `IGattCharacteristic`).
-    * Erlaubt unpaartes Scannen, Advertisements und automatische Dienstauflösung.
+  * **Option A: WinRT COM ABI (`Windows.Devices.Bluetooth`) — PRIMÄRER TREIBER (v1.1.2):**
+    * Direkter Zugriff über Zigs C-ABI / COM-VTable-Support (`IInspectable`, `IBluetoothLEDevice`, `IGattCharacteristic`).
+    * Erlaubt unpaartes Active Scanning (`BluetoothLEAdvertisementWatcher`), automatische Dienstauflösung und Notification-Handling via native COM-Event-Sinks (`GattValueChangedHandler`).
+    * **Eliminiert externe C#/.NET-Hilfsprogramme** vollständig.
   * **Option B: Win32 GATT API (`BluetoothAPIs.h`):**
     * Direkter Aufruf von `BluetoothGATTGetServices`, `BluetoothGATTGetCharacteristics`, `BluetoothGATTRegisterEvent`.
-    * Extrem schlank, benötigt jedoch für einige Merkmale vorheriges OS-Pairing.
-* **Entscheidung für v1.0.0:** WinRT COM ABI als primärer Treiber, da moderne Wearables und Sensoren ohne vorheriges OS-Pairing angesteuert werden müssen.
+    * Extrem schlank, benötigt jedoch für viele moderne Wearables (z. B. Whoop 4.0/5.0) ein vorheriges, manuelles OS-Pairing im Windows-Einstellungsdialog.
+* **Entscheidung:** WinRT COM ABI als primärer nativer Stack in `src/backend/windows/mod.zig`, da moderne Sport- und Biometriesensoren ohne vorheriges OS-Pairing autonom gekoppelt werden müssen.
 
 ---
 
@@ -415,6 +418,78 @@ pub const EattMultiplexer = struct {
 
 ---
 
+### 4.4 Meilenstein v1.1.2: Native Windows WinRT COM Engine (Zero-C# / Pure-Zig Hardware Ingestion)
+
+> [!IMPORTANT]
+> **Das Kernproblem & Ziel von v1.1.2:**  
+> Auf Windows existiert für Bluetooth LE kein einfacher POSIX-Socket (`AF_BLUETOOTH`), sondern Microsoft zwingt Entwickler durch das **Windows Runtime (WinRT) COM-Objektmodell**.  
+> In frühen Testphasen behalf sich FitLib mit einer externen C#-Bridge (`wearables/tools/ble_scan_src/Program.cs`), die über Named Pipes oder Subprozesse Daten weiterleitete.  
+> **Ziel von v1.1.2:** Vollständige, rückstandslose Eliminierung jeglicher externer Hilfsprogramme (`.cs`-Dateien, .NET-Laufzeiten). Zig-BLE implementiert die WinRT COM VTables nativ in Pure Zig, sodass FitLib direkt `zig_ble.connect()` aufruft und das Verzeichnis `wearables/tools/` ersatzlos gelöscht werden kann.
+
+```mermaid
+graph TD
+    subgraph "Native Windows WinRT COM Pipeline (Zero C# / Zero External Dependencies)"
+        Init["1. RoInitialize(RO_INIT_MULTITHREADED) & RoGetActivationFactory"]
+        Watcher["2. BluetoothLEAdvertisementWatcher & ITypedEventHandler COM Sink"]
+        Connect["3. BluetoothLEDevice.FromBluetoothAddressAsync(u64) & IAsyncOperation"]
+        Enum["4. GetGattServicesAsync() & GetCharacteristicsAsync()"]
+        Sink["5. GattValueChangedHandler COM VTable (Unbuffered Direct Callback)"]
+        Write["6. WriteValueWithResultAsync & WriteWithoutResponse"]
+    end
+
+    Init --> Watcher
+    Watcher -->|MAC, RSSI, UUIDs| Connect
+    Connect --> Enum
+    Enum --> Sink
+    Sink -->|Zero-Copy []const u8 Slice| SPSC["SPSC Ring-Buffer Ingestion (FitLib)"]
+    Enum --> Write
+```
+
+#### Die 5 Bausteine der WinRT COM Implementierung (`src/backend/windows/mod.zig` & `bindings.zig`):
+
+1. **WinRT COM-Initialisierung & Activation Factory (`combase.dll` / `ole32.dll`):**
+   * Aufruf von `RoInitialize(RO_INIT_MULTITHREADED)`.
+   * Bindung von `RoGetActivationFactory` für die WinRT-Klassennamen:
+     * `"Windows.Devices.Bluetooth.BluetoothLEDevice"`
+     * `"Windows.Devices.Bluetooth.Advertisement.BluetoothLEAdvertisementWatcher"`
+     * `"Windows.Devices.Bluetooth.GenericAttributeProfile.GattDeviceService"`
+
+2. **Active BLE Scanner (`BluetoothLEAdvertisementWatcher`):**
+   * Erzeugen des Watchers via WinRT Factory.
+   * COM-Event-Handler (`ITypedEventHandler<BluetoothLEAdvertisementWatcher, BluetoothLEAdvertisementReceivedEventArgs>` Vtable in Zig) für das `Received`-Event zur Entdeckung von MAC-Adresse, RSSI und Service-UUIDs (z. B. Standard Heart Rate `0x180D`, Whoop Data `61080001`).
+
+3. **GATT-Verbindung & Enumeration:**
+   * Verbindung über MAC-Adresse: `BluetoothLEDevice.FromBluetoothAddressAsync(u64)`.
+   * Asynchrone COM-Helfer in Zig: Warten auf `IAsyncOperation<T>` via Event-Callback oder Win32-Wait-Handle (`WaitForSingleObject`).
+   * `GetGattServicesAsync()` und `GetCharacteristicsAsync()`.
+
+4. **Notification-Abonnement (`ValueChanged` COM-Event-Sink in Zig):**
+   * Schreiben des CCCD-Descriptors (`WriteClientCharacteristicConfigurationDescriptorAsync(Notify)`).
+   * **Der entscheidende Punkt:** Implementierung einer nativen Zig-Struktur mit COM-VTable:
+     ```zig
+     pub const GattValueChangedHandler = extern struct {
+         vtable: *const IEventHandlerVTable,
+         ref_count: std.atomic.Value(u32),
+         callback: *const fn (ctx: *anyopaque, data: []const u8) void,
+         ctx: *anyopaque,
+     };
+     ```
+     Dadurch feuert Windows eingehende BLE-Pakete (z. B. `0x2A37` Herzfrequenz oder `61080003` Whoop-Rohstream) direkt in eine Zig-Funktion – **ohne Umweg, ohne Pipe, ohne C#**.
+
+5. **GATT Write & Read:**
+   * `WriteValueWithResultAsync` (Confirmed Write für Whoop-Session-Handshake).
+   * `WriteValueAsync` mit Option `WriteWithoutResponse` (für High-Throughput-Befehle).
+
+#### Harmonisierung mit Core- & Mobile-Backends:
+* **ATT MTU Exchange (`exchangeMtu`)**: Bereits in v1.1.0 umgesetzt (bis 517 Bytes). Wird im Windows-Backend über `GattSession.MaxPduSize` bzw. Request-Parameter gebunden.
+* **Pairing & Bonding API (`pairDevice`, `unpairDevice`, `getBondState`)**: Bereits in v1.1.0 umgesetzt. Ermöglicht das Löschen veralteter Bonding-Schlüssel bei `AccessDenied` (`0x05`/`0x0F`) via `DeviceInformationCustomPairing`.
+* **Unbuffered Zero-Alloc Event Streaming**: Eingehende BLE-Pakete werden direkt als `[]const u8` Slice in die SPSC-Ring-Queue übergeben – 0 Bytes Heap-Allokation auf dem Hot-Path.
+* **Android / Wear OS (`src/backend/android/mod.zig`, v1.3.0)**: Zero-Copy JNI Direct Buffer Bridge (`env.GetDirectBufferAddress`) für Wearables.
+* **L2CAP CoC (`src/l2cap/stream.zig`, v1.1.0)**: Streaming-Kanal für Samsung Galaxy Watch Ultra (`watch-wire`, PSM `0x1001`).
+* **Linux BlueZ `AcquireNotify` (`src/backend/bluez/mod.zig`, v1.1.0)**: D-Bus Bypass via Socket-FD.
+
+---
+
 ## 5. Meilenstein v1.2.0: Bluetooth SIG Fitness, Ergometer & Health Suite
 
 **v1.2.0** erweitert Zig-BLE um standardisierte Bluetooth SIG Profile für Sport-, Ergometer- und medizinische Sensorik. Alle Encoder und Parser arbeiten strikt nach dem **Zero-Allocation-Prinzip** und transformieren Festkomma-Gleitkommawerte ohne Heap-Speicher.
@@ -602,9 +677,11 @@ graph LR
 
 | Version | Release-Titel | Kernfokus für Zig-BLE | FitLib-Bausteine | Status |
 | :---: | :--- | :--- | :--- | :---: |
-| **v1.0.0** | **Production Core Release** | Multi-OS HAL, Long Transfers, Resilienz, Hardware-Proof | Basis-HAL, ATT, SMP, H4 UART, Windows & BlueZ | ✅ **FREIGEGEBEN** |
+| **v1.0.0** | **Production Core Release** | Multi-OS HAL, Long Transfers, Resilienz, Hardware-Proof | Basis-HAL, ATT, SMP, H4 UART, Windows Win32 & BlueZ | ✅ **FREIGEGEBEN** |
 | **v1.0.1** | **Cross-Platform CI Patch** | macOS ARM64 Calling Conventions, POSIX Timestamps, BlueZ Fix | CI-Matrix 100 % grün auf Ubuntu, macOS & Windows | ✅ **FREIGEGEBEN** |
-| **v1.1.0** | **High-Throughput & Ingestion Engine** | Durchsatz-Tuning (>120 kB/s), EATT, Subrating, VTable-Security | **Nr. 1** (MTU Exchange), **Nr. 2** (Bonding VTable), **Nr. 3** (`AcquireNotify`), **Nr. 5** (L2CAP CoC API), **Nr. 6** (PCAP/Btsnoop Replay) | ✅ **IMPLEMENTIERT** |
+| **v1.1.0** | **High-Throughput & Ingestion Engine** | Durchsatz-Tuning (>120 kB/s), EATT, Subrating, VTable-Security | **Nr. 1** (MTU Exchange), **Nr. 2** (Bonding VTable), **Nr. 3** (`AcquireNotify`), **Nr. 5** (L2CAP CoC API), **Nr. 6** (PCAP/Btsnoop Replay) | ✅ **FREIGEGEBEN** |
+| **v1.1.1** | **Zig 0.17.0 Toolchain Upgrade** | Syntax-Migration (`@splat`, `bufPrintSentinel`), Build-Decoupling | Turnkey-Kompatibilität für moderne Zig 0.17.0 Compiler | ✅ **FREIGEGEBEN** |
+| **v1.1.2** | **Native Windows WinRT COM Engine** | **Zero-C# Hardware Ingestion:** RoInitialize, AdvertisementWatcher, FromBluetoothAddressAsync, GattValueChangedHandler COM Sink | **Restlose Eliminierung von `wearables/tools/`**, direkte Whoop 4.0/5.0 Ingestion in Pure Zig | 🚀 **HÖCHSTE PRIORITÄT / IN ENTWICKLUNG** |
 | **v1.2.0** | **Fitness & Health Ecosystem** | Ergometer, Smart-Trainer, Wattmessung, SpO2 | **Nr. 7** (PLXP `0x1822`), FTMS (`0x1826`), CPP (`0x1818`), RSCP (`0x1814`) | 📋 **KONZIPIERT** |
 | **v1.3.0** | **Mobile & Extended OS** | Native Android NDK & macOS CoreBluetooth Backends | **Nr. 4** (Android JNI Zero-Copy Bridge & Wear OS CoC), macOS ObjC-ABI | 📋 **KONZIPIERT** |
 | **v1.4.0** | **Direction Finding Engine** | Lokalisierung & Raumorientierung (Indoor Tracking)| BT 5.1 AoA / AoD, Constant Tone Extension (CTE), I/Q Sample Processing | 📋 **KONZIPIERT** |
@@ -620,7 +697,8 @@ graph LR
 | **P2** | **v1.0.0** | — | Pluggable Backend HAL | `src/backend/` | Mittel | ✅ Polymorphe VTable für Linux & Win |
 | **P3** | **v1.0.0** | — | Virtual Mock CI Controller | `src/backend/mock/` | Mittel | ✅ 146 Tests deterministisch im RAM |
 | **P4** | **v1.0.0** | — | GATT Long Transfers | `src/core/transfers.zig` | Mittel | ✅ Prepare/Execute Queue verifiziert |
-| **P5** | **v1.0.0** | — | Windows 11 WinRT Backend | `src/backend/windows/` | Hoch | ✅ Live Galaxy S25 Ultra Over-the-Air |
+| **P5.1** | **v1.0.0** | — | Windows 11 Win32 Radio & Basic Discovery | `src/backend/windows/` | Mittel | ✅ Radio Enumerate & Power State |
+| **P5.2** | **v1.1.2** | **Top** | Nativer WinRT COM Stack (Ablösung C#) | `src/backend/windows/mod.zig`, `bindings.zig` | Hoch | 🎯 RoInitialize, AdvWatcher, ValueChanged COM Sink, Live Whoop Ingestion |
 | **P6** | **v1.0.0** | — | Pure-Zig Host-Stack UART H4 | `src/hci/h4.zig`, `src/l2cap/` | Hoch | ✅ Streaming Parser & ACL Reassembly |
 | **P7** | **v1.1.0** | **Nr. 1** | ATT MTU Exchange in HAL | `src/backend/vtable.zig`, OS-Backends | Mittel | ✅ `exchangeMtu` verifiziert bis 517 Bytes |
 | **P8** | **v1.1.0** | **Nr. 2** | Security & Bonding VTable | `src/backend/vtable.zig`, `types.zig` | Mittel | ✅ `pair`/`unpair`/`BondState` & ATT Errors |
