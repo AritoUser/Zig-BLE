@@ -557,7 +557,7 @@ test "HCI Commands: reset and scan parameters serialization" {
     const read_p256 = Commands.leReadLocalP256PublicKey();
     try std.testing.expectEqualSlices(u8, &[_]u8{ 0x01, 0x25, 0x20, 0x00 }, &read_p256);
 
-    const dummy_pub: [64]u8 = [_]u8{0xAA} ** 64;
+    const dummy_pub: [64]u8 = @splat(0xAA);
     const gen_dhkey = Commands.leGenerateDhKey(dummy_pub);
     try std.testing.expectEqual(@as(u8, 0x01), gen_dhkey[0]);
     try std.testing.expectEqual(@as(u16, 0x2026), std.mem.readInt(u16, gen_dhkey[1..3], .little));

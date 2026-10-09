@@ -52,7 +52,7 @@ pub const HciController = struct {
 
     /// Reads the hardware Bluetooth MAC address (BD_ADDR) of this controller.
     pub fn readBdAddr(self: *HciController) !Address {
-        if (builtin.os.tag != .linux) return Address{ .bytes = [_]u8{0} ** 6 };
+        if (builtin.os.tag != .linux) return Address{ .bytes = @splat(0) };
 
         const cmd = Commands.readBdAddr();
         try self.sock.send(&cmd);

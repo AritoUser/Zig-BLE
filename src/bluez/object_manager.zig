@@ -104,7 +104,7 @@ pub const GattServiceInfo = struct {
     object_path_len: u8 = 0,
     device_path: [160]u8 = undefined,
     device_path_len: u8 = 0,
-    uuid: core.UUID = core.UUID{ .bytes = [_]u8{0} ** 16 },
+    uuid: core.UUID = core.UUID{ .bytes = @splat(0) },
     primary: bool = true,
 
     pub fn getObjectPath(self: *const GattServiceInfo) [:0]const u8 {
@@ -122,7 +122,7 @@ pub const GattCharacteristicInfo = struct {
     object_path_len: u8 = 0,
     service_path: [192]u8 = undefined,
     service_path_len: u8 = 0,
-    uuid: core.UUID = core.UUID{ .bytes = [_]u8{0} ** 16 },
+    uuid: core.UUID = core.UUID{ .bytes = @splat(0) },
     flags: core.CharacteristicProperties = .{},
     notifying: bool = false,
     mtu: u16 = 23,
@@ -142,7 +142,7 @@ pub const GattDescriptorInfo = struct {
     object_path_len: u8 = 0,
     characteristic_path: [224]u8 = undefined,
     char_path_len: u8 = 0,
-    uuid: core.UUID = core.UUID{ .bytes = [_]u8{0} ** 16 },
+    uuid: core.UUID = core.UUID{ .bytes = @splat(0) },
 
     pub fn getObjectPath(self: *const GattDescriptorInfo) [:0]const u8 {
         return self.object_path[0..self.object_path_len :0];

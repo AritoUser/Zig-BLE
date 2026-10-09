@@ -8,17 +8,17 @@ on:
 
 jobs:
   test-linux:
-    name: Linux Native (Pure Zig 0.16.0)
+    name: Linux Native (Pure Zig 0.17.0)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Setup Zig 0.16.0
+      - name: Setup Zig 0.17.0
         run: |
-          curl -sLO https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz
-          tar -xf zig-x86_64-linux-0.16.0.tar.xz
-          echo "$PWD/zig-x86_64-linux-0.16.0" >> $GITHUB_PATH
+          curl -sLO https://ziglang.org/download/0.17.0/zig-x86_64-linux-0.17.0.tar.xz
+          tar -xf zig-x86_64-linux-0.17.0.tar.xz
+          echo "$PWD/zig-x86_64-linux-0.17.0" >> $GITHUB_PATH
 
       - name: Verify Zig Version
         run: zig version
@@ -52,19 +52,19 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Setup Zig 0.16.0 (macOS)
+      - name: Setup Zig 0.17.0 (macOS)
         if: runner.os == 'macOS'
         run: |
-          curl -sLO https://ziglang.org/download/0.16.0/zig-aarch64-macos-0.16.0.tar.xz
-          tar -xf zig-aarch64-macos-0.16.0.tar.xz
-          echo "$PWD/zig-aarch64-macos-0.16.0" >> $GITHUB_PATH
+          curl -sLO https://ziglang.org/download/0.17.0/zig-aarch64-macos-0.17.0.tar.xz
+          tar -xf zig-aarch64-macos-0.17.0.tar.xz
+          echo "$PWD/zig-aarch64-macos-0.17.0" >> $GITHUB_PATH
 
-      - name: Setup Zig 0.16.0 (Windows)
+      - name: Setup Zig 0.17.0 (Windows)
         if: runner.os == 'Windows'
         run: |
-          Invoke-WebRequest -Uri "https://ziglang.org/download/0.16.0/zig-x86_64-windows-0.16.0.zip" -OutFile "zig.zip"
+          Invoke-WebRequest -Uri "https://ziglang.org/download/0.17.0/zig-x86_64-windows-0.17.0.zip" -OutFile "zig.zip"
           Expand-Archive -Path "zig.zip" -DestinationPath "."
-          $zigPath = (Resolve-Path "zig-x86_64-windows-0.16.0").Path
+          $zigPath = (Resolve-Path "zig-x86_64-windows-0.17.0").Path
           "$zigPath" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
       - name: Verify Zig Version

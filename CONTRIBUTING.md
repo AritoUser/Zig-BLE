@@ -31,7 +31,7 @@ Every contribution to Zig-BLE must strictly adhere to the project's core design 
 ## 2. Development Setup
 
 ### Prerequisites
-* **Zig Compiler**: Version **0.16.0+** installed and available in your `PATH`.
+* **Zig Compiler**: Version **0.17.0+** installed and available in your `PATH`.
 * **Git**: For version control.
 
 ### Building & Testing

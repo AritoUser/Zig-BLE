@@ -446,7 +446,7 @@ pub fn main() !void {
         var rec = Zig_BLE.BondRecord{
             .address = test_addr,
             .keys = .{
-                .ltk = [_]u8{0xAB} ** 16,
+                .ltk = @splat(0xAB),
                 .rand = 0x1234567890ABCDEF,
                 .ediv = 0x4321,
                 .authenticated = true,

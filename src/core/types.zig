@@ -39,7 +39,7 @@ pub const AddressType = enum {
 pub const Address = struct {
     bytes: [6]u8,
 
-    pub const any = Address{ .bytes = [_]u8{0} ** 6 };
+    pub const any = Address{ .bytes = @splat(0) };
 
     pub const ParseError = error{
         InvalidLength,

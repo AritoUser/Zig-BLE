@@ -106,11 +106,7 @@ pub fn build(b: *std.Build) void {
     // installation directory rather than directly from within the cache directory.
     run_cmd.step.dependOn(b.getInstallStep());
 
-    // This allows the user to pass arguments to the application in the build
-    // command itself, like this: `zig build run -- arg1 arg2 etc`
-    if (b.args) |args| {
-        run_cmd.addArgs(args);
-    }
+    run_cmd.addPassthruArgs();
 
     // Creates an executable that will run `test` blocks from the provided module.
     // Here `mod` needs to define a target, which is why earlier we made sure to
@@ -244,9 +240,7 @@ pub fn build(b: *std.Build) void {
     b.installArtifact(beacon_exe);
 
     const run_beacon_cmd = b.addRunArtifact(beacon_exe);
-    if (b.args) |args| {
-        run_beacon_cmd.addArgs(args);
-    }
+    run_beacon_cmd.addPassthruArgs();
     const run_beacon_step = b.step("run-beacon", "Run the Apple iBeacon & Google Eddystone Broadcaster example");
     run_beacon_step.dependOn(&run_beacon_cmd.step);
 
@@ -271,9 +265,7 @@ pub fn build(b: *std.Build) void {
     b.installArtifact(nus_exe);
 
     const run_nus_cmd = b.addRunArtifact(nus_exe);
-    if (b.args) |args| {
-        run_nus_cmd.addArgs(args);
-    }
+    run_nus_cmd.addPassthruArgs();
     const run_nus_step = b.step("run-nus", "Run the Nordic UART Service (NUS) serial console example");
     run_nus_step.dependOn(&run_nus_cmd.step);
 
@@ -295,9 +287,7 @@ pub fn build(b: *std.Build) void {
         b.installArtifact(win_scanner_exe);
 
         const run_win_scanner_cmd = b.addRunArtifact(win_scanner_exe);
-        if (b.args) |args| {
-            run_win_scanner_cmd.addArgs(args);
-        }
+        run_win_scanner_cmd.addPassthruArgs();
         const run_win_scanner_step = b.step("run-windows-scanner", "Run the real hardware Windows Bluetooth scanner");
         run_win_scanner_step.dependOn(&run_win_scanner_cmd.step);
 
@@ -315,9 +305,7 @@ pub fn build(b: *std.Build) void {
         b.installArtifact(v1_live_exe);
 
         const run_v1_live_cmd = b.addRunArtifact(v1_live_exe);
-        if (b.args) |args| {
-            run_v1_live_cmd.addArgs(args);
-        }
+        run_v1_live_cmd.addPassthruArgs();
         const run_v1_live_step = b.step("run-v1-live", "Run the official Zig-BLE v1.0.0 Live Verification Suite");
         run_v1_live_step.dependOn(&run_v1_live_cmd.step);
 
@@ -335,9 +323,7 @@ pub fn build(b: *std.Build) void {
         b.installArtifact(probe_ble_exe);
 
         const run_probe_ble_cmd = b.addRunArtifact(probe_ble_exe);
-        if (b.args) |args| {
-            run_probe_ble_cmd.addArgs(args);
-        }
+        run_probe_ble_cmd.addPassthruArgs();
         const run_probe_ble_step = b.step("run-probe-ble", "Probe native Windows BLE device interfaces and GATT");
         run_probe_ble_step.dependOn(&run_probe_ble_cmd.step);
 
@@ -355,9 +341,7 @@ pub fn build(b: *std.Build) void {
         b.installArtifact(read_phone_gatt_exe);
 
         const run_read_phone_gatt_cmd = b.addRunArtifact(read_phone_gatt_exe);
-        if (b.args) |args| {
-            run_read_phone_gatt_cmd.addArgs(args);
-        }
+        run_read_phone_gatt_cmd.addPassthruArgs();
         const run_read_phone_gatt_step = b.step("run-read-phone-gatt", "Read real live GATT characteristics from S25 Ultra over the air");
         run_read_phone_gatt_step.dependOn(&run_read_phone_gatt_cmd.step);
     }
@@ -383,9 +367,7 @@ pub fn build(b: *std.Build) void {
     b.installArtifact(l2cap_exe);
 
     const run_l2cap_cmd = b.addRunArtifact(l2cap_exe);
-    if (b.args) |args| {
-        run_l2cap_cmd.addArgs(args);
-    }
+    run_l2cap_cmd.addPassthruArgs();
     const run_l2cap_step = b.step("run-l2cap", "Run the L2CAP Connection-Oriented Channels (CoC) stream example");
     run_l2cap_step.dependOn(&run_l2cap_cmd.step);
 
@@ -410,9 +392,7 @@ pub fn build(b: *std.Build) void {
     b.installArtifact(raw_hci_exe);
 
     const run_raw_hci_cmd = b.addRunArtifact(raw_hci_exe);
-    if (b.args) |args| {
-        run_raw_hci_cmd.addArgs(args);
-    }
+    run_raw_hci_cmd.addPassthruArgs();
     const run_raw_hci_step = b.step("run-raw-hci", "Run the Zero-Daemon Raw HCI Scanner example (no D-Bus, no bluetoothd)");
     run_raw_hci_step.dependOn(&run_raw_hci_cmd.step);
 
@@ -462,9 +442,7 @@ pub fn build(b: *std.Build) void {
     b.installArtifact(fuzz_exe);
 
     const run_fuzz_cmd = b.addRunArtifact(fuzz_exe);
-    if (b.args) |args| {
-        run_fuzz_cmd.addArgs(args);
-    }
+    run_fuzz_cmd.addPassthruArgs();
     const fuzz_step = b.step("fuzz", "Run the robust BLE Advertising fuzz testing suite (500k+ iterations)");
     fuzz_step.dependOn(&run_fuzz_cmd.step);
 
@@ -488,9 +466,7 @@ pub fn build(b: *std.Build) void {
     b.installArtifact(fuzz_dbus_exe);
 
     const run_fuzz_dbus_cmd = b.addRunArtifact(fuzz_dbus_exe);
-    if (b.args) |args| {
-        run_fuzz_dbus_cmd.addArgs(args);
-    }
+    run_fuzz_dbus_cmd.addPassthruArgs();
     const fuzz_dbus_step = b.step("fuzz-dbus", "Run the pure-Zig D-Bus wire protocol fuzz testing suite (200k+ iterations)");
     fuzz_dbus_step.dependOn(&run_fuzz_dbus_cmd.step);
 

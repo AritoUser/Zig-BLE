@@ -528,7 +528,7 @@ pub const CreditBasedConnReq = struct {
     mtu: u16,
     mps: u16,
     initial_credits: u16,
-    source_cids: [5]u16 = [_]u16{0} ** 5,
+    source_cids: [5]u16 = @splat(0),
     source_cid_count: u8 = 0,
 
     pub fn parse(raw: []const u8) L2capSignalingError!CreditBasedConnReq {
@@ -584,7 +584,7 @@ pub const CreditBasedConnRsp = struct {
     mps: u16,
     initial_credits: u16,
     result: EnhancedCreditConnResult,
-    destination_cids: [5]u16 = [_]u16{0} ** 5,
+    destination_cids: [5]u16 = @splat(0),
     destination_cid_count: u8 = 0,
 
     pub fn parse(raw: []const u8) L2capSignalingError!CreditBasedConnRsp {
@@ -642,7 +642,7 @@ pub const CreditBasedReconfigureReq = struct {
     identifier: u8,
     mtu: u16,
     mps: u16,
-    destination_cids: [5]u16 = [_]u16{0} ** 5,
+    destination_cids: [5]u16 = @splat(0),
     destination_cid_count: u8 = 0,
 
     pub fn parse(raw: []const u8) L2capSignalingError!CreditBasedReconfigureReq {

@@ -68,14 +68,14 @@ pub const l2cap_options = extern struct {
 /// Linux Kernel l2cap_conninfo layout
 pub const l2cap_conninfo = extern struct {
     hci_handle: u16 = 0,
-    dev_class: [3]u8 = [_]u8{0} ** 3,
+    dev_class: [3]u8 = @splat(0),
 };
 
 /// Linux Kernel sockaddr_l2 layout (include/net/bluetooth/l2cap.h)
 pub const sockaddr_l2 = extern struct {
     l2_family: u16 = AF_BLUETOOTH,
     l2_psm: u16 = 0,
-    l2_bdaddr: [6]u8 = [_]u8{0} ** 6,
+    l2_bdaddr: [6]u8 = @splat(0),
     l2_cid: u16 = 0,
     l2_bdaddr_type: u8 = 1, // 1 = BDADDR_LE_PUBLIC, 2 = BDADDR_LE_RANDOM
     _pad: u8 = 0,

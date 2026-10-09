@@ -7,9 +7,9 @@
     // It is redundant to include "zig" in this name because it is already
     // within the Zig package namespace.
     .name = .zig_ble,
-    .version = "1.1.0",
+    .version = "1.1.1",
     .fingerprint = 0xfd301412824be472, // Changing this has security and trust implications.
-    .minimum_zig_version = "0.16.0",
+    .minimum_zig_version = "0.17.0",
     .dependencies = .{},
     .paths = .{
         "build.zig",

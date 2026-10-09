@@ -143,7 +143,7 @@ pub const ServerCharacteristic = struct {
         d.char_path_len = cp_len;
 
         var path_buf: [180]u8 = undefined;
-        const d_path = std.fmt.bufPrintZ(&path_buf, "{s}/desc{d}", .{ self.getObjectPath(), self.desc_count }) catch return error.BufferTooSmall;
+        const d_path = std.fmt.bufPrintSentinel(&path_buf, "{s}/desc{d}", .{ self.getObjectPath(), self.desc_count }, 0) catch return error.BufferTooSmall;
         const d_len = @min(d.object_path.len - 1, d_path.len);
         @memcpy(d.object_path[0..d_len], d_path[0..d_len]);
         d.object_path[d_len] = 0;
@@ -258,7 +258,7 @@ pub const ServerService = struct {
 
         // Generate characteristic path: <service_path>/char<idx>
         var path_buf: [160]u8 = undefined;
-        const c_path = std.fmt.bufPrintZ(&path_buf, "{s}/char{d}", .{ self.getObjectPath(), self.char_count }) catch return error.BufferTooSmall;
+        const c_path = std.fmt.bufPrintSentinel(&path_buf, "{s}/char{d}", .{ self.getObjectPath(), self.char_count }, 0) catch return error.BufferTooSmall;
         const c_len = @min(ch.object_path.len - 1, c_path.len);
         @memcpy(ch.object_path[0..c_len], c_path[0..c_len]);
         ch.object_path[c_len] = 0;
@@ -319,7 +319,7 @@ pub const GattApplication = struct {
         s.char_count = 0;
 
         var path_buf: [160]u8 = undefined;
-        const s_path = std.fmt.bufPrintZ(&path_buf, "{s}/service{d}", .{ self.getAppPath(), self.service_count }) catch return error.BufferTooSmall;
+        const s_path = std.fmt.bufPrintSentinel(&path_buf, "{s}/service{d}", .{ self.getAppPath(), self.service_count }, 0) catch return error.BufferTooSmall;
         const s_len = @min(s.object_path.len - 1, s_path.len);
         @memcpy(s.object_path[0..s_len], s_path[0..s_len]);
         s.object_path[s_len] = 0;

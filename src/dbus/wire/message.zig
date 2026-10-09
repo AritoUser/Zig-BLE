@@ -38,7 +38,7 @@ pub const Message = struct {
     reply_serial: ?u32 = null,
 
     /// Attached Unix file descriptors (SCM_RIGHTS)
-    fds: [8]std.posix.fd_t = [_]std.posix.fd_t{invalid_fd} ** 8,
+    fds: [8]std.posix.fd_t = @splat(invalid_fd),
     fd_count: u8 = 0,
 
     pub fn deinit(self: Message) void {

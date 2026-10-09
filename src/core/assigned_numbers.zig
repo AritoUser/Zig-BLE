@@ -45,7 +45,7 @@ pub const Services = struct {
     const service_lut = initServiceLut();
 
     fn initServiceLut() [35]?[]const u8 {
-        var lut = [_]?[]const u8{null} ** 35;
+        var lut: [35]?[]const u8 = @splat(null);
         lut[0x1800 - 0x1800] = "Generic Access";
         lut[0x1801 - 0x1800] = "Generic Attribute";
         lut[0x1802 - 0x1800] = "Immediate Alert";

@@ -60,7 +60,7 @@ pub const HeartRateMeasurement = struct {
     /// Accumulated energy expended in kilo-Joules (kJ), if present.
     energy_expended_kj: ?u16 = null,
     /// RR-interval buffer (time between R-waves in 1/1024 seconds).
-    rr_intervals: [8]u16 = [_]u16{0} ** 8,
+    rr_intervals: [8]u16 = @splat(0),
     /// Number of valid RR-intervals in the `rr_intervals` buffer.
     rr_count: usize = 0,
 

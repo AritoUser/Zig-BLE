@@ -524,7 +524,7 @@ test "HciEvent: parse LE Data Length Change" {
 
 test "HciEvent: parse LE Extended Advertising Report" {
     // Subevent 0x0D: Extended Advertising Report
-    var raw: [32]u8 = [_]u8{0} ** 32;
+    var raw: [32]u8 = @splat(0);
     raw[0] = 0x04; // PacketType.event
     raw[1] = 0x3E; // EventCode.le_meta_event
     raw[2] = 29; // Param length: 1 + 24 + 4 = 29

@@ -1,6 +1,6 @@
 //! # Zig-BLE: Native, Pure-Zig Bluetooth Low Energy Stack
 //!
-//! A high-performance, allocation-conscious Bluetooth Low Energy (BLE) engine for **Zig 0.16.0+**,
+//! A high-performance, allocation-conscious Bluetooth Low Energy (BLE) engine for **Zig 0.17.0+**,
 //! strictly adhering to the **Bluetooth Core Specification (v5.4 / v6.0)** and the Linux **BlueZ D-Bus Wire Protocol**.
 //!
 //! ## Architectural Pillars

@@ -627,7 +627,7 @@ pub const Connection = struct {
     /// Captures any transmitted UNIX file descriptors (SCM_RIGHTS).
     fn readNextMessageFromSocket(self: *Connection) !Message {
         var hdr_bytes: [16]u8 = undefined;
-        var received_fds: [8]std.posix.fd_t = [_]std.posix.fd_t{-1} ** 8;
+        var received_fds: [8]std.posix.fd_t = @splat(-1);
         var fds_count: usize = 0;
 
         errdefer {

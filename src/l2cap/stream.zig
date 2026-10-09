@@ -161,7 +161,7 @@ pub fn listenL2cap(psm: u16, config: L2capConfig) !L2capListener {
         var sock = try socket.L2capSocket.open(.seqpacket);
         errdefer sock.close();
 
-        const any_addr = Address{ .bytes = [_]u8{0} ** 6 };
+        const any_addr = Address{ .bytes = @splat(0) };
         try sock.bind(any_addr, psm, .public);
         try sock.listen(4);
 

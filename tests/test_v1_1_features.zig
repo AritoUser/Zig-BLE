@@ -79,7 +79,7 @@ test "v1.1.0: High-Level L2CAP CoC Streaming (Galaxy Watch watch-wire PSM 0x1001
     try std.testing.expectEqual(@as(u16, 251), stream_pair.client.getMps());
 
     // 100 Hz Raw Sensor Telemetry payload
-    const sensor_chunk = [_]u8{0x5A} ** 128;
+    const sensor_chunk: [128]u8 = @splat(0x5A);
     const written = try stream_pair.client.write(&sensor_chunk);
     try std.testing.expectEqual(@as(usize, 128), written);
 

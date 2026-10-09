@@ -20,7 +20,7 @@ pub const Backend = vtable_mod.Backend;
 
 pub const MockCharacteristic = struct {
     uuid: UUID,
-    value: [128]u8 = [_]u8{0} ** 128,
+    value: [128]u8 = @splat(0),
     value_len: u8 = 0,
     can_read: bool = true,
     can_write: bool = true,
@@ -39,7 +39,7 @@ pub const MockCharacteristic = struct {
 
 pub const MockDevice = struct {
     address: Address,
-    name: [64]u8 = [_]u8{0} ** 64,
+    name: [64]u8 = @splat(0),
     name_len: u8 = 0,
     rssi: i16 = -55,
     is_connected: bool = false,

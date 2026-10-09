@@ -119,7 +119,7 @@ pub fn main() !void {
     var bond_rec = ble.BondRecord{
         .address = test_dev,
         .keys = .{
-            .ltk = [_]u8{0x7F} ** 16,
+            .ltk = @splat(0x7F),
             .rand = 0x1122334455667788,
             .ediv = 0xABCD,
             .authenticated = true,

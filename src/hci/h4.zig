@@ -58,7 +58,7 @@ pub const H4StreamParser = struct {
 
     state: State = .waiting_type,
     packet_type: ?H4Type = null,
-    header_buf: [4]u8 = [_]u8{0} ** 4,
+    header_buf: [4]u8 = @splat(0),
     header_bytes_read: usize = 0,
     expected_header_len: usize = 0,
     expected_payload_len: usize = 0,

@@ -128,8 +128,8 @@ pub const BluezBackend = struct {
         const conn = self.conn orelse return BleError.NotConnected;
 
         // Path format: /org/bluez/hci0/dev_XX_XX_XX_XX_XX_XX
-        var dev_path: [128:0]u8 = undefined;
-        const dev_path_str = std.fmt.bufPrintZ(
+        var dev_path: [128]u8 = undefined;
+        const dev_path_str = std.fmt.bufPrintSentinel(
             &dev_path,
             "{s}/dev_{X:0>2}_{X:0>2}_{X:0>2}_{X:0>2}_{X:0>2}_{X:0>2}",
             .{
@@ -141,6 +141,7 @@ pub const BluezBackend = struct {
                 addr.bytes[1],
                 addr.bytes[0],
             },
+            0,
         ) catch return BleError.InvalidParameter;
 
         var reply = try conn.callMethod(

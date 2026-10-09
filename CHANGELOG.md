@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.1.1] - 2026-10-09
+
+### Maintenance & Toolchain Upgrade: Full Compatibility with Zig 0.17.0
+This release provides official, turnkey support for **Zig 0.17.0** across all modules, tests, benchmarks, and multi-OS CI matrix runners, addressing language syntax removals, standard library reorganizations, and build system decoupling.
+
+---
+
+### Changed & Fixed
+
+#### Language Syntax & Compiler Compatibility
+* **Array Repetition Syntax Migration (`**` $\to$ `@splat`)**:
+  * Replaced all occurrences of deprecated array multiplication `[_]T{val} ** N` with `@splat(val)` across 18 files (`src/storage/bond_store.zig`, `src/crypto/toolbox.zig`, `src/l2cap/socket.zig`, `src/l2cap/stream.zig`, `src/l2cap/signaling.zig`, `src/hci/h4.zig`, `src/hci/events.zig`, `src/hci/controller.zig`, `src/hci/commands.zig`, `src/dbus/wire/message.zig`, `src/dbus/wire/connection.zig`, `src/profiles/heart_rate.zig`, `src/bluez/object_manager.zig`, `src/backend/mock/mod.zig`, benchmarks, and test suites).
+* **Null-Terminated String Formatting (`std.fmt.bufPrintSentinel`)**:
+  * Migrated from removed `std.fmt.bufPrintZ` to `std.fmt.bufPrintSentinel(&buf, fmt, args, 0)` in `src/gatt_server.zig` and `src/backend/bluez/mod.zig`.
+* **Standard Library Decoupling**:
+  * Updated `build.zig` to use `run_cmd.addPassthruArgs()` in place of direct `b.args` observation to comply with Zig 0.17.0 maker/configurer separation.
+  * Bumped `.minimum_zig_version = "0.17.0"` in `build.zig.zon`.
+* **CI Matrix**:
+  * Updated `.github/workflows/ci.yml` to download and validate official Zig 0.17.0 releases across Ubuntu 24.04, Windows Server 2022, and macOS Apple Silicon.
+
+---
+
 ## [1.1.0] - 2026-10-07
 
 ### Major Milestone: High-Throughput Engine, Wearable Ingestion & Multi-Channel EATT

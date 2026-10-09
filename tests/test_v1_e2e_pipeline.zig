@@ -169,11 +169,11 @@ test "Full v1.0.0 BLE Stack End-to-End Pipeline Integration" {
         .address = dev_mac,
         .address_type = .random,
         .keys = .{
-            .ltk = [_]u8{0x5A} ** 16,
+            .ltk = @splat(0x5A),
             .rand = 0xDEADBEEF12345678,
             .ediv = 0x99AA,
             .authenticated = true,
-            .irk = [_]u8{0x88} ** 16,
+            .irk = @splat(0x88),
         },
     };
     bond_rec.setCccd(0x002A, 0x0001); // Notify subscribed

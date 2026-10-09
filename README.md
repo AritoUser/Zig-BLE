@@ -1,11 +1,11 @@
-# Zig-BLE v1.1.0
+# Zig-BLE v1.1.1
 
-A high-performance, allocation-conscious, native Bluetooth Low Energy (BLE) protocol engine and systems library for **Zig 0.16.0+**, strictly adhering to the **Bluetooth Core Specification (v5.4 / v6.0)**, Windows 11 Native APIs, and the Linux **BlueZ D-Bus Wire Protocol**.
+A high-performance, allocation-conscious, native Bluetooth Low Energy (BLE) protocol engine and systems library for **Zig 0.17.0+**, strictly adhering to the **Bluetooth Core Specification (v5.4 / v6.0)**, Windows 11 Native APIs, and the Linux **BlueZ D-Bus Wire Protocol**.
 
 Supports both **Central (Client)** and **Peripheral (Server & Broadcaster)** roles across **Desktop (Windows & Linux)** and **Bare-Metal (UART H4/H5)** with a zero-allocation domain model, non-blocking event loops, and full physical over-the-air hardware verification.
 
 [![CI](https://github.com/AritoUser/Zig-BLE/actions/workflows/ci.yml/badge.svg)](https://github.com/AritoUser/Zig-BLE/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/badge/Release-v1.1.0-brightgreen.svg)](https://github.com/AritoUser/Zig-BLE/releases)
+[![Release](https://img.shields.io/badge/Release-v1.1.1-brightgreen.svg)](https://github.com/AritoUser/Zig-BLE/releases)
 [![Tests](https://img.shields.io/badge/Tests-156%2F156%20Passing-success.svg)](tests/)
 [![Zero-Allocation](https://img.shields.io/badge/Hot--Path-0%20Bytes%20Heap-blue.svg)](examples/benchmark.zig)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)

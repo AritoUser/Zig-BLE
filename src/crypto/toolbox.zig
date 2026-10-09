@@ -76,7 +76,7 @@ pub fn eBe(key_be: [16]u8, plaintext_be: [16]u8) [16]u8 {
 /// - 24-bit hash in Big-Endian (as stored in `Address.bytes[3..6]`).
 pub fn ahBe(irk_be: [16]u8, prand_be: [3]u8) [3]u8 {
     // r' = padding || r (13 zeros followed by 3 octets of prand)
-    var m_be: [16]u8 = [_]u8{0} ** 16;
+    var m_be: [16]u8 = @splat(0);
     m_be[13] = prand_be[0];
     m_be[14] = prand_be[1];
     m_be[15] = prand_be[2];
@@ -175,7 +175,7 @@ pub fn c1(
     @memcpy(p1[9..16], &pres);
 
     // p2 = padding(4 zeros) || ia || ra
-    var p2: [16]u8 = [_]u8{0} ** 16;
+    var p2: [16]u8 = @splat(0);
     @memcpy(p2[0..6], &ra);
     @memcpy(p2[6..12], &ia);
 
@@ -431,7 +431,7 @@ pub fn verifyAttSign(
 
 /// Calculates the standard GATT Database Hash (UUID 0x2B2A) using AES-CMAC with a key of 16 zeros.
 pub fn gattHash(data_chunks: []const []const u8) [16]u8 {
-    const key = [_]u8{0} ** 16;
+    const key: [16]u8 = @splat(0);
     var ctx = CmacAes128.init(&key);
 
     for (data_chunks) |chunk| {

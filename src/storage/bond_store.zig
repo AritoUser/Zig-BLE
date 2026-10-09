@@ -13,7 +13,7 @@ pub const AddressType = core_types.AddressType;
 /// Cryptographic security keys exchanged during SMP Pairing / Bonding.
 pub const SecurityKeys = struct {
     /// Long Term Key (128-bit) for link-layer AES-CCM encryption.
-    ltk: [16]u8 = [_]u8{0} ** 16,
+    ltk: [16]u8 = @splat(0),
     /// Random 64-bit value used in legacy pairing.
     rand: u64 = 0,
     /// Encrypted Diversifier (16-bit).
@@ -42,7 +42,7 @@ pub const BondRecord = struct {
     address: Address,
     address_type: AddressType = .public,
     keys: SecurityKeys,
-    cccds: [MAX_CCCDS_PER_DEVICE]CccdEntry = [_]CccdEntry{.{ .handle = 0, .value = 0 }} ** MAX_CCCDS_PER_DEVICE,
+    cccds: [MAX_CCCDS_PER_DEVICE]CccdEntry = @splat(.{ .handle = 0, .value = 0 }),
     cccd_count: usize = 0,
 
     pub fn setCccd(self: *BondRecord, handle: u16, value: u16) void {
@@ -119,7 +119,7 @@ pub fn MemoryBondStore(comptime max_devices: usize) type {
     return struct {
         const Self = @This();
 
-        records: [max_devices]?BondRecord = [_]?BondRecord{null} ** max_devices,
+        records: [max_devices]?BondRecord = @splat(null),
         count: usize = 0,
 
         pub fn init() Self {
@@ -373,7 +373,7 @@ test "MemoryBondStore save, load, and cccd persistence" {
     const rec1 = BondRecord{
         .address = dev1,
         .keys = .{
-            .ltk = [_]u8{0x42} ** 16,
+            .ltk = @splat(0x42),
             .authenticated = true,
         },
     };
@@ -409,11 +409,11 @@ test "MemoryBondStore binary serialization roundtrip" {
     var rec = BondRecord{
         .address = dev,
         .keys = .{
-            .ltk = [_]u8{0x99} ** 16,
+            .ltk = @splat(0x99),
             .rand = 0x123456789ABCDEF0,
             .ediv = 0x5678,
             .authenticated = true,
-            .irk = [_]u8{0x77} ** 16,
+            .irk = @splat(0x77),
         },
     };
     rec.setCccd(0x0020, 0x0001);
