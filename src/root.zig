@@ -116,6 +116,7 @@ pub const DiscoveredDevice = backend.DiscoveredDevice;
 pub const BleError = backend.BleError;
 pub const BondState = backend.BondState;
 pub const WindowsBackend = backend.WindowsBackend;
+pub const BluezBackend = backend.BluezBackend;
 
 // BT 5.2 Enhanced ATT (EATT)
 pub const eatt = core.eatt;
@@ -464,15 +465,10 @@ pub const GattApplication = if (builtin.os.tag == .linux) gatt_server.GattApplic
 };
 
 // Pairing Agent
-pub const agent_mod = if (builtin.os.tag == .linux) @import("agent.zig") else struct {};
-pub const AgentCapability = if (builtin.os.tag == .linux) agent_mod.AgentCapability else enum {
-    display_only,
-    display_yes_no,
-    keyboard_only,
-    no_input_no_output,
-    keyboard_display,
-};
-pub const Agent = if (builtin.os.tag == .linux) @import("agent.zig").Agent else struct {};
+pub const agent_mod = @import("agent.zig");
+pub const AgentCapability = agent_mod.AgentCapability;
+pub const AgentCallbacks = agent_mod.AgentCallbacks;
+pub const Agent = agent_mod.Agent;
 
 // Unified High-Level Peripheral
 pub const peripheral_mod = if (builtin.os.tag == .linux) @import("peripheral.zig") else struct {};
@@ -676,12 +672,12 @@ test {
     _ = bluez;
     _ = hci;
     _ = crypto;
+    _ = agent_mod;
     if (builtin.os.tag == .linux) {
         _ = dbus;
         _ = gatt_client;
         _ = advertising_server;
         _ = gatt_server;
-        _ = agent_mod;
         _ = peripheral_mod;
         _ = event_loop_mod;
     }

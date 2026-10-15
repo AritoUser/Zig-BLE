@@ -1,8 +1,8 @@
 # Zig-BLE: Roadmap, Architektur-Spezifikation & Release-Matrix
 
 > **Dokumenttyp:** Technische Spezifikation, Release-Matrix & Entwicklungs-Roadmap  
-> **Aktueller Release-Status:** Zig-BLE v1.1.1 (High-Throughput, L2CAP CoC, EATT & Zig 0.17.0+ Toolchain — Freigegeben)  
-> **Roadmap-Horizont:** v1.1.2 (Native Windows WinRT COM) bis v2.0.0+ (Next-Gen & Audio)  
+> **Aktueller Release-Status:** Zig-BLE v1.1.2 (Native Windows WinRT COM, Zero-Allocation Architecture, Complete BlueZ Backend & Agent Hardening — Freigegeben)  
+> **Roadmap-Horizont:** v1.2.0 (Fitness, Ergometer & Health Suite) bis v2.0.0+ (Next-Gen & Audio)  
 > **Compiler-Basis:** Zig 0.17.0+  
 > **Bezugsnormen:** Bluetooth Core Specification (v5.0 – v6.0) & Bluetooth SIG Profile  
 

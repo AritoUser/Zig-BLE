@@ -168,7 +168,11 @@ pub const EventLoop = struct {
 // ============================================================================
 
 test "EventLoop: initialization and handler registration" {
-    var dummy_conn: Connection = undefined;
+    var dummy_conn: Connection = if (builtin.os.tag == .linux) .{
+        .allocator = std.testing.allocator,
+        .socket = .{ .fd = -1 },
+        .incoming_queue = .{},
+    } else .{};
     var loop = EventLoop.init(&dummy_conn);
     try std.testing.expectEqual(@as(usize, 0), loop.handler_count);
     try std.testing.expect(!loop.is_running);

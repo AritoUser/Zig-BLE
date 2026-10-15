@@ -76,9 +76,8 @@ pub fn build(b: *std.Build) void {
     if (link_dbus and is_linux_target) {
         mod.linkSystemLibrary("dbus-1", .{});
         mod.link_libc = true;
-        exe.root_module.linkSystemLibrary("dbus-1", .{});
-        exe.root_module.link_libc = true;
     }
+    setupDbusLink(exe, link_dbus, is_linux_target);
 
     // This declares intent for the executable to be installed into the
     // install prefix when running `zig build` (i.e. when executing the default
@@ -188,10 +187,7 @@ pub fn build(b: *std.Build) void {
             },
         }),
     });
-    if (link_dbus and is_linux_target) {
-        scanner_exe.root_module.linkSystemLibrary("dbus-1", .{});
-        scanner_exe.root_module.link_libc = true;
-    }
+    setupDbusLink(scanner_exe, link_dbus, is_linux_target);
     b.installArtifact(scanner_exe);
 
     const run_scanner_cmd = b.addRunArtifact(scanner_exe);
@@ -209,10 +205,7 @@ pub fn build(b: *std.Build) void {
             },
         }),
     });
-    if (link_dbus and is_linux_target) {
-        hrm_exe.root_module.linkSystemLibrary("dbus-1", .{});
-        hrm_exe.root_module.link_libc = true;
-    }
+    setupDbusLink(hrm_exe, link_dbus, is_linux_target);
     b.installArtifact(hrm_exe);
 
     const run_hrm_cmd = b.addRunArtifact(hrm_exe);
@@ -233,10 +226,7 @@ pub fn build(b: *std.Build) void {
             },
         }),
     });
-    if (link_dbus and is_linux_target) {
-        beacon_exe.root_module.linkSystemLibrary("dbus-1", .{});
-        beacon_exe.root_module.link_libc = true;
-    }
+    setupDbusLink(beacon_exe, link_dbus, is_linux_target);
     b.installArtifact(beacon_exe);
 
     const run_beacon_cmd = b.addRunArtifact(beacon_exe);
@@ -258,10 +248,7 @@ pub fn build(b: *std.Build) void {
             },
         }),
     });
-    if (link_dbus and is_linux_target) {
-        nus_exe.root_module.linkSystemLibrary("dbus-1", .{});
-        nus_exe.root_module.link_libc = true;
-    }
+    setupDbusLink(nus_exe, link_dbus, is_linux_target);
     b.installArtifact(nus_exe);
 
     const run_nus_cmd = b.addRunArtifact(nus_exe);
@@ -360,10 +347,7 @@ pub fn build(b: *std.Build) void {
             },
         }),
     });
-    if (link_dbus and is_linux_target) {
-        l2cap_exe.root_module.linkSystemLibrary("dbus-1", .{});
-        l2cap_exe.root_module.link_libc = true;
-    }
+    setupDbusLink(l2cap_exe, link_dbus, is_linux_target);
     b.installArtifact(l2cap_exe);
 
     const run_l2cap_cmd = b.addRunArtifact(l2cap_exe);
@@ -385,10 +369,7 @@ pub fn build(b: *std.Build) void {
             },
         }),
     });
-    if (link_dbus and is_linux_target) {
-        raw_hci_exe.root_module.linkSystemLibrary("dbus-1", .{});
-        raw_hci_exe.root_module.link_libc = true;
-    }
+    setupDbusLink(raw_hci_exe, link_dbus, is_linux_target);
     b.installArtifact(raw_hci_exe);
 
     const run_raw_hci_cmd = b.addRunArtifact(raw_hci_exe);
@@ -486,4 +467,11 @@ pub fn build(b: *std.Build) void {
     });
     const docs_step = b.step("docs", "Generate complete HTML documentation for Zig_BLE library");
     docs_step.dependOn(&install_docs.step);
+}
+
+fn setupDbusLink(step: *std.Build.Step.Compile, link_dbus: bool, is_linux: bool) void {
+    if (link_dbus and is_linux) {
+        step.root_module.linkSystemLibrary("dbus-1", .{});
+        step.root_module.link_libc = true;
+    }
 }

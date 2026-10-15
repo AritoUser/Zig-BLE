@@ -1,8 +1,8 @@
 # Zig-BLE: Architecture & Protocol Manual
 
-**Engineering Specification & Systems Reference | Version 2.0 (v1.0.0 Production Release)**  
+**Engineering Specification & Systems Reference | Version 2.2 (v1.1.2 Production Release)**  
 **Module:** `Zig_BLE`  
-**Compatibility:** Zig 0.16.0+ | Windows 11 Native / Linux BlueZ 5.x / Native POSIX / Bare-Metal UART H4/H5  
+**Compatibility:** Zig 0.17.0+ | Windows 11 Native / Linux BlueZ 5.x / Native POSIX / Bare-Metal UART H4/H5  
 **Repository:** [github.com/AritoUser/Zig-BLE](https://github.com/AritoUser/Zig-BLE)  
 
 ---
@@ -768,6 +768,11 @@ Unlike traditional C++ solutions that require MSVC C++ runtime DLLs, Windows SDK
    Loads `bthprops.cpl` and `BluetoothApis.dll` on demand. Directly issues radio inquiries (`BLUETOOTH_DEVICE_SEARCH_PARAMS`) to detect nearby active devices, querying friendly names, MAC addresses, and manufacturer identifiers.
 2. **WinRT Bluetooth LE Device Model**:
    Connects to devices via exact Device ID (`BluetoothLE#BluetoothLE...`) or 48-bit Bluetooth MAC addresses, performing live uncached GATT service discovery and characteristic read/write operations over the air.
+3. **Zero-Allocation Static Storage & Memory Pools (`WindowsDevice`)**:
+   Eliminates all runtime heap allocations by using bounded static arrays:
+   * Fixed device capacity (`[8]WindowsDevice`) inside `WindowsBackend`.
+   * Static characteristic discovery slots (`[64]CharEntry`) and subscription slots (`[16]SubEntry`).
+   * By-value storage of COM delegate sinks (`GattValueChangedHandler`) directly inside `SubEntry`, safe from memory fragmentation during multi-day continuous telemetry streaming.
 
 ---
 

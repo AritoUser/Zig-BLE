@@ -327,6 +327,11 @@ pub const Device = struct {
 };
 
 test "Device: init and path handling" {
-    var dev = Device.init(undefined, "/org/bluez/hci0/dev_AA_BB_CC_DD_EE_FF");
+    var dummy_conn: Connection = if (builtin.os.tag == .linux) .{
+        .allocator = std.testing.allocator,
+        .socket = .{ .fd = -1 },
+        .incoming_queue = .{},
+    } else .{};
+    var dev = Device.init(&dummy_conn, "/org/bluez/hci0/dev_AA_BB_CC_DD_EE_FF");
     try std.testing.expectEqualStrings("/org/bluez/hci0/dev_AA_BB_CC_DD_EE_FF", dev.getObjectPath());
 }

@@ -165,7 +165,11 @@ pub const Peripheral = struct {
 // ============================================================================
 
 test "Peripheral: initialization with config" {
-    var dummy_conn: Connection = undefined;
+    var dummy_conn: Connection = if (builtin.os.tag == .linux) .{
+        .allocator = std.testing.allocator,
+        .socket = .{ .fd = -1 },
+        .incoming_queue = .{},
+    } else .{};
     var p = Peripheral.init(&dummy_conn, "/org/bluez/hci0", .{
         .local_name = "Test-Device",
     }, .{});

@@ -30,13 +30,18 @@ pub const WindowsDevice = struct {
     device3: ?*const bindings.IBluetoothLEDevice3 = null,
     closable: ?*const bindings.IClosable = null,
     address: Address,
-    characteristics: std.AutoHashMap(UUID, CharEntry),
-    subscriptions: std.AutoHashMap(UUID, SubEntry),
-    services: std.ArrayList(*anyopaque),
-    allocator: std.mem.Allocator,
+    is_active: bool = false,
+
+    characteristics: [64]CharEntry = undefined,
+    characteristics_len: u8 = 0,
+    subscriptions: [16]SubEntry = undefined,
+    subscriptions_len: u8 = 0,
+    services: [16]*anyopaque = undefined,
+    services_len: u8 = 0,
     backend: *WindowsBackend,
 
     pub const CharEntry = struct {
+        uuid: UUID,
         char_obj: *anyopaque,
         char: *const bindings.IGattCharacteristic,
         char3: ?*const bindings.IGattCharacteristic3 = null,
@@ -53,35 +58,53 @@ pub const WindowsDevice = struct {
     };
 
     pub const SubEntry = struct {
+        char_uuid: UUID,
         cookie: bindings.EventRegistrationToken,
-        handler: *bindings.GattValueChangedHandler,
-        ctx: *SubscriptionContext,
+        handler: bindings.GattValueChangedHandler,
+        ctx: SubscriptionContext,
+        active: bool = false,
     };
+
+    pub fn findCharacteristic(self: *WindowsDevice, uuid: UUID) ?*CharEntry {
+        for (self.characteristics[0..self.characteristics_len]) |*entry| {
+            if (entry.uuid.eql(uuid)) return entry;
+        }
+        return null;
+    }
+
+    pub fn addCharacteristic(self: *WindowsDevice, entry: CharEntry) !void {
+        if (self.characteristics_len >= self.characteristics.len) return error.OutOfMemory;
+        self.characteristics[self.characteristics_len] = entry;
+        self.characteristics_len += 1;
+    }
+
+    pub fn addService(self: *WindowsDevice, svc_obj: *anyopaque) !void {
+        if (self.services_len >= self.services.len) return error.OutOfMemory;
+        self.services[self.services_len] = svc_obj;
+        self.services_len += 1;
+    }
 
     pub fn deinit(self: *WindowsDevice) void {
         // Unsubscribe all active notification handlers
-        var sub_iter = self.subscriptions.iterator();
-        while (sub_iter.next()) |entry| {
-            const char_uuid = entry.key_ptr.*;
-            const sub = entry.value_ptr.*;
-            if (self.characteristics.get(char_uuid)) |char_entry| {
-                _ = char_entry.char.lpVtbl.remove_ValueChanged(char_entry.char_obj, sub.cookie);
+        for (&self.subscriptions) |*sub| {
+            if (sub.active) {
+                if (self.findCharacteristic(sub.char_uuid)) |char_entry| {
+                    _ = char_entry.char.lpVtbl.remove_ValueChanged(char_entry.char_obj, sub.cookie);
+                }
+                sub.active = false;
             }
-            self.allocator.destroy(sub.handler);
-            self.allocator.destroy(sub.ctx);
         }
-        self.subscriptions.deinit();
+        self.subscriptions_len = 0;
 
         // Release characteristic objects
-        var char_iter = self.characteristics.iterator();
-        while (char_iter.next()) |entry| {
-            const unk: *const bindings.IUnknown = @ptrCast(@alignCast(entry.value_ptr.char_obj));
-            _ = unk.lpVtbl.Release(entry.value_ptr.char_obj);
+        for (self.characteristics[0..self.characteristics_len]) |*entry| {
+            const unk: *const bindings.IUnknown = @ptrCast(@alignCast(entry.char_obj));
+            _ = unk.lpVtbl.Release(entry.char_obj);
         }
-        self.characteristics.deinit();
+        self.characteristics_len = 0;
 
         // Close and release service objects
-        for (self.services.items) |svc_obj| {
+        for (self.services[0..self.services_len]) |svc_obj| {
             const unk: *const bindings.IUnknown = @ptrCast(@alignCast(svc_obj));
             var closable_obj: ?*anyopaque = null;
             if (unk.lpVtbl.QueryInterface(svc_obj, &bindings.IID_IClosable, &closable_obj) == bindings.S_OK and closable_obj != null) {
@@ -91,7 +114,7 @@ pub const WindowsDevice = struct {
             }
             _ = unk.lpVtbl.Release(svc_obj);
         }
-        self.services.deinit(self.allocator);
+        self.services_len = 0;
 
         // Close device if IClosable is supported
         if (self.closable) |c| {
@@ -101,17 +124,17 @@ pub const WindowsDevice = struct {
         // Release device object
         const dev_unk: *const bindings.IUnknown = @ptrCast(@alignCast(self.device_obj));
         _ = dev_unk.lpVtbl.Release(self.device_obj);
+        self.is_active = false;
     }
 };
 
 pub const WindowsBackend = struct {
     radio: ?WindowsRadio = null,
     winrt: ?bindings.WindowsWinRtApis = null,
-    allocator: std.mem.Allocator,
 
     // WinRT Advertisement Watcher state
     watcher_obj: ?*anyopaque = null,
-    watcher_sink: ?*bindings.AdvReceivedHandler = null,
+    watcher_sink: ?bindings.AdvReceivedHandler = null,
     watcher_token: bindings.EventRegistrationToken = .{ .value = 0 },
     scan_cb: ?ScanCallback = null,
     scan_user_data: ?*anyopaque = null,
@@ -119,12 +142,19 @@ pub const WindowsBackend = struct {
     scanning: bool = false,
     powered: bool = false,
 
+    devices: [8]WindowsDevice = undefined,
+    devices_len: u8 = 0,
+
     pub fn init() WindowsBackend {
         var self = WindowsBackend{
             .radio = WindowsRadio.init(),
             .winrt = bindings.WindowsWinRtApis.load(),
-            .allocator = std.heap.page_allocator,
+            .devices = undefined,
+            .devices_len = 0,
         };
+        for (&self.devices) |*d| {
+            d.is_active = false;
+        }
         if (self.winrt != null) {
             self.powered = true;
         }
@@ -132,6 +162,11 @@ pub const WindowsBackend = struct {
     }
 
     pub fn deinit(self: *WindowsBackend) void {
+        for (&self.devices) |*d| {
+            if (d.is_active) {
+                d.deinit();
+            }
+        }
         self.closeAdapterInternal();
         if (self.radio) |*r| {
             r.deinit();
@@ -144,6 +179,11 @@ pub const WindowsBackend = struct {
     }
 
     fn closeAdapterInternal(self: *WindowsBackend) void {
+        for (&self.devices) |*d| {
+            if (d.is_active) {
+                d.deinit();
+            }
+        }
         if (self.scanning) {
             _ = self.stopScanInternal() catch {};
         }
@@ -252,13 +292,10 @@ pub const WindowsBackend = struct {
             // Set active scanning mode so Windows requests Scan Response packets
             _ = watcher.lpVtbl.put_ScanningMode(watcher_obj, .Active);
 
-            const sink = try self.allocator.create(bindings.AdvReceivedHandler);
-            sink.* = bindings.AdvReceivedHandler.init(onAdvReceived, @ptrCast(self), w);
-            self.watcher_sink = sink;
+            self.watcher_sink = bindings.AdvReceivedHandler.init(onAdvReceived, @ptrCast(self), w);
 
             var token: bindings.EventRegistrationToken = undefined;
-            if (watcher.lpVtbl.add_Received(watcher_obj, sink, &token) != bindings.S_OK) {
-                self.allocator.destroy(sink);
+            if (watcher.lpVtbl.add_Received(watcher_obj, @ptrCast(&self.watcher_sink.?), &token) != bindings.S_OK) {
                 self.watcher_sink = null;
                 const unk: *const bindings.IUnknown = @ptrCast(@alignCast(watcher_obj));
                 _ = unk.lpVtbl.Release(watcher_obj);
@@ -269,7 +306,6 @@ pub const WindowsBackend = struct {
 
             if (watcher.lpVtbl.Start(watcher_obj) != bindings.S_OK) {
                 _ = watcher.lpVtbl.remove_Received(watcher_obj, token);
-                self.allocator.destroy(sink);
                 self.watcher_sink = null;
                 const unk: *const bindings.IUnknown = @ptrCast(@alignCast(watcher_obj));
                 _ = unk.lpVtbl.Release(watcher_obj);
@@ -342,11 +378,7 @@ pub const WindowsBackend = struct {
             const watcher: *const bindings.IBluetoothLEAdvertisementWatcher = @ptrCast(@alignCast(w_obj));
             _ = watcher.lpVtbl.Stop(w_obj);
             _ = watcher.lpVtbl.remove_Received(w_obj, self.watcher_token);
-
-            if (self.watcher_sink) |sink| {
-                self.allocator.destroy(sink);
-                self.watcher_sink = null;
-            }
+            self.watcher_sink = null;
 
             const unk: *const bindings.IUnknown = @ptrCast(@alignCast(w_obj));
             _ = unk.lpVtbl.Release(w_obj);
@@ -403,19 +435,36 @@ pub const WindowsBackend = struct {
         var closable_ptr: ?*anyopaque = null;
         _ = dev_unk.lpVtbl.QueryInterface(dev_obj, &bindings.IID_IClosable, &closable_ptr);
 
-        const dev = try self.allocator.create(WindowsDevice);
+        var slot: ?*WindowsDevice = null;
+        for (&self.devices) |*d| {
+            if (!d.is_active) {
+                slot = d;
+                break;
+            }
+        }
+        const dev = slot orelse {
+            _ = dev_unk.lpVtbl.Release(dev_obj);
+            return BleError.OutOfMemory;
+        };
+
         dev.* = .{
             .device_obj = dev_obj,
             .device = @ptrCast(@alignCast(dev_ptr.?)),
             .device3 = if (dev3_ptr) |p| @ptrCast(@alignCast(p)) else null,
             .closable = if (closable_ptr) |p| @ptrCast(@alignCast(p)) else null,
             .address = addr,
-            .characteristics = std.AutoHashMap(UUID, WindowsDevice.CharEntry).init(self.allocator),
-            .subscriptions = std.AutoHashMap(UUID, WindowsDevice.SubEntry).init(self.allocator),
-            .services = .empty,
-            .allocator = self.allocator,
+            .is_active = true,
+            .characteristics = undefined,
+            .characteristics_len = 0,
+            .subscriptions = undefined,
+            .subscriptions_len = 0,
+            .services = undefined,
+            .services_len = 0,
             .backend = self,
         };
+        for (&dev.subscriptions) |*s| {
+            s.active = false;
+        }
 
         return @ptrCast(dev);
     }
@@ -424,18 +473,18 @@ pub const WindowsBackend = struct {
         _ = ctx;
         const dev: *WindowsDevice = @ptrCast(@alignCast(dev_handle));
         dev.deinit();
-        dev.allocator.destroy(dev);
     }
 
     pub fn isDeviceConnected(ctx: *anyopaque, dev_handle: *anyopaque) bool {
         _ = ctx;
         const dev: *WindowsDevice = @ptrCast(@alignCast(dev_handle));
+        if (!dev.is_active) return false;
         var status: i32 = 0;
         const dev_this = @as(*anyopaque, @ptrCast(@constCast(dev.device)));
         if (dev.device.lpVtbl.get_ConnectionStatus(dev_this, &status) == bindings.S_OK) {
             return status == 1; // 1 = Connected, 0 = Disconnected
         }
-        return true;
+        return false;
     }
 
     pub fn getDeviceRssi(ctx: *anyopaque, dev_handle: *anyopaque) ?i16 {
@@ -490,7 +539,7 @@ pub const WindowsBackend = struct {
             if (services_vec.lpVtbl.GetAt(services_vec_obj.?, i, &svc_obj) != bindings.S_OK or svc_obj == null) continue;
 
             const svc_raw = svc_obj.?;
-            try dev.services.append(dev.allocator, svc_raw);
+            dev.addService(svc_raw) catch {};
 
             const svc_unk: *const bindings.IUnknown = @ptrCast(@alignCast(svc_raw));
             var svc3_ptr: ?*anyopaque = null;
@@ -550,14 +599,15 @@ pub const WindowsBackend = struct {
                 const ch_this = ch_ptr.?;
                 if (ch.lpVtbl.get_Uuid(ch_this, &guid_val) == bindings.S_OK) {
                     const char_uuid = guid_val.toUUID();
-                    try dev.characteristics.put(char_uuid, .{
+                    dev.addCharacteristic(.{
+                        .uuid = char_uuid,
                         .char_obj = ch_this,
                         .char = ch,
                         .char3 = if (ch3_ptr) |p| @ptrCast(@alignCast(p)) else null,
                         .service_obj = svc_raw,
                         .service = svc,
                         .service3 = svc3,
-                    });
+                    }) catch {};
                 } else {
                     _ = ch_unk.lpVtbl.Release(char_raw);
                 }
@@ -571,7 +621,7 @@ pub const WindowsBackend = struct {
         const dev: *WindowsDevice = @ptrCast(@alignCast(dev_handle));
         const winrt = dev.backend.winrt orelse return BleError.NotSupported;
 
-        const char_entry = dev.characteristics.get(char_uuid) orelse return BleError.CharacteristicNotFound;
+        const char_entry = dev.findCharacteristic(char_uuid) orelse return BleError.CharacteristicNotFound;
 
         var read_op: ?*anyopaque = null;
         if (char_entry.char.lpVtbl.ReadValueWithCacheModeAsync(char_entry.char_obj, 1, &read_op) != bindings.S_OK or read_op == null) {
@@ -625,7 +675,7 @@ pub const WindowsBackend = struct {
         const dev: *WindowsDevice = @ptrCast(@alignCast(dev_handle));
         const winrt = dev.backend.winrt orelse return BleError.NotSupported;
 
-        const char_entry = dev.characteristics.get(char_uuid) orelse return BleError.CharacteristicNotFound;
+        const char_entry = dev.findCharacteristic(char_uuid) orelse return BleError.CharacteristicNotFound;
 
         // Create IBuffer from raw byte data using ICryptographicBufferStatics
         const crypto_factory_obj = winrt.getActivationFactory(
@@ -666,29 +716,32 @@ pub const WindowsBackend = struct {
         const dev: *WindowsDevice = @ptrCast(@alignCast(dev_handle));
         const winrt = dev.backend.winrt orelse return BleError.NotSupported;
 
-        const char_entry = dev.characteristics.get(char_uuid) orelse {
-            std.debug.print("  [DEBUG] subscribe: CharacteristicNotFound for UUID\n", .{});
+        const char_entry = dev.findCharacteristic(char_uuid) orelse {
             return BleError.CharacteristicNotFound;
         };
-        if (dev.subscriptions.contains(char_uuid)) return;
 
-        const sub_ctx = try dev.allocator.create(WindowsDevice.SubscriptionContext);
-        sub_ctx.* = .{
+        var sub_slot: ?*WindowsDevice.SubEntry = null;
+        for (&dev.subscriptions) |*s| {
+            if (s.active and s.char_uuid.eql(char_uuid)) return; // already subscribed
+            if (!s.active and sub_slot == null) {
+                sub_slot = s;
+            }
+        }
+        const sub = sub_slot orelse return BleError.OutOfMemory;
+
+        sub.char_uuid = char_uuid;
+        sub.ctx = .{
             .dev = dev,
             .char_uuid = char_uuid,
             .cb = cb,
             .user_data = user_data,
         };
-
-        const handler = try dev.allocator.create(bindings.GattValueChangedHandler);
-        handler.* = bindings.GattValueChangedHandler.init(onValueChangedNotification, @ptrCast(sub_ctx));
+        sub.handler = bindings.GattValueChangedHandler.init(onValueChangedNotification, @ptrCast(&sub.ctx));
 
         var cookie: bindings.EventRegistrationToken = undefined;
-        const hr_add = char_entry.char.lpVtbl.add_ValueChanged(char_entry.char_obj, handler, &cookie);
+        const hr_add = char_entry.char.lpVtbl.add_ValueChanged(char_entry.char_obj, @ptrCast(&sub.handler), &cookie);
         if (hr_add != bindings.S_OK) {
-            std.debug.print("  [DEBUG] subscribe: add_ValueChanged hr=0x{X}\n", .{@as(u32, @bitCast(hr_add))});
-            dev.allocator.destroy(handler);
-            dev.allocator.destroy(sub_ctx);
+            sub.active = false;
             return BleError.NotificationFailed;
         }
 
@@ -708,8 +761,7 @@ pub const WindowsBackend = struct {
                     continue;
                 }
                 _ = char_entry.char.lpVtbl.remove_ValueChanged(char_entry.char_obj, cookie);
-                dev.allocator.destroy(handler);
-                dev.allocator.destroy(sub_ctx);
+                sub.active = false;
                 return BleError.NotificationFailed;
             }
 
@@ -719,8 +771,7 @@ pub const WindowsBackend = struct {
                     continue;
                 }
                 _ = char_entry.char.lpVtbl.remove_ValueChanged(char_entry.char_obj, cookie);
-                dev.allocator.destroy(handler);
-                dev.allocator.destroy(sub_ctx);
+                sub.active = false;
                 return BleError.NotificationFailed;
             };
 
@@ -734,44 +785,40 @@ pub const WindowsBackend = struct {
 
         if (cccd_status != .Success) {
             _ = char_entry.char.lpVtbl.remove_ValueChanged(char_entry.char_obj, cookie);
-            dev.allocator.destroy(handler);
-            dev.allocator.destroy(sub_ctx);
+            sub.active = false;
             if (cccd_status == .AccessDenied) return BleError.AuthenticationFailed;
             return BleError.NotificationFailed;
         }
 
-        try dev.subscriptions.put(char_uuid, .{
-            .cookie = cookie,
-            .handler = handler,
-            .ctx = sub_ctx,
-        });
+        sub.cookie = cookie;
+        sub.active = true;
     }
 
     pub fn unsubscribeNotifications(ctx: *anyopaque, dev_handle: *anyopaque, char_uuid: UUID) anyerror!void {
         _ = ctx;
         if (builtin.os.tag != .windows) return BleError.NotSupported;
         const dev: *WindowsDevice = @ptrCast(@alignCast(dev_handle));
-        const sub = dev.subscriptions.get(char_uuid) orelse return;
 
-        if (dev.characteristics.get(char_uuid)) |char_entry| {
-            // Write CCCD (None = 0) to stop hardware stream
-            var cccd_op: ?*anyopaque = null;
-            if (char_entry.char.lpVtbl.WriteClientCharacteristicConfigurationDescriptorAsync(
-                char_entry.char_obj,
-                .None,
-                &cccd_op,
-            ) == bindings.S_OK and cccd_op != null) {
-                if (dev.backend.winrt) |*w| {
-                    _ = w.awaitAsync(bindings.GattCommunicationStatus, cccd_op.?, 3000) catch {};
+        for (&dev.subscriptions) |*sub| {
+            if (sub.active and sub.char_uuid.eql(char_uuid)) {
+                if (dev.findCharacteristic(char_uuid)) |char_entry| {
+                    // Write CCCD (None = 0) to stop hardware stream
+                    var cccd_op: ?*anyopaque = null;
+                    if (char_entry.char.lpVtbl.WriteClientCharacteristicConfigurationDescriptorAsync(
+                        char_entry.char_obj,
+                        .None,
+                        &cccd_op,
+                    ) == bindings.S_OK and cccd_op != null) {
+                        if (dev.backend.winrt) |*w| {
+                            _ = w.awaitAsync(bindings.GattCommunicationStatus, cccd_op.?, 3000) catch {};
+                        }
+                    }
+                    _ = char_entry.char.lpVtbl.remove_ValueChanged(char_entry.char_obj, sub.cookie);
                 }
+                sub.active = false;
+                break;
             }
-
-            _ = char_entry.char.lpVtbl.remove_ValueChanged(char_entry.char_obj, sub.cookie);
         }
-
-        _ = dev.subscriptions.remove(char_uuid);
-        dev.allocator.destroy(sub.handler);
-        dev.allocator.destroy(sub.ctx);
     }
 
     pub fn exchangeMtu(ctx: *anyopaque, dev_handle: *anyopaque, target_mtu: u16) anyerror!u16 {
@@ -787,18 +834,20 @@ pub const WindowsBackend = struct {
         _ = dev_handle;
         _ = io_cap;
         if (builtin.os.tag != .windows) return BleError.NotSupported;
+        return BleError.NotSupported;
     }
 
     pub fn unpairDevice(ctx: *anyopaque, dev_handle: *anyopaque) anyerror!void {
         _ = ctx;
         _ = dev_handle;
         if (builtin.os.tag != .windows) return BleError.NotSupported;
+        return BleError.NotSupported;
     }
 
     pub fn getBondState(ctx: *anyopaque, dev_handle: *anyopaque) types.BondState {
         _ = ctx;
         _ = dev_handle;
-        return .bonded;
+        return .not_bonded;
     }
 
     pub const vtable: BackendVTable = .{
@@ -847,4 +896,38 @@ test "WindowsBackend compilation and instantiation check" {
         try std.testing.expect(try backend.isPowered());
         backend.closeAdapter();
     }
+}
+
+test "WindowsDevice zero-allocation static storage test" {
+    var win_backend = WindowsBackend.init();
+    defer win_backend.deinit();
+
+    var dev: WindowsDevice = .{
+        .device_obj = undefined,
+        .device = undefined,
+        .address = Address{ .bytes = [_]u8{ 1, 2, 3, 4, 5, 6 } },
+        .is_active = true,
+        .characteristics = undefined,
+        .characteristics_len = 0,
+        .subscriptions = undefined,
+        .subscriptions_len = 0,
+        .services = undefined,
+        .services_len = 0,
+        .backend = &win_backend,
+    };
+
+    const dummy_uuid = UUID.from16(0x2A19);
+    try dev.addCharacteristic(.{
+        .uuid = dummy_uuid,
+        .char_obj = undefined,
+        .char = undefined,
+        .service_obj = undefined,
+        .service = undefined,
+    });
+
+    try std.testing.expectEqual(@as(u8, 1), dev.characteristics_len);
+    const found = dev.findCharacteristic(dummy_uuid);
+    try std.testing.expect(found != null);
+    try std.testing.expect(found.?.uuid.eql(dummy_uuid));
+    try std.testing.expect(dev.findCharacteristic(UUID.from16(0x2A37)) == null);
 }

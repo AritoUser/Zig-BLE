@@ -5,10 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.1.2] - 2026-10-09
+## [1.1.2] - 2026-10-15
 
-### Feature Release: Native Windows WinRT COM BLE Engine (Zero-C# / Zero External Process)
-This release delivers milestone **v1.1.2**, implementing a 100% Pure Zig Windows BLE backend driven directly by the Windows Runtime (WinRT) COM object model. This completely eliminates all external helper processes, subprocess wrappers, and C#/.NET companion tools across Windows 10 and 11 environments.
+### Feature & Architectural Release: Native Windows WinRT COM, Zero-Allocation Architecture & BlueZ Completion
+This release delivers milestone **v1.1.2**, implementing a 100% Pure Zig Windows BLE backend driven directly by the Windows Runtime (WinRT) COM object model with zero dynamic heap allocations, a completed production-grade Linux BlueZ backend, hardened pairing agent security, and unified cross-platform HAL exports.
 
 ---
 
@@ -31,6 +31,35 @@ This release delivers milestone **v1.1.2**, implementing a 100% Pure Zig Windows
   * **Notifications**: Subscription registration with automatic hardware CCCD descriptor programming (`Notify` / `None`).
 * **Kernel Monotonic Timing**:
   * Sub-millisecond timeout tracking using Win32 `kernel32.GetTickCount64()` and low-overhead kernel sleep with zero standard library deprecation issues.
+
+#### Hardened Zero-Allocation Pairing Agent (`src/agent.zig`)
+* **Interactive `AgentCallbacks`**:
+  * Added type-safe callbacks for `request_passkey`, `request_pin_code`, `request_confirmation`, `request_authorization`, and `authorize_service`.
+* **Safe Rejection Defaults**:
+  * Replaced insecure hardcoded returns (`0`, `"0000"`) with standard `org.bluez.Error.Rejected` D-Bus error replies when pairing requests are unhandled or rejected.
+  * Added opt-in `auto_accept = false` flag for headless CI testing.
+
+#### Complete Linux BlueZ Backend (`src/backend/bluez/mod.zig`)
+* **Zero-Allocation Device Pool**:
+  * Static `[16]BluezDevice` pool and `[64]CharEntry` characteristic discovery tables.
+* **Full GATT Operations**:
+  * Wired up `discoverServices` issuing `GetManagedObjects` and parsing GATT hierarchies via `bluez.parseManagedObjects`.
+  * Implemented `readCharacteristic`, `writeCharacteristic`, and notification streaming via `NotificationDispatcher`.
+  * Implemented bonding (`pairDevice`, `unpairDevice`, `getBondState`) and direct streaming socket acquisition via `acquireNotifyFd`.
+
+---
+
+### Changed & Fixed
+
+* **Zero-Allocation Transformation (`src/backend/windows/mod.zig`)**:
+  * Removed all dynamic heap allocations (`std.heap.page_allocator`, `AutoHashMap`, `ArrayList`) from `WindowsDevice` and `WindowsBackend`.
+  * Stored COM delegates and contexts by value within fixed static slots (`[8]WindowsDevice`, `[16]SubEntry`, `[16]*anyopaque`).
+  * Fixed `isDeviceConnected` default (`false`) on COM failure or inactive state.
+* **API & Build Synchronization (`src/root.zig`, `build.zig`)**:
+  * Re-exported `BluezBackend` and `AgentCallbacks` in root namespace.
+  * Factored out repetitive C D-Bus linking blocks into `setupDbusLink` helper in `build.zig`.
+  * Fixed `undefined` connection pointer hazards in tests across `device.zig`, `peripheral.zig`, and `event_loop.zig`.
+  * 161/161 automated unit and integration tests passing.
 
 ---
 

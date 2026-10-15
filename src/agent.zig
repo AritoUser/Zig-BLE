@@ -30,23 +30,51 @@ pub const AgentCapability = enum {
     }
 };
 
+pub const AgentCallbacks = struct {
+    request_passkey: ?*const fn (device_path: [:0]const u8, user_data: ?*anyopaque) ?u32 = null,
+    request_pin_code: ?*const fn (device_path: [:0]const u8, user_data: ?*anyopaque) ?[:0]const u8 = null,
+    request_confirmation: ?*const fn (device_path: [:0]const u8, passkey: u32, user_data: ?*anyopaque) bool = null,
+    request_authorization: ?*const fn (device_path: [:0]const u8, user_data: ?*anyopaque) bool = null,
+    authorize_service: ?*const fn (device_path: [:0]const u8, uuid: [:0]const u8, user_data: ?*anyopaque) bool = null,
+    user_data: ?*anyopaque = null,
+
+    /// Opt-in flag to automatically accept numeric confirmation/authorization
+    /// in automated test harnesses and headless CI environments.
+    auto_accept: bool = false,
+};
+
 pub const Agent = struct {
     conn: *Connection,
     agent_path: [128]u8 = undefined,
     agent_path_len: u8 = 0,
     capability: AgentCapability = .no_input_no_output,
+    callbacks: AgentCallbacks = .{},
     is_registered: bool = false,
 
     pub fn init(conn: *Connection, agent_path: [:0]const u8, capability: AgentCapability) Agent {
+        return initWithCallbacks(conn, agent_path, capability, .{});
+    }
+
+    pub fn initWithCallbacks(
+        conn: *Connection,
+        agent_path: [:0]const u8,
+        capability: AgentCapability,
+        callbacks: AgentCallbacks,
+    ) Agent {
         var a = Agent{
             .conn = conn,
             .capability = capability,
+            .callbacks = callbacks,
         };
         const len = @min(a.agent_path.len - 1, agent_path.len);
         @memcpy(a.agent_path[0..len], agent_path[0..len]);
         a.agent_path[len] = 0;
         a.agent_path_len = @intCast(len);
         return a;
+    }
+
+    pub fn setCallbacks(self: *Agent, callbacks: AgentCallbacks) void {
+        self.callbacks = callbacks;
     }
 
     pub fn getObjectPath(self: *const Agent) [:0]const u8 {
@@ -117,6 +145,12 @@ pub const Agent = struct {
         self.is_registered = false;
     }
 
+    fn reject(self: *Agent, msg: *const Message, err_msg: [:0]const u8) !void {
+        var reply = try Connection.createErrorReply(msg, "org.bluez.Error.Rejected", err_msg);
+        defer reply.deinit();
+        try self.conn.send(&reply);
+    }
+
     /// Handles incoming D-Bus requests from BlueZ to this agent.
     /// Returns true if the message was destined for this agent and handled.
     pub fn processMessage(self: *Agent, msg: *const Message) !bool {
@@ -139,47 +173,114 @@ pub const Agent = struct {
             return true;
         }
 
-        // RequestConfirmation(device, passkey) - Just Works / Numeric Comparison Auto-Accept
+        // RequestConfirmation(device, passkey) - Numeric Comparison
         if (std.mem.eql(u8, member, BlueZ.Agent1.Methods.RequestConfirmation)) {
-            var reply = try Connection.createMethodReturn(msg);
-            defer reply.deinit();
-            try self.conn.send(&reply);
+            var it = msg.iterator();
+            const dev_path = it.getObjectPath() orelse "";
+            const passkey = it.getUInt32() orelse 0;
+            const accept = if (self.callbacks.request_confirmation) |cb|
+                cb(dev_path, passkey, self.callbacks.user_data)
+            else
+                self.callbacks.auto_accept;
+
+            if (accept) {
+                var reply = try Connection.createMethodReturn(msg);
+                defer reply.deinit();
+                try self.conn.send(&reply);
+            } else {
+                try self.reject(msg, "Pairing confirmation rejected");
+            }
             return true;
         }
 
-        // RequestAuthorization(device) - Auto-Accept
+        // RequestAuthorization(device)
         if (std.mem.eql(u8, member, BlueZ.Agent1.Methods.RequestAuthorization)) {
-            var reply = try Connection.createMethodReturn(msg);
-            defer reply.deinit();
-            try self.conn.send(&reply);
+            var it = msg.iterator();
+            const dev_path = it.getObjectPath() orelse "";
+            const accept = if (self.callbacks.request_authorization) |cb|
+                cb(dev_path, self.callbacks.user_data)
+            else
+                self.callbacks.auto_accept;
+
+            if (accept) {
+                var reply = try Connection.createMethodReturn(msg);
+                defer reply.deinit();
+                try self.conn.send(&reply);
+            } else {
+                try self.reject(msg, "Device authorization rejected");
+            }
             return true;
         }
 
-        // AuthorizeService(device, uuid) - Auto-Accept Service Access
+        // AuthorizeService(device, uuid)
         if (std.mem.eql(u8, member, BlueZ.Agent1.Methods.AuthorizeService)) {
-            var reply = try Connection.createMethodReturn(msg);
-            defer reply.deinit();
-            try self.conn.send(&reply);
+            var it = msg.iterator();
+            const dev_path = it.getObjectPath() orelse "";
+            const service_uuid = it.getString() orelse "";
+            const accept = if (self.callbacks.authorize_service) |cb|
+                cb(dev_path, service_uuid, self.callbacks.user_data)
+            else
+                self.callbacks.auto_accept;
+
+            if (accept) {
+                var reply = try Connection.createMethodReturn(msg);
+                defer reply.deinit();
+                try self.conn.send(&reply);
+            } else {
+                try self.reject(msg, "Service authorization rejected");
+            }
             return true;
         }
 
-        // RequestPasskey(device) -> default to 0 if requested
+        // RequestPasskey(device)
         if (std.mem.eql(u8, member, BlueZ.Agent1.Methods.RequestPasskey)) {
-            var reply = try Connection.createMethodReturn(msg);
-            defer reply.deinit();
-            var b = reply.builder();
-            try b.appendUInt32(0);
-            try self.conn.send(&reply);
+            var it = msg.iterator();
+            const dev_path = it.getObjectPath() orelse "";
+            if (self.callbacks.request_passkey) |cb| {
+                if (cb(dev_path, self.callbacks.user_data)) |passkey| {
+                    var reply = try Connection.createMethodReturn(msg);
+                    defer reply.deinit();
+                    var b = reply.builder();
+                    try b.appendUInt32(passkey);
+                    try self.conn.send(&reply);
+                } else {
+                    try self.reject(msg, "Passkey entry rejected by user");
+                }
+            } else if (self.callbacks.auto_accept) {
+                var reply = try Connection.createMethodReturn(msg);
+                defer reply.deinit();
+                var b = reply.builder();
+                try b.appendUInt32(0);
+                try self.conn.send(&reply);
+            } else {
+                try self.reject(msg, "No passkey callback configured");
+            }
             return true;
         }
 
-        // RequestPinCode(device) -> "0000"
+        // RequestPinCode(device)
         if (std.mem.eql(u8, member, BlueZ.Agent1.Methods.RequestPinCode)) {
-            var reply = try Connection.createMethodReturn(msg);
-            defer reply.deinit();
-            var b = reply.builder();
-            try b.appendString("0000");
-            try self.conn.send(&reply);
+            var it = msg.iterator();
+            const dev_path = it.getObjectPath() orelse "";
+            if (self.callbacks.request_pin_code) |cb| {
+                if (cb(dev_path, self.callbacks.user_data)) |pin| {
+                    var reply = try Connection.createMethodReturn(msg);
+                    defer reply.deinit();
+                    var b = reply.builder();
+                    try b.appendString(pin);
+                    try self.conn.send(&reply);
+                } else {
+                    try self.reject(msg, "PIN code entry rejected by user");
+                }
+            } else if (self.callbacks.auto_accept) {
+                var reply = try Connection.createMethodReturn(msg);
+                defer reply.deinit();
+                var b = reply.builder();
+                try b.appendString("0000");
+                try self.conn.send(&reply);
+            } else {
+                try self.reject(msg, "No PIN code callback configured");
+            }
             return true;
         }
 
@@ -203,8 +304,42 @@ pub const Agent = struct {
 // ============================================================================
 
 test "Agent: initialization and capability formatting" {
-    var dummy_conn: Connection = undefined;
+    var dummy_conn: Connection = if (builtin.os.tag == .linux) .{
+        .allocator = std.testing.allocator,
+        .socket = .{ .fd = -1 },
+        .incoming_queue = .{},
+    } else .{};
     const a = Agent.init(&dummy_conn, "/org/zig_ble/agent", .no_input_no_output);
     try std.testing.expectEqualStrings("/org/zig_ble/agent", a.getObjectPath());
     try std.testing.expectEqualStrings("NoInputNoOutput", a.capability.toSlice());
+    try std.testing.expect(!a.callbacks.auto_accept);
+}
+
+test "Agent: custom callbacks and auto_accept configuration" {
+    var dummy_conn: Connection = if (builtin.os.tag == .linux) .{
+        .allocator = std.testing.allocator,
+        .socket = .{ .fd = -1 },
+        .incoming_queue = .{},
+    } else .{};
+
+    const DummyCallbacks = struct {
+        fn onPasskey(_: [:0]const u8, _: ?*anyopaque) ?u32 {
+            return 123456;
+        }
+    };
+
+    var a = Agent.initWithCallbacks(
+        &dummy_conn,
+        "/org/zig_ble/agent",
+        .keyboard_display,
+        .{
+            .request_passkey = DummyCallbacks.onPasskey,
+            .auto_accept = true,
+        },
+    );
+
+    try std.testing.expectEqualStrings("KeyboardDisplay", a.capability.toSlice());
+    try std.testing.expect(a.callbacks.auto_accept);
+    try std.testing.expect(a.callbacks.request_passkey != null);
+    try std.testing.expectEqual(@as(?u32, 123456), a.callbacks.request_passkey.?("/org/bluez/dev_1", null));
 }

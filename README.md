@@ -1,12 +1,12 @@
-# Zig-BLE v1.1.1
+# Zig-BLE v1.1.2
 
 A high-performance, allocation-conscious, native Bluetooth Low Energy (BLE) protocol engine and systems library for **Zig 0.17.0+**, strictly adhering to the **Bluetooth Core Specification (v5.4 / v6.0)**, Windows 11 Native APIs, and the Linux **BlueZ D-Bus Wire Protocol**.
 
 Supports both **Central (Client)** and **Peripheral (Server & Broadcaster)** roles across **Desktop (Windows & Linux)** and **Bare-Metal (UART H4/H5)** with a zero-allocation domain model, non-blocking event loops, and full physical over-the-air hardware verification.
 
 [![CI](https://github.com/AritoUser/Zig-BLE/actions/workflows/ci.yml/badge.svg)](https://github.com/AritoUser/Zig-BLE/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/badge/Release-v1.1.1-brightgreen.svg)](https://github.com/AritoUser/Zig-BLE/releases)
-[![Tests](https://img.shields.io/badge/Tests-156%2F156%20Passing-success.svg)](tests/)
+[![Release](https://img.shields.io/badge/Release-v1.1.2-brightgreen.svg)](https://github.com/AritoUser/Zig-BLE/releases)
+[![Tests](https://img.shields.io/badge/Tests-161%2F161%20Passing-success.svg)](tests/)
 [![Zero-Allocation](https://img.shields.io/badge/Hot--Path-0%20Bytes%20Heap-blue.svg)](examples/benchmark.zig)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![White Paper](https://img.shields.io/badge/White%20Paper-Architecture%20%26%20Design-orange.svg)](docs/WHITEPAPER.md)
@@ -22,37 +22,43 @@ Supports both **Central (Client)** and **Peripheral (Server & Broadcaster)** rol
 
 ---
 
-## The 7 Architectural Pillars of v1.0.0
+## The 13 Architectural Pillars of v1.1.2
 
 ```mermaid
 graph TD
-    subgraph "Application & HAL Layer (Pfeiler 1 & 2)"
+    subgraph "Application & HAL Layer (Pfeiler 1, 12, 13)"
         APP[User Application / Gateway]
         HAL[UnifiedAdapter / BackendVTable]
+        AGENT[Hardened Zero-Alloc Pairing Agent]
     end
 
-    subgraph "Pluggable Backends (Multi-Platform)"
-        WIN[Windows 11 Native Backend WinRT / Win32]
-        DBUS[Pure-Zig D-Bus Wire Backend Zero-C Linux]
+    subgraph "Pluggable Backends & Static Pools (Pfeiler 2 & 13)"
+        WIN[Windows 11 Native Backend WinRT COM Fixed Pools]
+        DBUS[Linux Pure-Zig D-Bus Wire Backend Zero-C Fixed Pools]
         HCI_SOCK[Linux Raw HCI Socket AF_BLUETOOTH Zero-Daemon]
         MOCK[Virtual Mock Controller Headless CI]
         UART[Bare-Metal Serial UART H4 / H5]
     end
 
-    subgraph "Core Protocol Engines (Pfeiler 3, 4, 5)"
+    subgraph "Core Protocol & Standards (Pfeiler 3, 4, 8, 9, 11)"
         H4_ENG[H4 UART Streaming Parser & Serializer]
         L2CAP_ENG[Zero-Alloc L2CAP ACL Frame Reassembler]
         GATT_ENG[GATT Long Transfers Prepare/Execute Queue & ReadBlob]
-        SEC_ENG[Security Manager & KeyStore NVS ZBGR Persistence]
+        EATT_ENG[Enhanced ATT EATT Multi-Bearer Concurrency]
+        SUB_ENG[BT 5.3 Connection Subrating]
+        PROF_ENG[SIG Standard Profiles HeartRate/Battery/DIS/HID/ESS/NUS/Beacons]
     end
 
-    subgraph "Diagnostic Tooling (Pfeiler 6 & 7)"
-        TESTS[146 Automated E2E & Edge-Case Unit Tests]
+    subgraph "Security & Diagnostic Tooling (Pfeiler 5, 6, 7, 10)"
+        SEC_ENG[Security Manager & KeyStore NVS ZBGR Persistence]
+        CRYPTO_ENG[Zero-Dep Crypto Toolbox AES-128 / CMAC / LE SC]
+        TESTS[161 Automated E2E & Edge-Case Unit Tests]
         PCAP_ENG[Wireshark PCAP Packet Exporter DLT_BLUETOOTH_HCI_H4]
         BENCH[Microbenchmark Suite 1.7 Billion Ops/s]
     end
 
     APP --> HAL
+    APP --> AGENT
     HAL --> WIN
     HAL --> DBUS
     HAL --> HCI_SOCK
@@ -63,7 +69,10 @@ graph TD
     HCI_SOCK --> H4_ENG
     H4_ENG --> L2CAP_ENG
     L2CAP_ENG --> GATT_ENG
+    L2CAP_ENG --> EATT_ENG
+    GATT_ENG --> PROF_ENG
     GATT_ENG --> SEC_ENG
+    SEC_ENG --> CRYPTO_ENG
 
     L2CAP_ENG -.-> PCAP_ENG
     GATT_ENG -.-> TESTS
@@ -71,10 +80,10 @@ graph TD
 ```
 
 1. **Pfeiler 1: Pluggable Backend HAL & VTable Architecture (`src/backend/vtable.zig`)**:
-   Unified `BackendVTable` abstraction permitting runtime or compile-time switching between native Windows, Linux BlueZ D-Bus, Linux direct HCI sockets, bare-metal serial UART, and in-memory mock controllers.
+   Unified `BackendVTable` abstraction permitting runtime or compile-time switching between native Windows WinRT, Linux BlueZ D-Bus, Linux direct HCI sockets, bare-metal serial UART, and in-memory mock controllers.
 2. **Pfeiler 2: Tier-1 Native OS Support (Windows & Linux)**:
-   * **Windows 11 Native (`src/backend/windows/`)**: Direct integration with Windows Bluetooth APIs (`bthprops.cpl` / `BluetoothApis.dll`) and WinRT COM APIs (`Windows.Devices.Bluetooth`), enabling real on-air BLE device exploration without external drivers.
-   * **Linux Pure-Zig D-Bus Wire (`src/dbus/wire/`)**: Direct communication over `/var/run/dbus/system_bus_socket` using native POSIX system calls (`std.posix`). **Zero `libdbus-1` and zero `libc` required!**
+   * **Windows 11 Native (`src/backend/windows/`)**: Direct integration with Windows Runtime COM APIs (`Windows.Devices.Bluetooth`), enabling real on-air BLE device exploration with 100% zero dynamic heap allocations.
+   * **Linux Pure-Zig D-Bus Wire (`src/dbus/wire/`)**: Direct communication over `/var/run/dbus/system_bus_socket` using native POSIX system calls (`std.posix`). **Zero `libdbus-1` and zero `libc` required!** (Optional legacy `-Dlink-dbus` flag available).
 3. **Pfeiler 3: Pure-Zig Host-Stack for Bare-Metal & UART (`src/hci/h4.zig`, `src/l2cap/acl_reassembler.zig`)**:
    * **H4 Framing Engine**: Zero-allocation streaming parser and serializer for continuous UART byte streams, supporting Command (0x01), ACL Data (0x02), SCO (0x03), Event (0x04), and ISO (0x05) packets.
    * **Zero-Allocation ACL Reassembler**: Fixed-capacity multi-fragment L2CAP reassembly engine operating with zero dynamic heap allocations.
@@ -86,12 +95,28 @@ graph TD
    * `MemoryBondStore(N)` supporting Long Term Keys (LTK AES-128), Identity Resolving Keys (IRK), EDIV, Rand, and authentication flags.
    * Client Characteristic Configuration Descriptor (CCCD) state persistence across power cycles.
    * Portable binary NVS format (`ZBGR` magic) with compact serialization and corruption protection.
-6. **Pfeiler 6: Virtual Mock Controller & E2E CI Harness (`src/backend/mock.zig`, `tests/`)**:
+6. **Pfeiler 6: Virtual Mock Controller & E2E CI Harness (`src/backend/mock/`, `tests/`)**:
    * Deterministic, zero-OS mock controller for headless CI test execution.
-   * 146 unit, integration, and edge-case tests validating boundary conditions, stream interruptions, and packet malformations.
+   * 161 automated unit, integration, and edge-case tests validating boundary conditions, stream interruptions, and packet malformations.
 7. **Pfeiler 7: Developer Tooling & Wireshark PCAP Exporter (`src/tooling/pcap.zig`)**:
    * Built-in capture engine writing standard `DLT_BLUETOOTH_HCI_H4` PCAP files for direct packet analysis in Wireshark.
    * Dedicated microbenchmark suite testing 15 protocol targets at nanosecond granularity.
+8. **Pfeiler 8: Enhanced ATT (EATT) Multi-Bearer Concurrency (`src/core/eatt.zig`)**:
+   * Full Bluetooth 5.2 Enhanced ATT multiplexer preventing Head-of-Line (HoL) blocking across independent L2CAP CoC bearers.
+   * Concurrently handles MTU exchanges and non-blocking transaction streams.
+9. **Pfeiler 9: Bluetooth 5.3 Connection Subrating (`src/hci/subrating.zig`)**:
+   * Dynamic latency tuning and connection subrating parameter negotiation for high-efficiency, low-power duty cycling.
+10. **Pfeiler 10: Cryptographic Security Toolbox & SMP (`src/crypto/`)**:
+    * Zero-dependency cryptographic primitives implementing AES-128, AES-CMAC, and official Bluetooth Core Spec algorithms (`ah`, `c1`, `s1`, `f4`, `f5`, `f6`, `g2`, `h6`).
+    * Full support for LE Secure Connections (LE SC) and legacy pairing verification test vectors.
+11. **Pfeiler 11: SIG Standard Profile Suite (`src/profiles/`)**:
+    * Turnkey, type-safe encoders/decoders for Heart Rate (HRS), Battery (BAS), Device Information (DIS), Current Time (CTS), Health Thermometer (HTS), Blood Pressure (BPS), HID over GATT (HOGP), Environmental Sensing (ESS), Nordic UART (NUS), and Beacons (iBeacon, Eddystone).
+12. **Pfeiler 12: Hardened Zero-Allocation Pairing Agent (`src/agent.zig`)**:
+    * Secure `org.bluez.Agent1` implementation with customizable `AgentCallbacks` interface for passkey, PIN code, and authorization confirmations.
+    * Secure-by-default behavior safely rejecting unhandled pairing attempts with `org.bluez.Error.Rejected` instead of insecure fallback acceptances.
+13. **Pfeiler 13: Zero-Allocation Cross-Platform HAL Pools (`src/backend/`)**:
+    * Pure static-pool resource management on both Windows (WinRT) and Linux (BlueZ) backends.
+    * Fixed device pools (`[8]WindowsDevice`, `[16]BluezDevice`) and static subscription contexts eliminating all runtime heap allocations on hot paths.
 
 ---
 
@@ -298,7 +323,7 @@ Guarantees Verified:
 ## Test- & Build-Befehle
 
 ```sh
-# Führt alle 146 Unit-, E2E-Pipeline- und Edge-Case-Tests aus
+# Führt alle 161 Unit-, E2E-Pipeline- und Edge-Case-Tests aus
 zig build test
 
 # Führt die offizielle Live-Hardware-Verifikation durch
@@ -313,11 +338,17 @@ zig build run-bench
 # Führt Fuzz-Tests gegen manipulierte Werbepakete aus (500k Iterationen)
 zig build fuzz
 
+# Führt D-Bus Wire Protocol Fuzzing aus (200k Iterationen)
+zig build fuzz-dbus
+
 # Generiert die interaktive HTML-Dokumentation
 zig build docs
 
 # Cross-Kompilierung für Linux ohne C-Compiler
 zig build -Dtarget=x86_64-linux
+
+# Optional: Linkt system libdbus-1 (Legacy C-Fallback; Standard ist Pure-Zig Wire)
+zig build -Dlink-dbus=true
 ```
 
 ---
