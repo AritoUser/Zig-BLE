@@ -178,7 +178,7 @@ pub const BluezBackend = struct {
             var adapter = adapter_mod.Adapter.init(conn, self.getAdapterPath());
             adapter.setDiscoveryFilter(.{
                 .transport = "le",
-                .duplicate_data = filter.duplicate_data,
+                .duplicate_data = filter.duplicate_data orelse (!filter.filter_duplicates),
             }) catch {};
 
             adapter.startDiscovery() catch return BleError.IoError;

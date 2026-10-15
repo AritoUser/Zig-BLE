@@ -68,9 +68,9 @@ pub const ByteBuffer = struct {
 /// Version-independent generic dynamic list (immune to std.ArrayList differences between Zig versions)
 pub fn List(comptime T: type) type {
     return struct {
-        allocator: std.mem.Allocator,
-        items: []T,
-        len: usize,
+        allocator: std.mem.Allocator = undefined,
+        items: []T = &[_]T{},
+        len: usize = 0,
 
         pub fn init(allocator: std.mem.Allocator) @This() {
             return .{

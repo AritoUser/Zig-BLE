@@ -68,6 +68,8 @@ pub const ScanFilter = struct {
     service_uuids: []const UUID = &.{},
     /// Filter out duplicate advertisement packets from same address
     filter_duplicates: bool = true,
+    /// Explicitly control duplicate packets if supported by backend
+    duplicate_data: ?bool = null,
     /// Minimum RSSI threshold in dBm (e.g. -85)
     min_rssi: ?i16 = null,
     /// Active scan requests Scan Response packets

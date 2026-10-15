@@ -259,7 +259,7 @@ pub const WindowsBackend = struct {
         if (builtin.os.tag != .windows) return false;
         const self: *WindowsBackend = @ptrCast(@alignCast(ctx));
         if (self.radio) |*r| {
-            return r.isPowered();
+            if (r.radio_handle != null) return r.isPowered();
         }
         return self.powered;
     }

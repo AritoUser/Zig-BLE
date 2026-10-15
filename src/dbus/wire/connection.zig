@@ -142,7 +142,7 @@ pub const Connection = struct {
     socket: Socket,
     unique_name: ?[]const u8 = null,
     next_serial: u32 = 1,
-    incoming_queue: List(Message),
+    incoming_queue: List(Message) = .{},
     queue_head: usize = 0,
     supports_unix_fd: bool = false,
     write_mutex: Mutex = .{},
