@@ -32,6 +32,7 @@ pub const Services = struct {
     pub const weight_scale = UUID.from16(0x181D);
     pub const pulse_oximeter = UUID.from16(0x1822);
     pub const internet_protocol_support = UUID.from16(0x1820);
+    pub const fitness_machine = UUID.from16(0x1826);
 
     /// Known vendor services (e.g. Nordic UART Service).
     pub const nordic_uart = UUID{
@@ -44,8 +45,8 @@ pub const Services = struct {
     };
     const service_lut = initServiceLut();
 
-    fn initServiceLut() [35]?[]const u8 {
-        var lut: [35]?[]const u8 = @splat(null);
+    fn initServiceLut() [40]?[]const u8 {
+        var lut: [40]?[]const u8 = @splat(null);
         lut[0x1800 - 0x1800] = "Generic Access";
         lut[0x1801 - 0x1800] = "Generic Attribute";
         lut[0x1802 - 0x1800] = "Immediate Alert";
@@ -74,6 +75,7 @@ pub const Services = struct {
         lut[0x181D - 0x1800] = "Weight Scale";
         lut[0x1820 - 0x1800] = "Internet Protocol Support";
         lut[0x1822 - 0x1800] = "Pulse Oximeter";
+        lut[0x1826 - 0x1800] = "Fitness Machine";
         return lut;
     }
 
@@ -116,6 +118,40 @@ pub const Characteristics = struct {
     pub const heart_rate_measurement = UUID.from16(0x2A37);
     pub const body_sensor_location = UUID.from16(0x2A38);
     pub const heart_rate_control_point = UUID.from16(0x2A39);
+
+    // Running Speed and Cadence (RSCP)
+    pub const rsc_measurement = UUID.from16(0x2A53);
+    pub const rsc_feature = UUID.from16(0x2A54);
+    pub const sc_control_point = UUID.from16(0x2A55);
+    pub const sensor_location = UUID.from16(0x2A5D);
+
+    // Pulse Oximeter (PLXP)
+    pub const plx_spot_check_measurement = UUID.from16(0x2A5E);
+    pub const plx_continuous_measurement = UUID.from16(0x2A5F);
+    pub const plx_features = UUID.from16(0x2A60);
+
+    // Cycling Power (CPP)
+    pub const cycling_power_measurement = UUID.from16(0x2A63);
+    pub const cycling_power_vector = UUID.from16(0x2A64);
+    pub const cycling_power_feature = UUID.from16(0x2A65);
+    pub const cycling_power_control_point = UUID.from16(0x2A66);
+
+    // Fitness Machine (FTMS)
+    pub const fitness_machine_feature = UUID.from16(0x2ACC);
+    pub const treadmill_data = UUID.from16(0x2ACD);
+    pub const cross_trainer_data = UUID.from16(0x2ACE);
+    pub const step_climber_data = UUID.from16(0x2ACF);
+    pub const stair_climber_data = UUID.from16(0x2AD0);
+    pub const rower_data = UUID.from16(0x2AD1);
+    pub const indoor_bike_data = UUID.from16(0x2AD2);
+    pub const training_status = UUID.from16(0x2AD3);
+    pub const supported_speed_range = UUID.from16(0x2AD4);
+    pub const supported_inclination_range = UUID.from16(0x2AD5);
+    pub const supported_resistance_level_range = UUID.from16(0x2AD6);
+    pub const supported_heart_rate_range = UUID.from16(0x2AD7);
+    pub const supported_power_range = UUID.from16(0x2AD8);
+    pub const fitness_machine_control_point = UUID.from16(0x2AD9);
+    pub const fitness_machine_status = UUID.from16(0x2ADA);
 
     // Nordic UART RX/TX
     pub const nordic_uart_rx = UUID{
@@ -160,6 +196,32 @@ pub const Characteristics = struct {
                 0x2A38 => "Body Sensor Location",
                 0x2A39 => "Heart Rate Control Point",
                 0x2A50 => "PnP ID",
+                0x2A53 => "RSC Measurement",
+                0x2A54 => "RSC Feature",
+                0x2A55 => "SC Control Point",
+                0x2A5D => "Sensor Location",
+                0x2A5E => "PLX Spot-Check Measurement",
+                0x2A5F => "PLX Continuous Measurement",
+                0x2A60 => "PLX Features",
+                0x2A63 => "Cycling Power Measurement",
+                0x2A64 => "Cycling Power Vector",
+                0x2A65 => "Cycling Power Feature",
+                0x2A66 => "Cycling Power Control Point",
+                0x2ACC => "Fitness Machine Feature",
+                0x2ACD => "Treadmill Data",
+                0x2ACE => "Cross Trainer Data",
+                0x2ACF => "Step Climber Data",
+                0x2AD0 => "Stair Climber Data",
+                0x2AD1 => "Rower Data",
+                0x2AD2 => "Indoor Bike Data",
+                0x2AD3 => "Training Status",
+                0x2AD4 => "Supported Speed Range",
+                0x2AD5 => "Supported Inclination Range",
+                0x2AD6 => "Supported Resistance Level Range",
+                0x2AD7 => "Supported Heart Rate Range",
+                0x2AD8 => "Supported Power Range",
+                0x2AD9 => "Fitness Machine Control Point",
+                0x2ADA => "Fitness Machine Status",
                 else => null,
             };
         }

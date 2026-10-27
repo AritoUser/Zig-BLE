@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2026-10-27
+
+### Feature Release: Bluetooth SIG Fitness, Ergometer & Health Suite
+This release delivers milestone **v1.2.0**, introducing high-performance, 100% zero-allocation implementations of standard Bluetooth SIG sport, ergometer, and medical sensor profiles:
+
+* **Pulse Oximeter Profile (PLXP v1.0, Service `0x1822`)**:
+  * Spot-Check Measurement (`0x2A5E`) and Continuous Telemetry (`0x2A5F`) with IEEE-11073-20601 `Sfloat` representations.
+  * 24-bit Device and Sensor Status bitfield (`PlxDeviceAndSensorStatus`) with byte-alignment-safe bitcasts.
+  * Ergonomic float conversion getters (`spo2Percent()`, `pulseRateBpm()`) filtering special IEEE values (`NaN`, `NRes`) cleanly to `null`.
+* **Fitness Machine Profile (FTMS v1.0, Service `0x1826`)**:
+  * Indoor Bike Data (`0x2AD2`), Treadmill Data (`0x2ACD`), Rower Data (`0x2AD1`).
+  * Inverted Bit 0 (`More Data`) flag handling ensuring perfect byte alignment when instantaneous speed is omitted.
+  * Native 24-bit unsigned integer (`u24`) support for total distance telemetry in meters.
+  * `IndoorBikeAccumulator` state helper for seamless multi-packet fragment aggregation.
+  * `FitnessMachineControlPoint` (`0x2AD9`) stateless request & response codecs, including ERG Mode target power (`0x05`) and Indoor Bike Simulation parameters (`0x11`) for Zwift/KICKR trainers.
+* **Cycling Power Profile (CPP v1.1, Service `0x1818`)**:
+  * Cycling Power Measurement (`0x2A63`) with instantaneous watts, left/right pedal power balance, and accumulated torque.
+  * 64-second 1/1024s timer rollover calculation with wrapping subtraction (`-%`) in `calculateCadenceRpm`.
+  * `CadenceCalculator` state tracker for continuous live cadence updates.
+* **Running Speed and Cadence Profile (RSCP v1.0, Service `0x1814`)**:
+  * RSC Measurement (`0x2A53`) with 1/256 m/s speed, 1 RPM cadence, stride length, total distance, and running/walking status flags.
+* **Assigned Numbers & Test Suite**:
+  * Registered `fitness_machine` (`0x1826`) service and all related characteristic UUIDs in `src/core/assigned_numbers.zig`.
+  * Expanded CI test suite to 13 steps and 191/191 passed tests with comprehensive round-trip and boundary verifications.
+
+---
+
 ## [1.1.2] - 2026-10-15
 
 ### Feature & Architectural Release: Native Windows WinRT COM, Zero-Allocation Architecture & BlueZ Completion

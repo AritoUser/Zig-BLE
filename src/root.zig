@@ -609,6 +609,32 @@ pub const EddystoneUrl = profiles.EddystoneUrl;
 pub const EddystoneUid = profiles.EddystoneUid;
 pub const EddystoneTlm = profiles.EddystoneTlm;
 
+// Bluetooth SIG Fitness, Ergometer & Health Suite (v1.2.0)
+pub const pulse_oximeter = profiles.pulse_oximeter;
+pub const PlxFeatures = profiles.PlxFeatures;
+pub const PlxMeasurementStatus = profiles.PlxMeasurementStatus;
+pub const PlxDeviceAndSensorStatus = profiles.PlxDeviceAndSensorStatus;
+pub const PlxSpotCheckMeasurement = profiles.PlxSpotCheckMeasurement;
+pub const PlxContinuousMeasurement = profiles.PlxContinuousMeasurement;
+
+pub const ftms = profiles.ftms;
+pub const IndoorBikeData = profiles.IndoorBikeData;
+pub const IndoorBikeAccumulator = profiles.IndoorBikeAccumulator;
+pub const TreadmillData = profiles.TreadmillData;
+pub const RowerData = profiles.RowerData;
+pub const FitnessMachineControlPoint = profiles.FitnessMachineControlPoint;
+pub const FitnessMachineFeature = profiles.FitnessMachineFeature;
+
+pub const cpp = profiles.cpp;
+pub const CyclingPowerMeasurement = profiles.CyclingPowerMeasurement;
+pub const CyclingPowerFeature = profiles.CyclingPowerFeature;
+pub const calculateCadenceRpm = profiles.calculateCadenceRpm;
+pub const CadenceCalculator = profiles.CadenceCalculator;
+
+pub const rscp = profiles.rscp;
+pub const RscMeasurement = profiles.RscMeasurement;
+pub const RscFeature = profiles.RscFeature;
+
 // L2CAP Connection-Oriented Channels (High-Speed Streaming) & LE Signaling
 pub const l2cap = @import("l2cap/mod.zig");
 pub const L2capSocket = l2cap.L2capSocket;

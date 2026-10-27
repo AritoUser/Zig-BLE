@@ -681,8 +681,8 @@ graph LR
 | **v1.0.1** | **Cross-Platform CI Patch** | macOS ARM64 Calling Conventions, POSIX Timestamps, BlueZ Fix | CI-Matrix 100 % grün auf Ubuntu, macOS & Windows | ✅ **FREIGEGEBEN** |
 | **v1.1.0** | **High-Throughput & Ingestion Engine** | Durchsatz-Tuning (>120 kB/s), EATT, Subrating, VTable-Security | **Nr. 1** (MTU Exchange), **Nr. 2** (Bonding VTable), **Nr. 3** (`AcquireNotify`), **Nr. 5** (L2CAP CoC API), **Nr. 6** (PCAP/Btsnoop Replay) | ✅ **FREIGEGEBEN** |
 | **v1.1.1** | **Zig 0.17.0 Toolchain Upgrade** | Syntax-Migration (`@splat`, `bufPrintSentinel`), Build-Decoupling | Turnkey-Kompatibilität für moderne Zig 0.17.0 Compiler | ✅ **FREIGEGEBEN** |
-| **v1.1.2** | **Native Windows WinRT COM Engine** | **Zero-C# Hardware Ingestion:** RoInitialize, AdvertisementWatcher, FromBluetoothAddressAsync, GattValueChangedHandler COM Sink | **Restlose Eliminierung von `wearables/tools/`**, direkte Whoop 4.0/5.0 Ingestion in Pure Zig | 🚀 **HÖCHSTE PRIORITÄT / IN ENTWICKLUNG** |
-| **v1.2.0** | **Fitness & Health Ecosystem** | Ergometer, Smart-Trainer, Wattmessung, SpO2 | **Nr. 7** (PLXP `0x1822`), FTMS (`0x1826`), CPP (`0x1818`), RSCP (`0x1814`) | 📋 **KONZIPIERT** |
+| **v1.1.2** | **Native Windows WinRT COM Engine** | **Zero-C# Hardware Ingestion:** RoInitialize, AdvertisementWatcher, FromBluetoothAddressAsync, GattValueChangedHandler COM Sink | **Restlose Eliminierung von `wearables/tools/`**, direkte Whoop 4.0/5.0 Ingestion in Pure Zig | ✅ **FREIGEGEBEN** |
+| **v1.2.0** | **Fitness & Health Ecosystem** | Ergometer, Smart-Trainer, Wattmessung, SpO2, RSCP | **Nr. 7** (PLXP `0x1822`), FTMS (`0x1826`), CPP (`0x1818`), RSCP (`0x1814`) | ✅ **FREIGEGEBEN** |
 | **v1.3.0** | **Mobile & Extended OS** | Native Android NDK & macOS CoreBluetooth Backends | **Nr. 4** (Android JNI Zero-Copy Bridge & Wear OS CoC), macOS ObjC-ABI | 📋 **KONZIPIERT** |
 | **v1.4.0** | **Direction Finding Engine** | Lokalisierung & Raumorientierung (Indoor Tracking)| BT 5.1 AoA / AoD, Constant Tone Extension (CTE), I/Q Sample Processing | 📋 **KONZIPIERT** |
 | **v2.0.0** | **Next-Gen Bluetooth Core** | LE Audio, Auracast, ESL Preisschilder, Nanosekunden CS | BT 5.2 LE Audio / LC3 / Auracast, BT 5.4 EAD & PAwR, BT 6.0 Channel Sounding | 📋 **STRATEGISCH** |
@@ -707,9 +707,9 @@ graph LR
 | **P11** | **v1.1.0** | **Nr. 6** | PCAP & Btsnoop Trace Reader | `src/tooling/pcap.zig` | Mittel | ✅ PCAP DLT 187 & Android Btsnoop Decoder |
 | **P12** | **v1.1.0** | — | BT 5.2 EATT Multiplexer | `src/core/eatt.zig` | Hoch | ✅ Parallele Bearer ohne HoL-Blocking |
 | **P13** | **v1.1.0** | — | BT 5.3 Connection Subrating | `src/hci/subrating.zig` | Mittel | ✅ Subrate Request & Change Event |
-| **P14** | **v1.2.0** | **Nr. 7** | Pulse Oximeter Profile (PLXP) | `src/profiles/pulse_oximeter.zig` | Gering | Spot-Check (`0x2A5E`) & Continuous (`0x2A5F`) |
-| **P15** | **v1.2.0** | — | FTMS Fitness Machine Service | `src/profiles/ftms.zig` | Mittel | Indoor Bike & Control Point FSM |
-| **P16** | **v1.2.0** | — | Cycling Power (CPP) & RSCP | `src/profiles/cpp.zig`, `rscp.zig`| Mittel | Festkomma-Präzision & Masken-Tests |
+| **P14** | **v1.2.0** | **Nr. 7** | Pulse Oximeter Profile (PLXP) | `src/profiles/pulse_oximeter.zig` | Gering | ✅ Spot-Check (`0x2A5E`) & Continuous (`0x2A5F`) verifiziert |
+| **P15** | **v1.2.0** | — | FTMS Fitness Machine Service | `src/profiles/ftms.zig` | Mittel | ✅ Indoor Bike, Treadmill, Rower & Control Point FSM verifiziert |
+| **P16** | **v1.2.0** | — | Cycling Power (CPP) & RSCP | `src/profiles/cpp.zig`, `rscp.zig`| Mittel | ✅ Festkomma-Präzision & 64s Rollover verifiziert |
 | **P17** | **v1.3.0** | **Nr. 4** | Android NDK & JNI Bridge | `src/backend/android/mod.zig` | Hoch | Zero-Copy JNI Buffer & Wear OS CoC |
 | **P18** | **v1.3.0** | — | macOS CoreBluetooth Bridge | `src/backend/macos/mod.zig` | Hoch | Objective-C Runtime ABI (`objc_msgSend`) |
 | **P19** | **v1.4.0** | — | BT 5.1 Direction Finding AoA | `src/hci/direction_finding.zig` | Hoch | I/Q Phasensimulation & Azimut-Test |

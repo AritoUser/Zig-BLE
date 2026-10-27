@@ -1,12 +1,12 @@
-# Zig-BLE v1.1.2
+# Zig-BLE v1.2.0
 
 A high-performance, allocation-conscious, native Bluetooth Low Energy (BLE) protocol engine and systems library for **Zig 0.17.0+**, strictly adhering to the **Bluetooth Core Specification (v5.4 / v6.0)**, Windows 11 Native APIs, and the Linux **BlueZ D-Bus Wire Protocol**.
 
 Supports both **Central (Client)** and **Peripheral (Server & Broadcaster)** roles across **Desktop (Windows & Linux)** and **Bare-Metal (UART H4/H5)** with a zero-allocation domain model, non-blocking event loops, and full physical over-the-air hardware verification.
 
 [![CI](https://github.com/AritoUser/Zig-BLE/actions/workflows/ci.yml/badge.svg)](https://github.com/AritoUser/Zig-BLE/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/badge/Release-v1.1.2-brightgreen.svg)](https://github.com/AritoUser/Zig-BLE/releases)
-[![Tests](https://img.shields.io/badge/Tests-161%2F161%20Passing-success.svg)](tests/)
+[![Release](https://img.shields.io/badge/Release-v1.2.0-brightgreen.svg)](https://github.com/AritoUser/Zig-BLE/releases)
+[![Tests](https://img.shields.io/badge/Tests-191%2F191%20Passing-success.svg)](tests/)
 [![Zero-Allocation](https://img.shields.io/badge/Hot--Path-0%20Bytes%20Heap-blue.svg)](examples/benchmark.zig)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![White Paper](https://img.shields.io/badge/White%20Paper-Architecture%20%26%20Design-orange.svg)](docs/WHITEPAPER.md)
@@ -110,7 +110,7 @@ graph TD
     * Zero-dependency cryptographic primitives implementing AES-128, AES-CMAC, and official Bluetooth Core Spec algorithms (`ah`, `c1`, `s1`, `f4`, `f5`, `f6`, `g2`, `h6`).
     * Full support for LE Secure Connections (LE SC) and legacy pairing verification test vectors.
 11. **Pfeiler 11: SIG Standard Profile Suite (`src/profiles/`)**:
-    * Turnkey, type-safe encoders/decoders for Heart Rate (HRS), Battery (BAS), Device Information (DIS), Current Time (CTS), Health Thermometer (HTS), Blood Pressure (BPS), HID over GATT (HOGP), Environmental Sensing (ESS), Nordic UART (NUS), and Beacons (iBeacon, Eddystone).
+    * Turnkey, type-safe encoders/decoders for Heart Rate (HRS), Battery (BAS), Device Information (DIS), Current Time (CTS), Health Thermometer (HTS), Blood Pressure (BPS), HID over GATT (HOGP), Environmental Sensing (ESS), Nordic UART (NUS), Beacons (iBeacon, Eddystone), Pulse Oximeter (PLXP), Fitness Machine (FTMS), Cycling Power (CPP), and Running Speed & Cadence (RSCP).
 12. **Pfeiler 12: Hardened Zero-Allocation Pairing Agent (`src/agent.zig`)**:
     * Secure `org.bluez.Agent1` implementation with customizable `AgentCallbacks` interface for passkey, PIN code, and authorization confirmations.
     * Secure-by-default behavior safely rejecting unhandled pairing attempts with `org.bluez.Error.Rejected` instead of insecure fallback acceptances.

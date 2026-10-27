@@ -51,6 +51,31 @@ pub const EddystoneUrl = beacon.EddystoneUrl;
 pub const EddystoneUid = beacon.EddystoneUid;
 pub const EddystoneTlm = beacon.EddystoneTlm;
 
+pub const pulse_oximeter = @import("pulse_oximeter.zig");
+pub const PlxFeatures = pulse_oximeter.PlxFeatures;
+pub const PlxMeasurementStatus = pulse_oximeter.PlxMeasurementStatus;
+pub const PlxDeviceAndSensorStatus = pulse_oximeter.PlxDeviceAndSensorStatus;
+pub const PlxSpotCheckMeasurement = pulse_oximeter.PlxSpotCheckMeasurement;
+pub const PlxContinuousMeasurement = pulse_oximeter.PlxContinuousMeasurement;
+
+pub const ftms = @import("ftms.zig");
+pub const IndoorBikeData = ftms.IndoorBikeData;
+pub const IndoorBikeAccumulator = ftms.IndoorBikeAccumulator;
+pub const TreadmillData = ftms.TreadmillData;
+pub const RowerData = ftms.RowerData;
+pub const FitnessMachineControlPoint = ftms.FitnessMachineControlPoint;
+pub const FitnessMachineFeature = ftms.FitnessMachineFeature;
+
+pub const cpp = @import("cpp.zig");
+pub const CyclingPowerMeasurement = cpp.CyclingPowerMeasurement;
+pub const CyclingPowerFeature = cpp.CyclingPowerFeature;
+pub const calculateCadenceRpm = cpp.calculateCadenceRpm;
+pub const CadenceCalculator = cpp.CadenceCalculator;
+
+pub const rscp = @import("rscp.zig");
+pub const RscMeasurement = rscp.RscMeasurement;
+pub const RscFeature = rscp.RscFeature;
+
 test {
     const std = @import("std");
     std.testing.refAllDecls(@This());
@@ -64,4 +89,8 @@ test {
     _ = environmental;
     _ = nordic_uart;
     _ = beacon;
+    _ = pulse_oximeter;
+    _ = ftms;
+    _ = cpp;
+    _ = rscp;
 }
