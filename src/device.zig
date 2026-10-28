@@ -10,7 +10,7 @@ const BlueZ = constants.BlueZ;
 const dbus = if (builtin.os.tag == .linux) @import("dbus/mod.zig") else struct {};
 const Connection = if (builtin.os.tag == .linux) dbus.Connection else struct {};
 const Message = if (builtin.os.tag == .linux) dbus.Message else struct {};
-const DBusError = if (builtin.os.tag == .linux) dbus.DBusError else anyerror;
+const DBusError = if (builtin.os.tag == .linux) dbus.DBusError else error{ NotSupported, AccessDenied, MethodCallFailed, InvalidResponse, NotConnected, Timeout, InvalidArguments };
 const object_manager = @import("bluez/object_manager.zig");
 const DeviceInfo = object_manager.DeviceInfo;
 
@@ -247,7 +247,7 @@ pub const Device = struct {
     /// Reads the current signal strength (RSSI in dBm) of the peripheral.
     /// Returns null if the property is absent or the device is out of radio range.
     pub fn getRSSI(self: *Device) !?i16 {
-        if (builtin.os.tag != .linux) return null;
+        if (builtin.os.tag != .linux) return error.NotSupported;
         var msg = try Connection.createMethodCall(
             BlueZ.service_name,
             self.getObjectPath(),
@@ -273,7 +273,7 @@ pub const Device = struct {
 
     /// Reads the advertised transmit power (TxPower in dBm) of the peripheral.
     pub fn getTxPower(self: *Device) !?i16 {
-        if (builtin.os.tag != .linux) return null;
+        if (builtin.os.tag != .linux) return error.NotSupported;
         var msg = try Connection.createMethodCall(
             BlueZ.service_name,
             self.getObjectPath(),
@@ -297,9 +297,35 @@ pub const Device = struct {
         return null;
     }
 
+    /// Queries the negotiated ATT MTU for this device from BlueZ (`org.bluez.Device1` `MTU`).
+    pub fn getMtu(self: *Device) !u16 {
+        if (builtin.os.tag != .linux) return error.NotSupported;
+        var msg = try Connection.createMethodCall(
+            BlueZ.service_name,
+            self.getObjectPath(),
+            BlueZ.Properties.interface_name,
+            BlueZ.Properties.Methods.Get,
+        );
+        defer msg.deinit();
+
+        var b = msg.builder();
+        try b.appendString(BlueZ.Device1.interface_name);
+        try b.appendString(BlueZ.Device1.Properties.MTU);
+
+        var reply = try self.conn.sendMessage(&msg, 5000);
+        defer reply.deinit();
+
+        var it = reply.iterator();
+        if (it.getVariant()) |*v| {
+            var var_iter = v.*;
+            if (var_iter.getUInt16()) |val| return val;
+        }
+        return error.MtuExchangeFailed;
+    }
+
     /// Reads a boolean D-Bus property from the device.
     pub fn getBoolProperty(self: *Device, prop_name: [:0]const u8) !bool {
-        if (builtin.os.tag != .linux) return false;
+        if (builtin.os.tag != .linux) return error.NotSupported;
         var msg = try Connection.createMethodCall(
             BlueZ.service_name,
             self.getObjectPath(),

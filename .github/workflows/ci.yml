@@ -1,74 +1,77 @@
-name: CI
+name: Zig-BLE CI Pipeline
 
 on:
   push:
     branches: [ main, master ]
   pull_request:
     branches: [ main, master ]
+  workflow_dispatch:
 
 jobs:
-  test-linux:
-    name: Linux Native (Pure Zig 0.17.0)
-    runs-on: ubuntu-latest
+  # ---------------------------------------------------------------------------
+  # 1. Native Build, Unit Tests & Fuzz Smoke Suite (Linux, Windows & macOS)
+  # ---------------------------------------------------------------------------
+  test-matrix:
+    name: Build & Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+
     steps:
-      - name: Checkout code
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
       - name: Setup Zig 0.17.0
-        run: |
-          curl -sLO https://ziglang.org/download/0.17.0/zig-x86_64-linux-0.17.0.tar.xz
-          tar -xf zig-x86_64-linux-0.17.0.tar.xz
-          echo "$PWD/zig-x86_64-linux-0.17.0" >> $GITHUB_PATH
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.17.0
 
-      - name: Verify Zig Version
-        run: zig version
-
-      - name: Run Unit Tests
+      - name: Run Unit & Integration Test Suite (mock backend, no radio)
         run: zig build test --summary all
 
-      - name: Run Fuzz Testing (50,000 iterations)
-        run: |
-          zig build fuzz -- 50000
-          zig build fuzz-dbus -- 50000
+      - name: Run Mock End-to-End Smoke Test (no radio)
+        run: zig build run-mock-e2e
 
-      - name: Pure Zig Cross-Compilation (aarch64-linux without Sysroot)
-        run: zig build -Dtarget=aarch64-linux
+      - name: Run Advertising Fuzzing Suite (50,000 iterations)
+        run: zig build fuzz -- 50000
 
-      - name: Build All Targets & Benchmarks
-        run: |
-          zig build
-          zig build run-bench
+      - name: Run Pure-Zig D-Bus Wire Fuzzing Suite (50,000 iterations)
+        run: zig build fuzz-dbus -- 50000
 
-      - name: Generate API Documentation
+      - name: Run Microbenchmark Suite
+        if: runner.os == 'Linux'
+        run: zig build bench
+
+      - name: Generate HTML Documentation
+        if: runner.os == 'Linux'
         run: zig build docs
 
-  test-cross-platform:
-    name: Cross-Platform Core Validation (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
+  # ---------------------------------------------------------------------------
+  # 2. Cross-Compilation Matrix (Zero-Sysroot Pure Zig Verification)
+  # ---------------------------------------------------------------------------
+  cross-compile:
+    name: Cross-Compile (${{ matrix.target }})
+    runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
-        os: [windows-latest, macos-latest]
+        target:
+          - x86_64-linux-gnu
+          - aarch64-linux-gnu
+          - aarch64-linux-musl
+          - x86_64-windows-msvc
+          - aarch64-macos
+
     steps:
-      - name: Checkout code
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Setup Zig 0.17.0 (macOS)
-        if: runner.os == 'macOS'
-        run: |
-          curl -sLO https://ziglang.org/download/0.17.0/zig-aarch64-macos-0.17.0.tar.xz
-          tar -xf zig-aarch64-macos-0.17.0.tar.xz
-          echo "$PWD/zig-aarch64-macos-0.17.0" >> $GITHUB_PATH
+      - name: Setup Zig 0.17.0
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.17.0
 
-      - name: Setup Zig 0.17.0 (Windows)
-        if: runner.os == 'Windows'
-        run: |
-          Invoke-WebRequest -Uri "https://ziglang.org/download/0.17.0/zig-x86_64-windows-0.17.0.zip" -OutFile "zig.zip"
-          Expand-Archive -Path "zig.zip" -DestinationPath "."
-          $zigPath = (Resolve-Path "zig-x86_64-windows-0.17.0").Path
-          "$zigPath" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-
-      - name: Verify Zig Version
-        run: zig version
-
-      - name: Test Core Library
-        run: zig build test --summary all
+      - name: Cross-Compile Library & CLI Executables
+        run: zig build -Dtarget=${{ matrix.target }}

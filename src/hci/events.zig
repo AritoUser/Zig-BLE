@@ -195,6 +195,46 @@ pub const ExtAdvertisingReportIterator = struct {
     }
 };
 
+/// Entry inside a `Number of Completed Packets` (Event `0x13`) frame.
+pub const CompletedPacketEntry = struct {
+    handle: u16,
+    num_completed_packets: u16,
+};
+
+/// Zero-allocation iterator over `(Connection_Handle, HC_Num_Of_Completed_Packets)` pairs in Event `0x13`.
+pub const CompletedPacketsIterator = struct {
+    payload: []const u8,
+    num_handles: u8,
+    current_index: u8 = 0,
+
+    pub fn init(payload: []const u8) EventParseError!CompletedPacketsIterator {
+        if (payload.len < 1) return EventParseError.BufferTooShort;
+        const n = payload[0];
+        if (payload.len < 1 + @as(usize, n) * 4) return EventParseError.BufferTooShort;
+        return .{
+            .payload = payload[1..],
+            .num_handles = n,
+            .current_index = 0,
+        };
+    }
+
+    pub fn next(self: *CompletedPacketsIterator) ?CompletedPacketEntry {
+        if (self.current_index >= self.num_handles) return null;
+        const idx: usize = self.current_index;
+        const n: usize = self.num_handles;
+        const handle_off = idx * 2;
+        const count_off = n * 2 + idx * 2;
+
+        const handle = std.mem.readInt(u16, self.payload[handle_off..][0..2], .little) & 0x0FFF;
+        const completed = std.mem.readInt(u16, self.payload[count_off..][0..2], .little);
+        self.current_index += 1;
+        return .{
+            .handle = handle,
+            .num_completed_packets = completed,
+        };
+    }
+};
+
 /// High-level parsed HCI event packet.
 pub const HciEvent = union(enum) {
     command_complete: struct {
@@ -213,6 +253,12 @@ pub const HciEvent = union(enum) {
         handle: u16,
         reason: u8,
     },
+    encryption_change: struct {
+        status: constants.Status,
+        handle: u16,
+        encryption_enabled: u8,
+    },
+    number_of_completed_packets: CompletedPacketsIterator,
     le_advertising_report: AdvertisingReportIterator,
     le_extended_advertising_report: ExtAdvertisingReportIterator,
     le_connection_complete: struct {
@@ -226,12 +272,30 @@ pub const HciEvent = union(enum) {
         supervision_timeout: u16,
         master_clock_accuracy: u8,
     },
+    le_enhanced_connection_complete: struct {
+        status: constants.Status,
+        handle: u16,
+        role: u8,
+        peer_address_type: AddressType,
+        peer_address: Address,
+        local_rpa: Address,
+        peer_rpa: Address,
+        conn_interval: u16,
+        conn_latency: u16,
+        supervision_timeout: u16,
+        master_clock_accuracy: u8,
+    },
     le_connection_update_complete: struct {
         status: constants.Status,
         handle: u16,
         conn_interval: u16,
         conn_latency: u16,
         supervision_timeout: u16,
+    },
+    le_long_term_key_request: struct {
+        handle: u16,
+        random_number: u64,
+        encrypted_diversifier: u16,
     },
     le_data_length_change: struct {
         handle: u16,
@@ -315,7 +379,7 @@ pub const HciEvent = union(enum) {
             constants.EventCode.disconnection_complete => {
                 if (params.len < 4) return EventParseError.BufferTooShort;
                 const status: constants.Status = @enumFromInt(params[0]);
-                const handle = std.mem.readInt(u16, params[1..3], .little);
+                const handle = std.mem.readInt(u16, params[1..3], .little) & 0x0FFF;
                 const reason = params[3];
                 return .{
                     .disconnection_complete = .{
@@ -324,6 +388,23 @@ pub const HciEvent = union(enum) {
                         .reason = reason,
                     },
                 };
+            },
+            constants.EventCode.encryption_change => {
+                if (params.len < 4) return EventParseError.BufferTooShort;
+                const status: constants.Status = @enumFromInt(params[0]);
+                const handle = std.mem.readInt(u16, params[1..3], .little) & 0x0FFF;
+                const enc_enabled = params[3];
+                return .{
+                    .encryption_change = .{
+                        .status = status,
+                        .handle = handle,
+                        .encryption_enabled = enc_enabled,
+                    },
+                };
+            },
+            constants.EventCode.number_of_completed_packets => {
+                const it = try CompletedPacketsIterator.init(params);
+                return .{ .number_of_completed_packets = it };
             },
             constants.EventCode.le_meta_event => {
                 if (params.len < 1) return EventParseError.BufferTooShort;
@@ -343,7 +424,7 @@ pub const HciEvent = union(enum) {
                         return .{
                             .le_connection_complete = .{
                                 .status = @enumFromInt(sub_params[0]),
-                                .handle = std.mem.readInt(u16, sub_params[1..3], .little),
+                                .handle = std.mem.readInt(u16, sub_params[1..3], .little) & 0x0FFF,
                                 .role = sub_params[3],
                                 .peer_address_type = if (sub_params[4] == 0) .public else .random,
                                 .peer_address = Address{
@@ -356,15 +437,43 @@ pub const HciEvent = union(enum) {
                             },
                         };
                     },
+                    constants.LeSubevent.enhanced_connection_complete => {
+                        if (sub_params.len < 30) return EventParseError.BufferTooShort;
+                        return .{
+                            .le_enhanced_connection_complete = .{
+                                .status = @enumFromInt(sub_params[0]),
+                                .handle = std.mem.readInt(u16, sub_params[1..3], .little) & 0x0FFF,
+                                .role = sub_params[3],
+                                .peer_address_type = if (sub_params[4] == 0) .public else .random,
+                                .peer_address = Address.fromLittleEndian(sub_params[5..11].*),
+                                .local_rpa = Address.fromLittleEndian(sub_params[11..17].*),
+                                .peer_rpa = Address.fromLittleEndian(sub_params[17..23].*),
+                                .conn_interval = std.mem.readInt(u16, sub_params[23..25], .little),
+                                .conn_latency = std.mem.readInt(u16, sub_params[25..27], .little),
+                                .supervision_timeout = std.mem.readInt(u16, sub_params[27..29], .little),
+                                .master_clock_accuracy = sub_params[29],
+                            },
+                        };
+                    },
                     constants.LeSubevent.connection_update_complete => {
                         if (sub_params.len < 9) return EventParseError.BufferTooShort;
                         return .{
                             .le_connection_update_complete = .{
                                 .status = @enumFromInt(sub_params[0]),
-                                .handle = std.mem.readInt(u16, sub_params[1..3], .little),
+                                .handle = std.mem.readInt(u16, sub_params[1..3], .little) & 0x0FFF,
                                 .conn_interval = std.mem.readInt(u16, sub_params[3..5], .little),
                                 .conn_latency = std.mem.readInt(u16, sub_params[5..7], .little),
                                 .supervision_timeout = std.mem.readInt(u16, sub_params[7..9], .little),
+                            },
+                        };
+                    },
+                    constants.LeSubevent.long_term_key_request => {
+                        if (sub_params.len < 12) return EventParseError.BufferTooShort;
+                        return .{
+                            .le_long_term_key_request = .{
+                                .handle = std.mem.readInt(u16, sub_params[0..2], .little) & 0x0FFF,
+                                .random_number = std.mem.readInt(u64, sub_params[2..10], .little),
+                                .encrypted_diversifier = std.mem.readInt(u16, sub_params[10..12], .little),
                             },
                         };
                     },
@@ -372,7 +481,7 @@ pub const HciEvent = union(enum) {
                         if (sub_params.len < 10) return EventParseError.BufferTooShort;
                         return .{
                             .le_data_length_change = .{
-                                .handle = std.mem.readInt(u16, sub_params[0..2], .little),
+                                .handle = std.mem.readInt(u16, sub_params[0..2], .little) & 0x0FFF,
                                 .max_tx_octets = std.mem.readInt(u16, sub_params[2..4], .little),
                                 .max_tx_time = std.mem.readInt(u16, sub_params[4..6], .little),
                                 .max_rx_octets = std.mem.readInt(u16, sub_params[6..8], .little),
@@ -385,7 +494,7 @@ pub const HciEvent = union(enum) {
                         return .{
                             .le_phy_update_complete = .{
                                 .status = @enumFromInt(sub_params[0]),
-                                .handle = std.mem.readInt(u16, sub_params[1..3], .little),
+                                .handle = std.mem.readInt(u16, sub_params[1..3], .little) & 0x0FFF,
                                 .tx_phy = sub_params[3],
                                 .rx_phy = sub_params[4],
                             },
@@ -447,16 +556,6 @@ test "HciEvent: parse Command Complete" {
 }
 
 test "HciEvent: parse LE Meta Advertising Report" {
-    // Packet indicator: 0x04
-    // Event: 0x3E (LE Meta)
-    // Len: 24 (1B subevent + 1B num + 1B type + 1B addr_type + 6B addr + 1B data_len + 12B data + 1B rssi = 24)
-    // Subevent: 0x02
-    // Num: 0x01
-    // Type: 0x00 (ADV_IND)
-    // AddrType: 0x00 (Public)
-    // Addr: 11:22:33:44:55:66 (LE in packet: 66 55 44 33 22 11)
-    // DataLen: 4 (0x03, 0x09, 'H', 'I')
-    // RSSI: -65 (0xBF = 191)
     const raw_adv = [_]u8{
         0x04, 0x3E, 15, 0x02, 0x01, 0x00, 0x00,
         0x66, 0x55, 0x44, 0x33, 0x22, 0x11, // MAC
@@ -482,7 +581,6 @@ test "HciEvent: parse LE Meta Advertising Report" {
 }
 
 test "HciEvent: parse LE PHY Update Complete" {
-    // 0x04 [Type] 0x3E [Code] 0x06 [Len] 0x0C [Subevent] 0x00 [Status] 0x40 0x00 [Handle] 0x02 [TX PHY: 2M] 0x02 [RX PHY: 2M]
     const raw = [_]u8{ 0x04, 0x3E, 0x06, 0x0C, 0x00, 0x40, 0x00, 0x02, 0x02 };
     const evt = try HciEvent.parse(&raw);
     switch (evt) {
@@ -497,7 +595,6 @@ test "HciEvent: parse LE PHY Update Complete" {
 }
 
 test "HciEvent: parse LE Data Length Change" {
-    // 0x04 0x3E 0x0B 0x07 [Handle: 0x0040] [TxOctets: 251] [TxTime: 2120] [RxOctets: 251] [RxTime: 2120]
     var raw: [14]u8 = undefined;
     raw[0] = 0x04;
     raw[1] = 0x3E;
@@ -523,7 +620,6 @@ test "HciEvent: parse LE Data Length Change" {
 }
 
 test "HciEvent: parse LE Extended Advertising Report" {
-    // Subevent 0x0D: Extended Advertising Report
     var raw: [32]u8 = @splat(0);
     raw[0] = 0x04; // PacketType.event
     raw[1] = 0x3E; // EventCode.le_meta_event
@@ -531,8 +627,7 @@ test "HciEvent: parse LE Extended Advertising Report" {
     raw[3] = 0x0D; // Subevent: extended_advertising_report
     raw[4] = 0x01; // Num reports: 1
 
-    // Report #0 (starts at raw[5]):
-    std.mem.writeInt(u16, raw[5..7], 0x0013, .little); // event_type (connectable + directed + legacy)
+    std.mem.writeInt(u16, raw[5..7], 0x0013, .little); // event_type
     raw[7] = 0x00; // addr_type (public)
     @memcpy(raw[8..14], &[_]u8{ 0x66, 0x55, 0x44, 0x33, 0x22, 0x11 }); // addr (LE)
     raw[14] = 0x03; // primary_phy (Coded)
@@ -558,6 +653,61 @@ test "HciEvent: parse LE Extended Advertising Report" {
             try std.testing.expectEqual(@as(usize, 3), rep.data.len);
             try std.testing.expect(rep.address.eql(try Address.parse("11:22:33:44:55:66")));
             try std.testing.expect(it.next() == null);
+        },
+        else => unreachable,
+    }
+}
+
+test "HciEvent: parse Number of Completed Packets, Encryption Change, LTK Request, and Enhanced Connection Complete" {
+    // 1. Number of Completed Packets (0x13) for 2 handles (0x0040 -> 3 pkts, 0x0041 -> 2 pkts)
+    const raw_ncp = [_]u8{
+        0x04, 0x13, 9, // Event 0x13, len 9
+        0x02, // 2 handles
+        0x40, 0x00, 0x41, 0x00, // handles array
+        0x03, 0x00, 0x02, 0x00, // completed counts array
+    };
+    const evt_ncp = try HciEvent.parse(&raw_ncp);
+    switch (evt_ncp) {
+        .number_of_completed_packets => |mut_it| {
+            var it = mut_it;
+            const e0 = it.next().?;
+            try std.testing.expectEqual(@as(u16, 0x0040), e0.handle);
+            try std.testing.expectEqual(@as(u16, 3), e0.num_completed_packets);
+            const e1 = it.next().?;
+            try std.testing.expectEqual(@as(u16, 0x0041), e1.handle);
+            try std.testing.expectEqual(@as(u16, 2), e1.num_completed_packets);
+            try std.testing.expect(it.next() == null);
+        },
+        else => unreachable,
+    }
+
+    // 2. Encryption Change (0x08)
+    const raw_enc = [_]u8{ 0x04, 0x08, 0x04, 0x00, 0x40, 0x00, 0x01 };
+    const evt_enc = try HciEvent.parse(&raw_enc);
+    switch (evt_enc) {
+        .encryption_change => |ec| {
+            try std.testing.expectEqual(constants.Status.success, ec.status);
+            try std.testing.expectEqual(@as(u16, 0x0040), ec.handle);
+            try std.testing.expectEqual(@as(u8, 1), ec.encryption_enabled);
+        },
+        else => unreachable,
+    }
+
+    // 3. LE Long Term Key Request (0x3E, subevent 0x05)
+    var raw_ltk: [16]u8 = undefined;
+    raw_ltk[0] = 0x04;
+    raw_ltk[1] = 0x3E;
+    raw_ltk[2] = 13;
+    raw_ltk[3] = 0x05;
+    std.mem.writeInt(u16, raw_ltk[4..6], 0x0040, .little);
+    std.mem.writeInt(u64, raw_ltk[6..14], 0x0102030405060708, .little);
+    std.mem.writeInt(u16, raw_ltk[14..16], 0xABCD, .little);
+    const evt_ltk = try HciEvent.parse(&raw_ltk);
+    switch (evt_ltk) {
+        .le_long_term_key_request => |req| {
+            try std.testing.expectEqual(@as(u16, 0x0040), req.handle);
+            try std.testing.expectEqual(@as(u64, 0x0102030405060708), req.random_number);
+            try std.testing.expectEqual(@as(u16, 0xABCD), req.encrypted_diversifier);
         },
         else => unreachable,
     }

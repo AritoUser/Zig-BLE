@@ -9,7 +9,7 @@ const BlueZ = constants.BlueZ;
 
 const dbus = if (builtin.os.tag == .linux) @import("dbus/mod.zig") else struct {};
 const Connection = if (builtin.os.tag == .linux) dbus.Connection else struct {};
-const DBusError = if (builtin.os.tag == .linux) dbus.DBusError else anyerror;
+const DBusError = if (builtin.os.tag == .linux) dbus.DBusError else error{ NotSupported, AccessDenied, MethodCallFailed, InvalidResponse, NotConnected, Timeout, InvalidArguments };
 const object_manager = @import("bluez/object_manager.zig");
 const AdapterInfo = object_manager.AdapterInfo;
 
@@ -35,7 +35,7 @@ pub const Adapter = struct {
 
     /// Finds the first available Bluetooth adapter on the system bus.
     pub fn findDefault(conn: *Connection) !?Adapter {
-        if (builtin.os.tag != .linux) return null;
+        if (builtin.os.tag != .linux) return error.NotSupported;
 
         var reply = try conn.callMethod(
             BlueZ.service_name,
@@ -75,6 +75,7 @@ pub const Adapter = struct {
 
     /// Powers the adapter on or off (Powered = true / false).
     pub fn setPowered(self: *Adapter, powered: bool) !void {
+        if (builtin.os.tag != .linux) return error.NotSupported;
         var msg = try Connection.createMethodCall(
             BlueZ.service_name,
             self.getObjectPath(),
@@ -101,6 +102,7 @@ pub const Adapter = struct {
 
     /// Sets discovery filter parameters (e.g. BLE / LE transport only).
     pub fn setDiscoveryFilter(self: *Adapter, filter: DiscoveryFilter) !void {
+        if (builtin.os.tag != .linux) return error.NotSupported;
         var msg = try Connection.createMethodCall(
             BlueZ.service_name,
             self.getObjectPath(),
@@ -125,6 +127,7 @@ pub const Adapter = struct {
 
     /// Starts BLE discovery / scanning.
     pub fn startDiscovery(self: *Adapter) !void {
+        if (builtin.os.tag != .linux) return error.NotSupported;
         var reply = try self.conn.callMethod(
             BlueZ.service_name,
             self.getObjectPath(),
@@ -137,6 +140,7 @@ pub const Adapter = struct {
 
     /// Stops BLE discovery / scanning.
     pub fn stopDiscovery(self: *Adapter) !void {
+        if (builtin.os.tag != .linux) return error.NotSupported;
         var reply = try self.conn.callMethod(
             BlueZ.service_name,
             self.getObjectPath(),

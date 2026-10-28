@@ -34,6 +34,10 @@ pub const BleError = error{
     BufferTooSmall,
     InvalidParameter,
     OutOfMemory,
+    PoolExhausted,
+    Timeout,
+    DaemonDisconnected,
+    InvalidState,
     IoError,
     GattError,
 
@@ -44,6 +48,17 @@ pub const BleError = error{
     ValueNotAllowed, // ATT 0x13
     MtuExchangeFailed,
     PairingFailed,
+};
+
+/// Configurable timeouts (in milliseconds) for all blocking BLE operations.
+/// Prevents any operation (Connect, Read, Write, Service Discovery, Pairing) from hanging indefinitely.
+pub const TimeoutConfig = struct {
+    connect_ms: u32 = 10_000,
+    discovery_ms: u32 = 10_000,
+    read_ms: u32 = 5_000,
+    write_ms: u32 = 5_000,
+    pair_ms: u32 = 30_000,
+    mtu_exchange_ms: u32 = 5_000,
 };
 
 /// Bond state of a remote BLE peer device.
@@ -60,6 +75,24 @@ pub const IoCapability = enum(u8) {
     keyboard_only = 2,
     no_input_no_output = 3,
     keyboard_display = 4,
+};
+
+/// Callback invoked for Numeric Comparison (when `numeric_value != null`) or Just Works confirmation (`numeric_value == null`).
+/// Return `true` to accept pairing, `false` to reject.
+pub const PairingConfirmCallback = *const fn (numeric_value: ?u32, user_data: ?*anyopaque) bool;
+
+/// Callback invoked when the remote peer displays a passkey and the local host must provide the 6-digit PIN (000000..999999).
+pub const PairingPasskeyCallback = *const fn (user_data: ?*anyopaque) ?u32;
+
+/// Callback invoked when the local host generates a 6-digit passkey that must be displayed to the user.
+pub const PairingDisplayPasskeyCallback = *const fn (passkey: u32, user_data: ?*anyopaque) void;
+
+/// Interactive pairing callbacks for Passkey Entry and Numeric Comparison across backends.
+pub const PairingCallbacks = struct {
+    on_confirm: ?PairingConfirmCallback = null,
+    on_request_passkey: ?PairingPasskeyCallback = null,
+    on_display_passkey: ?PairingDisplayPasskeyCallback = null,
+    user_data: ?*anyopaque = null,
 };
 
 /// BLE GAP Scanning Configuration Filter
@@ -155,6 +188,42 @@ pub const ConnectionEvent = union(enum) {
         reason_code: u8,
     },
     parameters_updated: ConnectionParameters,
+};
+
+/// Callback invoked on connection state changes (connected, disconnected, parameters_updated).
+pub const ConnectionEventCallback = *const fn (event: ConnectionEvent, user_data: ?*anyopaque) void;
+
+/// Direction of a captured BLE packet for PCAP/btsnoop diagnostic export.
+pub const PcapDirection = enum(u8) {
+    host_to_controller = 0,
+    controller_to_host = 1,
+};
+
+/// Optional diagnostic hook for capturing ATT/L2CAP operations in backends.
+pub const PcapHookFn = *const fn (direction: PcapDirection, att_pdu: []const u8, user_data: ?*anyopaque) void;
+
+pub const PcapHook = struct {
+    callback: PcapHookFn,
+    user_data: ?*anyopaque = null,
+
+    pub fn emit(self: PcapHook, direction: PcapDirection, att_pdu: []const u8) void {
+        self.callback(direction, att_pdu, self.user_data);
+    }
+};
+
+/// Cross-platform atomic mutex for thread-safe backend state synchronization.
+pub const SyncMutex = struct {
+    locked: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
+
+    pub fn lock(self: *SyncMutex) void {
+        while (self.locked.cmpxchgWeak(false, true, .acquire, .monotonic) != null) {
+            std.atomic.spinLoopHint();
+        }
+    }
+
+    pub fn unlock(self: *SyncMutex) void {
+        self.locked.store(false, .release);
+    }
 };
 
 test "DiscoveredDevice zero-alloc helper tests" {

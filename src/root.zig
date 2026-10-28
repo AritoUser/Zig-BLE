@@ -31,6 +31,7 @@ pub const BondStore = storage.BondStore;
 pub const BondRecord = storage.BondRecord;
 pub const SecurityKeys = storage.SecurityKeys;
 pub const MemoryBondStore = storage.MemoryBondStore;
+pub const BondStoreError = storage.BondStoreError;
 
 // Direct exports for common core domain types
 pub const types = core.types;
@@ -63,6 +64,11 @@ pub const att = core.att;
 pub const AttErrorCode = core.AttErrorCode;
 pub const AttPdu = core.AttPdu;
 pub const AttError = core.AttError;
+pub const AttBearer = core.AttBearer;
+pub const AttServerAttribute = core.AttServerAttribute;
+pub const ServiceDiscoveryClient = core.ServiceDiscoveryClient;
+pub const LongReadClient = core.LongReadClient;
+pub const QueuedWriteClient = core.QueuedWriteClient;
 pub const CharacteristicProperties = core.CharacteristicProperties;
 pub const CharacteristicProps = core.CharacteristicProps;
 pub const Cccd = core.Cccd;
@@ -114,9 +120,21 @@ pub const MockCharacteristic = backend.MockCharacteristic;
 pub const ScanFilter = backend.ScanFilter;
 pub const DiscoveredDevice = backend.DiscoveredDevice;
 pub const BleError = backend.BleError;
+pub const TimeoutConfig = backend.TimeoutConfig;
 pub const BondState = backend.BondState;
+pub const PairingCallbacks = backend.PairingCallbacks;
+pub const ConnectionEvent = backend.ConnectionEvent;
+pub const ConnectionEventCallback = backend.ConnectionEventCallback;
+pub const PcapDirection = backend.PcapDirection;
+pub const PcapHook = backend.PcapHook;
 pub const WindowsBackend = backend.WindowsBackend;
+pub const WindowsBackendWithConfig = backend.WindowsBackendWithConfig;
+pub const PoolConfig = backend.PoolConfig;
 pub const BluezBackend = backend.BluezBackend;
+pub const HciBackend = backend.HciBackend;
+pub const UartBackend = backend.UartBackend;
+pub const UartFramingMode = backend.UartFramingMode;
+pub const MacosBackend = backend.MacosBackend;
 
 // BT 5.2 Enhanced ATT (EATT)
 pub const eatt = core.eatt;
@@ -131,7 +149,7 @@ pub const BtsnoopPacket = tooling.BtsnoopPacket;
 
 const builtin = @import("builtin");
 
-// High-level BLE Controllers & Clients
+// High-level BLE Controllers & Clients (Linux BlueZ D-Bus API)
 pub const Adapter = if (builtin.os.tag == .linux) @import("adapter.zig").Adapter else struct {
     conn: *Connection,
     object_path: [128]u8 = undefined,
@@ -154,7 +172,7 @@ pub const Adapter = if (builtin.os.tag == .linux) @import("adapter.zig").Adapter
 
     pub fn findDefault(conn: *Connection) !?@This() {
         _ = conn;
-        return null;
+        return error.NotSupported;
     }
 
     pub fn setPowered(self: *@This(), powered: bool) !void {
@@ -216,15 +234,15 @@ pub const Device = if (builtin.os.tag == .linux) @import("device.zig").Device el
     }
     pub fn isPaired(self: *@This()) !bool {
         _ = self;
-        return false;
+        return error.NotSupported;
     }
     pub fn isConnected(self: *@This()) !bool {
         _ = self;
-        return false;
+        return error.NotSupported;
     }
     pub fn isTrusted(self: *@This()) !bool {
         _ = self;
-        return false;
+        return error.NotSupported;
     }
     pub fn setTrusted(self: *@This(), trusted: bool) !void {
         _ = self;
@@ -233,11 +251,15 @@ pub const Device = if (builtin.os.tag == .linux) @import("device.zig").Device el
     }
     pub fn getRSSI(self: *@This()) !?i16 {
         _ = self;
-        return null;
+        return error.NotSupported;
     }
     pub fn getTxPower(self: *@This()) !?i16 {
         _ = self;
-        return null;
+        return error.NotSupported;
+    }
+    pub fn getMtu(self: *@This()) !?u16 {
+        _ = self;
+        return error.NotSupported;
     }
 };
 
@@ -302,7 +324,11 @@ pub const gatt_client = if (builtin.os.tag == .linux) @import("gatt_client.zig")
             _ = self;
             _ = buf;
             _ = timeout_ms;
-            return null;
+            return error.NotSupported;
+        }
+        pub fn getMtu(self: *@This()) !?u16 {
+            _ = self;
+            return error.NotSupported;
         }
     };
     pub const GattDescriptor = struct {
@@ -345,124 +371,21 @@ pub const GattStream = gatt_client.GattStream;
 pub const NotificationEvent = gatt_client.NotificationEvent;
 pub const NotificationDispatcher = gatt_client.NotificationDispatcher;
 
-// Broadcaster & Peripheral Advertising
-pub const advertising_server = if (builtin.os.tag == .linux) @import("advertising.zig") else struct {};
-pub const AdvertisementType = if (builtin.os.tag == .linux) advertising_server.AdvertisementType else enum {
-    peripheral,
-    broadcast,
-    pub fn toSlice(self: @This()) [:0]const u8 {
-        return switch (self) {
-            .peripheral => "peripheral",
-            .broadcast => "broadcast",
-        };
-    }
-};
-pub const AdvertisementIncludes = if (builtin.os.tag == .linux) advertising_server.AdvertisementIncludes else struct {
-    tx_power: bool = true,
-    appearance: bool = false,
-    local_name: bool = true,
-};
-pub const AdvertisementConfig = if (builtin.os.tag == .linux) advertising_server.AdvertisementConfig else struct {
-    type: AdvertisementType = .peripheral,
-    local_name: ?[:0]const u8 = null,
-    service_uuids: []const UUID = &.{},
-    manufacturer_data: ?struct {
-        company_id: u16,
-        data: []const u8,
-    } = null,
-    service_data: ?struct {
-        uuid: UUID,
-        data: []const u8,
-    } = null,
-    discoverable: bool = true,
-    includes: AdvertisementIncludes = .{},
-    appearance: ?u16 = null,
-    duration_s: ?u16 = null,
-    timeout_s: ?u16 = null,
-    secondary_channel: ?core.SecondaryChannel = null,
-    min_interval_ms: ?u32 = null,
-    max_interval_ms: ?u32 = null,
-    tx_power: ?i8 = null,
-};
-pub const Advertisement = if (builtin.os.tag == .linux) advertising_server.Advertisement else struct {
-    conn: *Connection,
-    config: AdvertisementConfig,
-    pub fn init(conn: *Connection, adapter_path: [:0]const u8, adv_path: [:0]const u8, config: AdvertisementConfig) @This() {
-        _ = adapter_path;
-        _ = adv_path;
-        return .{ .conn = conn, .config = config };
-    }
-    pub fn register(self: *@This()) !void {
-        _ = self;
-        return error.NotSupported;
-    }
-    pub fn unregister(self: *@This()) !void {
-        _ = self;
-        return error.NotSupported;
-    }
-};
+// Broadcaster & Peripheral Advertising (Supported on Linux BlueZ & Windows WinRT)
+pub const advertising_server = @import("advertising.zig");
+pub const AdvertisementType = advertising_server.AdvertisementType;
+pub const AdvertisementIncludes = advertising_server.AdvertisementIncludes;
+pub const AdvertisementConfig = advertising_server.AdvertisementConfig;
+pub const Advertisement = advertising_server.Advertisement;
 
-// GATT Server / Peripheral Mode
-pub const gatt_server = if (builtin.os.tag == .linux) @import("gatt_server.zig") else struct {};
-pub const ServerCharacteristicFlags = if (builtin.os.tag == .linux) gatt_server.ServerCharacteristicFlags else struct {
-    read: bool = false,
-    write: bool = false,
-    notify: bool = false,
-    indicate: bool = false,
-    write_without_response: bool = false,
-};
-pub const ServerDescriptorFlags = if (builtin.os.tag == .linux) gatt_server.ServerDescriptorFlags else struct {
-    read: bool = false,
-    write: bool = false,
-};
-pub const ServerDescriptor = if (builtin.os.tag == .linux) gatt_server.ServerDescriptor else struct {
-    pub fn setValue(self: *@This(), val: []const u8) void {
-        _ = self;
-        _ = val;
-    }
-};
-pub const ServerCharacteristic = if (builtin.os.tag == .linux) gatt_server.ServerCharacteristic else struct {
-    pub fn setValue(self: *@This(), val: []const u8) void {
-        _ = self;
-        _ = val;
-    }
-    pub fn setUserDescription(self: *@This(), desc: []const u8) !*ServerDescriptor {
-        _ = self;
-        _ = desc;
-        const S = struct {
-            var desc_instance: ServerDescriptor = .{};
-        };
-        return &S.desc_instance;
-    }
-    pub fn notify(self: *@This(), conn: *Connection, data: []const u8) !void {
-        _ = self;
-        _ = conn;
-        _ = data;
-    }
-};
-pub const ServerService = if (builtin.os.tag == .linux) gatt_server.ServerService else struct {
-    pub fn addCharacteristic(self: *@This(), uuid: UUID, flags: ServerCharacteristicFlags) !*ServerCharacteristic {
-        _ = self;
-        _ = uuid;
-        _ = flags;
-        const S = struct {
-            var char_instance: ServerCharacteristic = .{};
-        };
-        return &S.char_instance;
-    }
-};
-pub const GattApplication = if (builtin.os.tag == .linux) gatt_server.GattApplication else struct {
-    pub fn init(conn: *Connection, adapter_path: [:0]const u8, app_path: [:0]const u8) @This() {
-        _ = conn;
-        _ = adapter_path;
-        _ = app_path;
-        return .{};
-    }
-    pub fn addService(self: *@This(), service: *ServerService) !void {
-        _ = self;
-        _ = service;
-    }
-};
+// GATT Server / Peripheral Mode (Supported on Linux BlueZ & Windows WinRT)
+pub const gatt_server = @import("gatt_server.zig");
+pub const ServerCharacteristicFlags = gatt_server.ServerCharacteristicFlags;
+pub const ServerDescriptorFlags = gatt_server.ServerDescriptorFlags;
+pub const ServerDescriptor = gatt_server.ServerDescriptor;
+pub const ServerCharacteristic = gatt_server.ServerCharacteristic;
+pub const ServerService = gatt_server.ServerService;
+pub const GattApplication = gatt_server.GattApplication;
 
 // Pairing Agent
 pub const agent_mod = @import("agent.zig");
@@ -471,44 +394,9 @@ pub const AgentCallbacks = agent_mod.AgentCallbacks;
 pub const Agent = agent_mod.Agent;
 
 // Unified High-Level Peripheral
-pub const peripheral_mod = if (builtin.os.tag == .linux) @import("peripheral.zig") else struct {};
-pub const PeripheralOptions = if (builtin.os.tag == .linux) peripheral_mod.PeripheralOptions else struct {
-    enable_agent: bool = true,
-    agent_capability: AgentCapability = .no_input_no_output,
-    app_path: [:0]const u8 = "/org/zig_ble/app0",
-    adv_path: [:0]const u8 = "/org/zig_ble/advertisement0",
-    agent_path: [:0]const u8 = "/org/zig_ble/agent",
-};
-pub const Peripheral = if (builtin.os.tag == .linux) peripheral_mod.Peripheral else struct {
-    pub fn init(
-        conn: *Connection,
-        adapter_path: [:0]const u8,
-        adv_config: AdvertisementConfig,
-        options: PeripheralOptions,
-    ) @This() {
-        _ = conn;
-        _ = adapter_path;
-        _ = adv_config;
-        _ = options;
-        return .{};
-    }
-    pub fn addService(self: *@This(), uuid: UUID, primary: bool) !*ServerService {
-        _ = self;
-        _ = uuid;
-        _ = primary;
-        const S = struct {
-            var srv_instance: ServerService = .{};
-        };
-        return &S.srv_instance;
-    }
-    pub fn startBackground(self: *@This()) !void {
-        _ = self;
-        return error.NotSupported;
-    }
-    pub fn stop(self: *@This()) void {
-        _ = self;
-    }
-};
+pub const peripheral_mod = @import("peripheral.zig");
+pub const PeripheralOptions = peripheral_mod.PeripheralOptions;
+pub const Peripheral = peripheral_mod.Peripheral;
 
 // Universal EventLoop & Background Runner
 pub const event_loop_mod = if (builtin.os.tag == .linux) @import("event_loop.zig") else struct {};
@@ -528,65 +416,7 @@ else
 pub const Connection = if (builtin.os.tag == .linux)
     dbus.Connection
 else
-    struct {
-        pub fn initSystem() anyerror!@This() {
-            return error.NotSupported;
-        }
-        pub fn deinit(self: *@This()) void {
-            _ = self;
-        }
-        pub fn addMatch(self: *@This(), rule: [:0]const u8) anyerror!void {
-            _ = self;
-            _ = rule;
-            return error.NotSupported;
-        }
-        pub fn pollSocket(self: *@This(), timeout_ms: c_int) usize {
-            _ = self;
-            _ = timeout_ms;
-            return 0;
-        }
-        pub fn popMessage(self: *@This()) ?wire.Message {
-            _ = self;
-            return null;
-        }
-        pub fn popMatching(
-            self: *@This(),
-            context: anytype,
-            comptime predicate: anytype,
-        ) ?wire.Message {
-            _ = self;
-            _ = context;
-            _ = predicate;
-            return null;
-        }
-        pub fn requeueMessage(self: *@This(), msg: wire.Message) !void {
-            _ = self;
-            _ = msg;
-            return error.NotSupported;
-        }
-        pub fn callMethod(
-            self: *@This(),
-            dest: [:0]const u8,
-            path: [:0]const u8,
-            iface: [:0]const u8,
-            method: [:0]const u8,
-            timeout_ms: u32,
-        ) anyerror!wire.Message {
-            _ = self;
-            _ = dest;
-            _ = path;
-            _ = iface;
-            _ = method;
-            _ = timeout_ms;
-            return error.NotSupported;
-        }
-        pub fn sendMessage(self: *@This(), msg: *wire.Message, timeout_ms: u32) anyerror!wire.Message {
-            _ = self;
-            _ = msg;
-            _ = timeout_ms;
-            return error.NotSupported;
-        }
-    };
+    wire.NonLinuxConnection;
 
 // Standard BLE Profiles & Beacons
 pub const profiles = @import("profiles/mod.zig");
@@ -669,6 +499,12 @@ pub const H4Type = hci.H4Type;
 pub const H4Packet = hci.H4Packet;
 pub const H4StreamParser = hci.H4StreamParser;
 pub const H4Serializer = hci.H4Serializer;
+pub const AclFlowController = hci.AclFlowController;
+pub const h5 = hci.h5;
+pub const H5Header = hci.H5Header;
+pub const H5PacketType = hci.H5PacketType;
+pub const H5StreamParser = hci.H5StreamParser;
+pub const H5Channel = hci.H5Channel;
 pub const subrating = hci.subrating;
 pub const SubrateParameters = hci.SubrateParameters;
 pub const encodeSubrateRequest = hci.encodeSubrateRequest;
@@ -677,16 +513,41 @@ pub const decodeSubrateChangeEvent = hci.decodeSubrateChangeEvent;
 // Bluetooth Cryptography & Security Manager Protocol (SMP)
 pub const crypto = @import("crypto/mod.zig");
 pub const smp = crypto.smp;
+pub const CryptoError = crypto.CryptoError;
 pub const resolveRpa = crypto.resolveRpa;
 pub const generateRpa = crypto.generateRpa;
 pub const signAtt = crypto.signAtt;
 pub const verifyAttSign = crypto.verifyAttSign;
 pub const gattHash = crypto.gattHash;
+pub const h7 = crypto.h7;
 pub const SmpPdu = crypto.SmpPdu;
 pub const SmpOpcode = crypto.SmpOpcode;
 pub const IoCapability = crypto.IoCapability;
 pub const AuthReq = crypto.AuthReq;
 pub const PairingFailedReason = crypto.PairingFailedReason;
+pub const SmpStateMachine = crypto.SmpStateMachine;
+pub const SmpRole = crypto.SmpRole;
+pub const SmpState = crypto.SmpState;
+pub const PairingMethod = crypto.PairingMethod;
+pub const fuzz = @import("fuzz.zig");
+
+test "Non-Linux D-Bus client stubs return error.NotSupported" {
+    if (builtin.os.tag != .linux) {
+        try std.testing.expectError(error.NotSupported, Connection.initSystem());
+        var dummy_conn: Connection = .{};
+        try std.testing.expectError(error.NotSupported, Adapter.findDefault(&dummy_conn));
+        var dev = Device.init(&dummy_conn, "/org/bluez/hci0/dev_00_00_00_00_00_00");
+        try std.testing.expectError(error.NotSupported, dev.isPaired());
+        try std.testing.expectError(error.NotSupported, dev.isConnected());
+        try std.testing.expectError(error.NotSupported, dev.isTrusted());
+        try std.testing.expectError(error.NotSupported, dev.getRSSI());
+        try std.testing.expectError(error.NotSupported, dev.getTxPower());
+        try std.testing.expectError(error.NotSupported, dev.getMtu());
+        var ch: GattCharacteristic = .{};
+        var buf: [16]u8 = undefined;
+        try std.testing.expectError(error.NotSupported, ch.waitForNotification(&buf, 100));
+    }
+}
 
 test {
     std.testing.refAllDecls(@This());
@@ -699,12 +560,13 @@ test {
     _ = hci;
     _ = crypto;
     _ = agent_mod;
+    _ = advertising_server;
+    _ = gatt_server;
+    _ = peripheral_mod;
+    _ = fuzz;
     if (builtin.os.tag == .linux) {
         _ = dbus;
         _ = gatt_client;
-        _ = advertising_server;
-        _ = gatt_server;
-        _ = peripheral_mod;
         _ = event_loop_mod;
     }
 }

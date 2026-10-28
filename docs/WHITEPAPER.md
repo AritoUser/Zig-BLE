@@ -1,17 +1,19 @@
-# Zig-BLE: A Zero-Allocation, Native Bluetooth Low Energy & Protocol Stack for Embedded Linux, Windows & Bare-Metal
+# Zig-BLE: A Pure-Zig Bluetooth Low Energy Library for Linux and Windows
 
-**Technical White Paper | Version 2.2 (v1.1.2 Production Release)**  
+**Technical White Paper | Version 3.0**  
 **Author:** Attila Faust & The Zig-BLE Core Contributors  
-**Target Release:** Zig-BLE v1.1.2 (Zig 0.17.0+)  
+**Target Release:** Zig-BLE v1.2.0 (Zig 0.17.0+)  
 **Repository:** [github.com/AritoUser/Zig-BLE](https://github.com/AritoUser/Zig-BLE)  
 
 ---
 
 ## Abstract
 
-The integration of modern Linux Bluetooth Low Energy (BLE) has been historically constrained by the monolithic architecture of the BlueZ daemon and its reliance on substantial C libraries, particularly libdbus-1 and GLib/GDBus. These C dependencies present substantial challenges for embedded Linux engineers, industrial IoT architects, and systems programmers, including mandatory cross-compilation target sysroots, dynamic linking overhead, thread-safety locking latencies, unpredictable heap allocations, and memory safety vulnerabilities inherent in C-ABI wrappers.
+On Linux, applications talk to the Bluetooth daemon BlueZ over D-Bus. Most libraries do this through C libraries such as `libdbus-1` or GLib/GDBus. These dependencies complicate cross-compilation (target sysroots, glibc version mismatches) and make it harder to ship small, self-contained binaries for embedded Linux and edge gateways.
 
-This paper presents Zig-BLE, an autonomous, pure-Zig Bluetooth Low Energy stack that entirely eliminates C-toolchain dependencies, C-libraries, and C-ABIs. The Zig-BLE protocol has been found to offer a zero-heap, zero-copy architecture for BLE controller management, GATT client/server operations, and custom advertisement broadcasting. This is achieved by implementing the freedesktop.org D-Bus Wire Protocol specification directly over Linux POSIX system calls (`std.posix`, UNIX domain sockets, `SCM_RIGHTS`, and `epoll`). The architectural design, formal wire protocol implementation, dynamic bi-endian decoding mechanics, safe sentinel string slicing, and empirical microbenchmarks are presented. These demonstrate sub-microsecond serialization and dispatch latencies (1.8 ns header decode, 14.6 ns method marshalling, 135 Mop/s packet parsing) with zero heap fragmentation.
+This paper describes Zig-BLE, a Bluetooth Low Energy library written entirely in Zig. On Linux it implements the freedesktop.org D-Bus wire protocol itself, directly on top of POSIX system calls (UNIX domain sockets, `SCM_RIGHTS`, `poll`/`epoll`), and talks to BlueZ without any C library. On Windows it uses the WinRT Bluetooth APIs. Connections, encryption and pairing are still performed by BlueZ or Windows; Zig-BLE replaces the C client libraries, not the operating system's Bluetooth stack.
+
+The paper presents the D-Bus wire implementation (alignment, bi-endian decoding, sentinel-safe string slicing, SASL authentication, file descriptor passing), the BLE components built on it, and microbenchmarks of the protocol parsers. The parsers decode without copying and without heap allocation; a complete advertising packet is parsed in about 5.5 ns. Statically linked, stripped example binaries for `aarch64-linux-musl` are 140–240 KB.
 
 ---
 
@@ -43,23 +45,23 @@ This paper presents Zig-BLE, an autonomous, pure-Zig Bluetooth Low Energy stack 
    - 4.5 Proximity & Broadcast Frames: Apple iBeacon & Google Eddystone
    - 4.6 Bluetooth 5.0+ Extended Advertising & LE Coded PHY (Long Range)
    - 4.7 Direct Linux Kernel L2CAP Connection-Oriented Channels (CoC)
-5. [Empirical Microbenchmarks & Performance Evaluation](#5-empirical-microbenchmarks--performance-evaluation)
+5. [Microbenchmarks & Performance Evaluation](#5-microbenchmarks--performance-evaluation)
    - 5.1 Benchmark Methodology & Test Environment
    - 5.2 Microbenchmark Results
-   - 5.3 Comparative Analysis: Zig-BLE vs. Traditional C Stacks
-   - 5.4 Memory Footprint & Allocation Verification
-6. [Formal Verification, Fuzzing & Safety Guarantees](#6-formal-verification-fuzzing--safety-guarantees)
-   - 6.1 Spatial and Temporal Safety Guarantees in Zig
-   - 6.2 Hardened Boundary Validation & Integer Overflow Prevention
-   - 6.3 Automated Fuzz Testing Suite (Wire & Advertising Engines)
+   - 5.3 Binary Size & What Was Not Measured
+   - 5.4 Heap Usage
+6. [Testing, Fuzzing & Safety Properties](#6-testing-fuzzing--safety-properties)
+   - 6.1 Spatial and Temporal Safety Properties in Zig
+   - 6.2 Boundary Validation
+   - 6.3 Fuzz Testing (Wire & Advertising Engines)
    - 6.4 Continuous Integration Matrix
 7. [Industrial IoT & Embedded Linux Deployment](#7-industrial-iot--embedded-linux-deployment)
    - 7.1 Cross-Compilation Without Sysroots (`aarch64-linux-musl`)
    - 7.2 Minimal Footprint Environments (Alpine Linux, Proxmox LXC, Docker Scratch)
    - 7.3 Edge Gateways & Medical Telemetry
 8. [Conclusion & Future Roadmap](#8-conclusion--future-roadmap)
-   - 8.1 Summary of Contributions
-   - 8.2 Future Roadmap (Raw HCI Sockets, Bluetooth 5.4 PAwR, LE Audio)
+   - 8.1 Summary
+   - 8.2 Future Roadmap
 9. [References](#9-references)
 
 ---
@@ -109,17 +111,19 @@ zig build -Dtarget=aarch64-linux-musl
 
 ### 1.3 Architectural Inefficiencies of Traditional D-Bus Implementations
 
-Beyond build-time friction, `libdbus-1` suffers from severe runtime architectural penalties:
-* **Global Mutex Contention**: Internally, `libdbus-1` serializes message dispatch through global and connection-level mutexes, incurring context-switch latency even in single-threaded architectures.
-* **Aggressive Heap Allocation**: Serializing a standard D-Bus method call or variant map (`a{sv}`) involves dozens of individual heap allocations (`malloc`) for message structures, signature strings, and value containers.
-* **Lack of Zero-Copy Slicing**: When deserializing string values, object paths, or byte arrays, `libdbus-1` allocates new memory buffers and copies data rather than borrowing slices directly from the socket receive buffer.
-* **Memory Footprint**: The shared library overhead of `libdbus-1` and GLib consumes megabytes of RAM, an unacceptable overhead for minimal containers and embedded Linux boards with 32MB–128MB RAM.
+Beyond build-time friction, general-purpose D-Bus libraries make design choices that suit desktops but are less convenient for small, long-running services:
+* **Locking**: `libdbus-1` is thread-safe by design and protects connections with internal locks, even when an application uses a single thread.
+* **Heap allocation**: Building or decoding a message (for example a variant map `a{sv}`) creates many separate heap objects for messages, signatures and values.
+* **Copying**: Decoded strings, object paths and byte arrays are typically copied into new buffers instead of being referenced in the receive buffer.
+* **Dependencies**: Applications must ship or depend on the shared libraries (and, for GDBus, the GLib runtime) on every target.
+
+These costs are small in absolute terms for most applications. The main motivation for Zig-BLE is therefore not raw speed but dependency-free builds, simple deployment and predictable resource use.
 
 ### 1.4 The Zig-BLE Architectural Philosophy
 
 Zig-BLE was designed from first principles to resolve these architectural bottlenecks. Its fundamental engineering invariants are:
-1. **Zero External Dependencies**: 100% Pure Zig. Zero C headers, zero C library links, zero external package dependencies.
-2. **Zero Dynamic Heap Allocations in Hot Paths**: Message reading, signature parsing, alignment calculation, and advertisement parsing execute completely within stack buffers or user-supplied slices.
+1. **No External Dependencies**: Pure Zig. No C headers, no C library links, no external packages. (On Windows, the WinRT system APIs are called directly; `-Dlink-dbus` optionally links the system `libdbus-1` on Linux.)
+2. **No Heap Allocation When Decoding**: Message reading, signature parsing, alignment calculation and advertisement parsing work on stack buffers or caller-supplied slices. Building outgoing D-Bus messages uses a growable buffer from a caller-supplied allocator.
 3. **Direct Kernel Syscall Interfacing**: Direct invocation of Linux kernel facilities (`std.posix.socket`, `std.posix.sendmsg`, `std.posix.recvmsg`, `std.posix.epoll`) bypassing C runtime wrappers.
 4. **Compile-Time Verification**: Leveraging Zig's `comptime` engine for type safety, signature derivation, and structural validation at compile time.
 
@@ -182,7 +186,7 @@ A D-Bus wire message consists of four sequential blocks:
 3. **Header Padding (0 to 7 bytes)**: Padding bytes (`\0`) inserted to align the Message Body to an **8-byte boundary** relative to the beginning of the message.
 4. **Message Body**: Variable-length payload marshaled according to the signature declared in Header Field 8.
 
-Zig-BLE implements this layout in [`src/dbus/wire/header.zig`](file:///d:/Programmieren/Lenguage/Zig/Zig-BLE/src/dbus/wire/header.zig) and [`src/dbus/wire/message.zig`](file:///d:/Programmieren/Lenguage/Zig/Zig-BLE/src/dbus/wire/message.zig). Deserialization is entirely zero-heap: the incoming byte buffer received from the socket is sliced in-place without copying.
+Zig-BLE implements this layout in [`src/dbus/wire/header.zig`](../src/dbus/wire/header.zig) and [`src/dbus/wire/message.zig`](../src/dbus/wire/message.zig). Deserialization is entirely zero-heap: the incoming byte buffer received from the socket is sliced in-place without copying.
 
 ### 2.2 Strict Alignment & Deterministic Padding Computation
 
@@ -191,7 +195,7 @@ The D-Bus specification mandates that every data type must start at an offset di
 * `u32`, `i32`, `f32`, `boolean`, `string`, `object_path`: 4-byte alignment.
 * `u64`, `i64`, `f64`, `struct`, `dict_entry`: 8-byte alignment.
 
-Zig-BLE implements deterministic, branch-free alignment calculation in [`src/dbus/wire/types.zig`](file:///d:/Programmieren/Lenguage/Zig/Zig-BLE/src/dbus/wire/types.zig):
+Zig-BLE implements deterministic, branch-free alignment calculation in [`src/dbus/wire/types.zig`](../src/dbus/wire/types.zig):
 
 $$\text{paddingRequired}(\text{offset}, \text{align}) = (\text{align} - (\text{offset} \pmod{\text{align}})) \pmod{\text{align}}$$
 
@@ -214,7 +218,7 @@ This guarantees that all multi-byte integers, pointers, and structures are acces
 
 While the majority of modern Linux hosts operate in Little-Endian mode (`'l'`, ASCII `0x6C`), the D-Bus specification explicitly permits a peer or broker to send messages in Big-Endian mode (`'B'`, ASCII `0x42`). A robust protocol stack cannot assume host endianness for wire reading.
 
-Zig-BLE implements dynamic bi-endian decoding. The [`FixedHeader`](file:///d:/Programmieren/Lenguage/Zig/Zig-BLE/src/dbus/wire/header.zig) extracts the wire endianness, which is propagated down to the [`MessageIter`](file:///d:/Programmieren/Lenguage/Zig/Zig-BLE/src/dbus/wire/reader.zig):
+Zig-BLE implements dynamic bi-endian decoding. The [`FixedHeader`](../src/dbus/wire/header.zig) extracts the wire endianness, which is propagated down to the [`MessageIter`](../src/dbus/wire/reader.zig):
 
 ```zig
 pub const FixedHeader = struct {
@@ -226,7 +230,7 @@ pub const FixedHeader = struct {
 };
 ```
 
-Within [`MessageIter`](file:///d:/Programmieren/Lenguage/Zig/Zig-BLE/src/dbus/wire/reader.zig), every integer, float, and container length getter decodes data using `self.endian`:
+Within [`MessageIter`](../src/dbus/wire/reader.zig), every integer, float, and container length getter decodes data using `self.endian`:
 ```zig
 pub fn getUInt32(self: *MessageIter) ?u32 {
     if (self.getArgType() != Type.uint32) return null;
@@ -239,7 +243,7 @@ pub fn getUInt32(self: *MessageIter) ?u32 {
 }
 ```
 
-This ensures complete specification compliance across heterogenous multi-architecture systems without incurring branch misprediction penalties on hot paths.
+This lets Zig-BLE decode messages from peers of either byte order, as the specification requires.
 
 ### 2.4 Safe Sentinel String Slicing (`[:0]const u8`)
 
@@ -266,13 +270,13 @@ pub fn getString(self: *MessageIter) ?[:0]const u8 {
     return str;
 }
 ```
-This guarantees that any string returned by the reader is guaranteed to have a trailing `\0` byte within the bounds of the received socket packet, completely eliminating buffer overread exploits.
+Every string returned by the reader therefore has its trailing `\0` byte inside the received buffer, so callers cannot read past the end of the packet through it.
 
 ### 2.5 Autonomous SASL EXTERNAL Handshake & Credentials Hexing
 
 Before messages can be exchanged on the D-Bus UNIX socket, the client must perform a SASL authentication handshake. Under Linux, system services authenticate via `EXTERNAL` authentication, where the kernel transmits client process credentials (`ucred` struct via `SO_PEERCRED`).
 
-Zig-BLE implements this handshake autonomously in [`src/dbus/wire/auth.zig`](file:///d:/Programmieren/Lenguage/Zig/Zig-BLE/src/dbus/wire/auth.zig):
+Zig-BLE implements this handshake autonomously in [`src/dbus/wire/auth.zig`](../src/dbus/wire/auth.zig):
 1. **Initial Null Byte (`\0`)**: Transmitted immediately upon connection to satisfy the UNIX domain socket credential passing requirement.
 2. **UID Hex-Encoding**: The calling process retrieves its effective UID (`std.posix.system.getuid()`), formats it into a decimal ASCII string, and encodes each ASCII character as a two-digit hexadecimal representation.
    * *Example*: UID `1000` $\to$ ASCII `"1000"` $\to$ Hex `"31303030"`.
@@ -302,7 +306,7 @@ sequenceDiagram
 
 Bluetooth Low Energy GATT operations require exchanging file descriptors when using high-throughput streaming channels (such as GATT Characteristic `AcquireWrite` / `AcquireNotify` or L2CAP CoC sockets). This prevents high-bandwidth data (e.g., 50 Hz ECG telemetry or audio) from traversing the D-Bus daemon's message broker.
 
-Passing file descriptors over UNIX domain sockets requires POSIX auxiliary control messages (`cmsg`) with level `SOL_SOCKET` and type `SCM_RIGHTS`. Zig-BLE implements [`sendWithFds`](file:///d:/Programmieren/Lenguage/Zig/Zig-BLE/src/dbus/wire/socket.zig) and [`recvWithFds`](file:///d:/Programmieren/Lenguage/Zig/Zig-BLE/src/dbus/wire/socket.zig) directly over `std.posix.system.sendmsg` and `recvmsg`:
+Passing file descriptors over UNIX domain sockets requires POSIX auxiliary control messages (`cmsg`) with level `SOL_SOCKET` and type `SCM_RIGHTS`. Zig-BLE implements [`sendWithFds`](../src/dbus/wire/socket.zig) and [`recvWithFds`](../src/dbus/wire/socket.zig) directly over `std.posix.system.sendmsg` and `recvmsg`:
 
 ```zig
 pub fn recvWithFds(self: Socket, buf: []u8, out_fds: []std.posix.fd_t) !RecvResult {
@@ -325,7 +329,7 @@ pub fn recvWithFds(self: Socket, buf: []u8, out_fds: []std.posix.fd_t) !RecvResu
 }
 ```
 
-The extracted descriptors are attached directly to the decoded [`Message`](file:///d:/Programmieren/Lenguage/Zig/Zig-BLE/src/dbus/wire/message.zig) instance. When the application extracts a descriptor via `message.extractFd(index)`, ownership is safely transferred, preventing descriptor leaks.
+The extracted descriptors are attached directly to the decoded [`Message`](../src/dbus/wire/message.zig) instance. When the application extracts a descriptor via `message.extractFd(index)`, ownership is safely transferred, preventing descriptor leaks.
 
 ---
 
@@ -405,9 +409,7 @@ Zig-BLE interacts with this hierarchy by dispatching method calls (e.g., `StartD
 
 ### 3.3 Event Loop & Asynchronous I/O Multiplexing (`epoll` / `poll`)
 
-For high-throughput applications, synchronous blocking I/O on the D-Bus socket can lead to priority inversion or missed Bluetooth events. Zig-BLE provides native Linux `epoll` integration in [`src/dbus/wire/connection.zig`](file:///d:/Programmieren/Lenguage/Zig/Zig-BLE/src/dbus/wire/connection.zig).
-
-The connection maintains an event loop capable of edge-triggered or level-triggered notification:
+Blocking reads on the D-Bus socket would stall an application while it waits for Bluetooth events. The connection in [`src/dbus/wire/connection.zig`](../src/dbus/wire/connection.zig) therefore exposes a `poll`-based, non-blocking read step, and [`src/event_loop.zig`](../src/event_loop.zig) provides an `epoll`-based loop for applications that multiplex several file descriptors:
 ```zig
 pub fn pollMessages(self: *Connection, timeout_ms: i32) !usize {
     var pfd = [1]std.posix.pollfd{.{
@@ -429,13 +431,13 @@ This enables seamless integration into event-driven runtime architectures, game 
 
 ### 3.4 128-bit SIMD UUID Representation & Fast Parsing
 
-Bluetooth UUIDs can be represented in 16-bit (0x180D), 32-bit (0x0000180D), or standard 128-bit canonical hex string formats (`"0000180d-0000-1000-8000-00805f9b34fb"`). In telemetry applications processing thousands of advertisement packets per second, parsing string UUIDs into binary integers is a frequent performance bottleneck.
+Bluetooth UUIDs can be represented in 16-bit (0x180D), 32-bit (0x0000180D), or standard 128-bit canonical hex string formats (`"0000180d-0000-1000-8000-00805f9b34fb"`). BlueZ reports UUIDs as strings, so they are parsed frequently.
 
-Zig-BLE implements a vectorized, branchless UUID engine in [`src/core/types.zig`](file:///d:/Programmieren/Lenguage/Zig/Zig-BLE/src/core/types.zig):
+Zig-BLE implements a vectorized, branchless UUID engine in [`src/core/types.zig`](../src/core/types.zig):
 * **Binary Representation**: A 128-bit unsigned integer (`u128`) or `[16]u8` big-endian byte array.
 * **Bluetooth Base UUID Math**: Standard 16-bit and 32-bit UUIDs are mapped into 128-bit space via compile-time constants:
   $$\text{UUID}_{128} = (\text{UUID}_{32} \ll 96) \lor \texttt{0x00000000\_0000\_1000\_8000\_00805F9B34FB}$$
-* **SIMD Hex Conversion**: Fast hexadecimal nibble decoding transforms 36-character hyphenated UUID strings in **3.2 nanoseconds** (over 310 million UUID operations per second).
+* **SIMD Hex Conversion**: Hexadecimal nibbles are decoded with `@Vector` operations; a 36-character hyphenated UUID string is parsed in about **11 ns** (see Section 5).
 
 ### 3.5 Zero-Copy BLE Advertising Engine
 
@@ -443,7 +445,7 @@ The Bluetooth Core Specification (v5.4 / v6.0) defines the Structure of Advertis
 
 $$\text{PDU} = \sum_{i} \left[ \text{Length}_i (1\text{B}) \mathbin{\Vert} \text{AD\_Type}_i (1\text{B}) \mathbin{\Vert} \text{Payload}_i (\text{Length}_i - 1\text{B}) \right]$$
 
-Zig-BLE's [`AdvertisingReport.parse`](file:///d:/Programmieren/Lenguage/Zig/Zig-BLE/src/core/advertising.zig) parses raw advertising packets without dynamic memory allocation:
+Zig-BLE's [`AdvertisingReport.parse`](../src/core/advertising.zig) parses raw advertising packets without dynamic memory allocation:
 ```zig
 pub fn parse(raw_bytes: []const u8) AdvertisingReport {
     var report = AdvertisingReport{ .raw = raw_bytes };
@@ -469,7 +471,7 @@ pub fn parse(raw_bytes: []const u8) AdvertisingReport {
     return report;
 }
 ```
-Strings (such as the Local Name) and byte slices (such as Manufacturer Specific Data or Service Data) point directly into the underlying buffer, achieving a parsing throughput of **135 million packets per second** (7.4 ns per packet).
+Strings (such as the Local Name) and byte slices (such as Manufacturer Specific Data or Service Data) point directly into the underlying buffer. Parsing a complete packet takes about **5.5 ns** (see Section 5).
 
 ---
 
@@ -484,27 +486,27 @@ sequenceDiagram
     autonumber
     participant App as Zig Application
     participant Core as Zig-BLE Core
-    participant Dず as BlueZ D-Bus Daemon
+    participant BlueZ as BlueZ D-Bus Daemon
     participant Remote as BLE Peripheral
 
     App->>Core: adapter.startDiscovery()
-    Core->>Dず: MethodCall: StartDiscovery()
-    Remote-->>Dず: BLE Adv Report
-    Dず-->>Core: Signal: InterfacesAdded (Device1)
+    Core->>BlueZ: MethodCall: StartDiscovery()
+    Remote-->>BlueZ: BLE Adv Report
+    BlueZ-->>Core: Signal: InterfacesAdded (Device1)
     Core-->>App: onDeviceDiscovered(device)
     
     App->>Core: device.connect()
-    Core->>Dず: MethodCall: Connect()
-    Dず-->>Remote: LL Connect Indication
-    Dず-->>Core: MethodReturn: Success
+    Core->>BlueZ: MethodCall: Connect()
+    BlueZ-->>Remote: LL Connect Indication
+    BlueZ-->>Core: MethodReturn: Success
 
     App->>Core: device.discoverGatt()
-    Core->>Dず: Query ObjectManager Tree
+    Core->>BlueZ: Query ObjectManager Tree
     Core-->>App: Array of GattService & GattCharacteristic
 
     App->>Core: characteristic.readValue()
-    Core->>Dず: MethodCall: ReadValue(flags)
-    Dず-->>Core: MethodReturn: [Payload Bytes]
+    Core->>BlueZ: MethodCall: ReadValue(flags)
+    BlueZ-->>Core: MethodReturn: [Payload Bytes]
     Core-->>App: [:0]const u8 or []const u8
 ```
 
@@ -531,7 +533,7 @@ const mtu = res.mtu;     // e.g., 512 bytes
 var writer = std.fs.File{ .handle = pipe_fd };
 try writer.writeAll(firmware_chunk);
 ```
-Zig-BLE extracts this descriptor directly from the D-Bus message control buffer (`SCM_RIGHTS`) without calling intermediate C wrapper functions. The resulting socket delivers raw, wire-speed kernel throughput directly to the controller's L2CAP channel.
+Zig-BLE extracts this descriptor directly from the D-Bus message control buffer (`SCM_RIGHTS`) without calling intermediate C wrapper functions. Data written to the socket goes to BlueZ without a D-Bus round trip per packet.
 
 ### 4.4 Pre-Built GATT Standard Profiles (HRP, BAS, ESS, NUS)
 
@@ -568,7 +570,7 @@ Beyond connection-oriented GATT profiles, Zig-BLE incorporates native builders a
 ### 4.6 Bluetooth 5.0+ Extended Advertising & LE Coded PHY (Long Range)
 
 Zig-BLE extends the advertising engine to support Bluetooth 5.0+ Extended Advertising and Secondary Advertising Channels via BlueZ's `LEAdvertisingManager1`:
-* **Secondary Channel Configuration**: Supports `.one_m` (1 Msym/s uncoded), `.two_m` (2 Msym/s high-throughput), and `.coded` (LE Coded PHY S=2 or S=8 for 1+ kilometer Long Range industrial transmission).
+* **Secondary Channel Configuration**: Supports `.one_m` (1 Msym/s uncoded), `.two_m` (2 Msym/s high-throughput), and `.coded` (LE Coded PHY S=2 or S=8 for long range).
 * **Primary PHY Selection**: Allows specifying `.le_1m` or `.le_coded` for primary advertising packets on channels 37, 38, and 39.
 * **Interval Parsing & Control**: Exposes millisecond interval controls (`min_interval_ms`, `max_interval_ms`) dynamically mapped to BlueZ `MinInterval` / `MaxInterval` dictionary properties.
 
@@ -579,123 +581,101 @@ While GATT is ideal for small, structured attribute access, high-throughput poin
 Zig-BLE introduces `L2capSocket` in `src/l2cap/socket.zig`:
 * **Kernel-Level Socket**: Opens a native Linux socket with domain `AF_BLUETOOTH` (`31`) and protocol `BTPROTO_L2CAP` (`0`).
 * **Protocol Service Multiplexer (PSM)**: Binds or connects directly to dynamic LE PSM endpoints ($0x1001 \dots 0xFFFF$) using the POSIX `sockaddr_l2` structure with `bdaddr_type = BDADDR_LE_PUBLIC` or `BDADDR_LE_RANDOM`.
-* **Zero-Allocation Streaming**: Provides direct POSIX `read()` and `write()` methods with zero buffer copies and deterministic kernel backpressure, achieving maximum physical BLE throughput.
+* **Zero-Allocation Streaming**: Provides direct POSIX `read()` and `write()` methods without intermediate buffers; flow control is handled by the kernel.
 
 ---
 
-## 5. Empirical Microbenchmarks & Performance Evaluation
+## 5. Microbenchmarks & Performance Evaluation
 
 ### 5.1 Benchmark Methodology & Test Environment
 
-To rigorously evaluate the performance of Zig-BLE, a microbenchmark suite was constructed in [`examples/benchmark.zig`](file:///d:/Programmieren/Lenguage/Zig/Zig-BLE/examples/benchmark.zig). Testing was conducted under the following controlled environment:
-* **Host Platform**: Linux (Ubuntu 24.04 LTS / Proxmox CT Container / Kernel 6.8+).
-* **Compiler**: Zig 0.16.0 ReleaseFast mode (`-O ReleaseFast`).
-* **Timing Mechanism**: Hardware Monotonic Clock (`CLOCK_MONOTONIC` via `clock_gettime`, sub-nanosecond precision).
-* **Warmup & Iteration Count**: 1,000,000 to 10,000,000 iterations per benchmark target to guarantee statistically stable cache occupancy and branch predictor saturation.
+The microbenchmark suite lives in [`examples/benchmark.zig`](../examples/benchmark.zig) and runs with `zig build run-bench`.
+* **Host**: AMD Ryzen 9 9950X3D, Windows 11.
+* **Compiler**: Zig 0.17.0, `ReleaseFast`, single thread.
+* **Timing**: `QueryPerformanceCounter` on Windows, `CLOCK_MONOTONIC` on Linux.
+* **Method**: 1,000,000 to 10,000,000 iterations per target. Inputs are modified in every iteration and results are passed to `std.mem.doNotOptimizeAway`, so the compiler cannot compute the result once and reuse it. The suite was run three times; the table reports the median and the range.
 
 ### 5.2 Microbenchmark Results
 
-Tested on AMD64 hardware in `ReleaseFast` optimization mode across critical Bluetooth Core Spec v5.4/v6.0 and wire paths:
+| Benchmark Target | What is measured | Median (ns/op) | Range, 3 runs (ns/op) |
+| :--- | :--- | ---: | ---: |
+| **AdStructure ServiceData16** | 16-bit UUID + payload view extraction | 0.50 | 0.48 – 0.53 |
+| **CCCD Encode/Decode** | Notify/indicate flag codec | 0.58 | 0.58 – 0.59 |
+| **Address Parse & Classify** | 48-bit address string parse + classification | 0.75 | 0.71 – 0.80 |
+| **Assigned Numbers Registry** | SIG service UUID → name lookup | 0.85 | 0.81 – 0.87 |
+| **ACL Frame Reassembler** | Single-fragment L2CAP reassembly | 0.88 | 0.86 – 0.90 |
+| **UUID Format to String** | 128-bit UUID → 36-char canonical string | 1.2 | 1.2 – 1.2 |
+| **D-Bus MessageIter** | Wire payload argument iteration | 2.0 | 1.9 – 2.1 |
+| **D-Bus Message.finalize** | Header serialization | 2.6 | 2.5 – 2.9 |
+| **H4 UART Stream Parser** | H4 frame state machine | 5.1 | 5.1 – 6.0 |
+| **AdvertisingReport Parse** | Complete packet: name, manufacturer data, appearance | 5.5 | 5.4 – 5.6 |
+| **GATT Long Write** | Split 60 bytes into Prepare Writes + reassemble in server queue | 8.1 | 8.0 – 8.6 |
+| **UUID Flat 32-char SIMD** | 32 hex chars → 128-bit UUID via `@Vector` | 11.0 | 11.0 – 11.2 |
+| **UUID Canonical SIMD** | 36-char hyphenated string → 128-bit UUID | 11.4 | 11.3 – 11.5 |
+| **BondStore Deserialize** | Binary NVS image parse + verification (`ZBGR`) | 11.9 | 11.8 – 13.0 |
+| **AdIterator TLV Walk** | Walk all elements of an advertising packet | 19.7 | 19.6 – 21.1 |
 
-| Benchmark Target | Metric Description | Iterations | Total Time | Latency (ns/op) | Throughput (Mop/s) | Dynamic Allocations |
-| :--- | :--- | :---: | :---: | :---: | :---: | :---: |
-| **AdStructure ServiceData16** | Zero-copy 16-bit UUID + payload view extraction | 5,000,000 | 2.33 ms | **0.47 ns** | **2,144.6 Mop/s** | **0** |
-| **CCCD Encode/Decode** | Bitmask validation, notify/indicate flag codec | 10,000,000 | 5.70 ms | **0.57 ns** | **1,755.8 Mop/s** | **0** |
-| **Assigned Numbers Registry** | Bluetooth SIG standard UUID resolution | 5,000,000 | 3.00 ms | **0.60 ns** | **1,667.0 Mop/s** | **0** |
-| **Address Parse & Classify** | EUI-48 MAC string parse + classification | 3,000,000 | 2.09 ms | **0.70 ns** | **1,433.3 Mop/s** | **0** |
-| **ACL Frame Reassembler** | Zero-alloc L2CAP PB-flag multi-fragment engine | 5,000,000 | 5.08 ms | **1.02 ns** | **984.6 Mop/s** | **0** |
-| **UUID Format to String** | 128-bit integer $\to$ 36-char canonical string | 2,000,000 | 2.25 ms | **1.13 ns** | **888.0 Mop/s** | **0** |
-| **D-Bus MessageIter** | Zero-copy wire payload argument iteration | 3,000,000 | 6.97 ms | **2.32 ns** | **430.7 Mop/s** | **0** |
-| **AdIterator TLV Walk** | LTV structure walking over raw advertising frames| 5,000,000 | 13.89 ms | **2.78 ns** | **359.9 Mop/s** | **0** |
-| **D-Bus Message.finalize** | Single-pass L1 stack header serialization | 2,000,000 | 6.35 ms | **3.18 ns** | **314.9 Mop/s** | **0** |
-| **AdvertisingReport Parse** | Complete packet parse, name, mfg, appearance | 2,000,000 | 15.30 ms | **7.65 ns** | **130.7 Mop/s** | **0** |
-| **H4 UART Stream Parser** | Frame state machine (Command, ACL, Event, ISO) | 5,000,000 | 42.44 ms | **8.49 ns** | **117.8 Mop/s** | **0** |
-| **UUID Flat 32-char SIMD** | Hex string $\to$ 128-bit UUID via `@Vector` | 2,000,000 | 21.29 ms | **10.64 ns** | **93.9 Mop/s** | **0** |
-| **BondStore Deserialize** | Binary NVS image parse + verification (`ZBGR`) | 2,000,000 | 26.34 ms | **13.17 ns** | **75.9 Mop/s** | **0** |
-| **UUID Canonical SIMD** | 36-char hyphenated string $\to$ 128-bit UUID | 2,000,000 | 25.45 ms | **12.72 ns** | **78.6 Mop/s** | **0** |
-| **GATT Long Write Chunker** | Slicing 500B payload + server queue buffering | 1,000,000 | 1.00 ms | **1.00 ns** | **1,000.0 Mop/s** | **0** |
+**Interpretation:**
+* Results below about 1 ns correspond to a few CPU cycles. They show that an operation is effectively free, but differences between them are dominated by measurement noise and compiler optimization and should not be compared.
+* In a real BLE application the radio and the operating system set the pace: a connection interval is at least 7.5 ms, a D-Bus round trip to BlueZ takes tens of microseconds, and a busy scanner sees a few thousand advertising packets per second. At ~5.5 ns per packet, parsing uses far less than 0.01 % of one CPU core. The parser speed is therefore a guarantee of negligible overhead, not a source of higher over-the-air throughput.
+* Results depend on CPU, operating system and power management. Run `zig build run-bench` several times on the target hardware for representative numbers.
 
-```
-Benchmark Throughput Comparison (Millions of Operations / Second)
-================================================================================
-AdStructure ServiceData16      [2144.6 Mop/s] ####################################
-Cccd.encode + Cccd.decode      [1755.8 Mop/s] #############################
-AssignedNumbers Registry       [1667.0 Mop/s] ############################
-Address Parse & Classify       [1433.3 Mop/s] #######################
-GATT Long Write Engine         [1000.0 Mop/s] ################
-AclReassembler (Zero-Copy)     [ 984.6 Mop/s] ###############
-UUID Format to String          [ 888.0 Mop/s] ##############
-D-Bus MessageIter (Zero-Copy)  [ 430.7 Mop/s] #######
-AdIterator TLV Walk            [ 359.9 Mop/s] ######
-D-Bus Wire Message.finalize    [ 314.9 Mop/s] #####
-AdvertisingReport.parse        [ 130.7 Mop/s] ##
-H4StreamParser (UART Framer)   [ 117.8 Mop/s] ##
-UUID Flat 32-char SIMD         [  93.9 Mop/s] #
-BondStore NVS Deserialize      [  75.9 Mop/s] #
-================================================================================
-```
+### 5.3 Binary Size & What Was Not Measured
 
-### 5.3 Comparative Analysis: Zig-BLE vs. Traditional C Stacks
+**Binary size (measured).** The examples built with `zig build -Dtarget=aarch64-linux-musl -Doptimize=ReleaseSmall` are statically linked and stripped:
 
-```mermaid
-graph LR
-    subgraph libdbus-1 / GLib
-        M1[Malloc Message] --> L1[Acquire Mutex]
-        L1 --> C1[Copy Payload]
-        C1 --> M2[Malloc Variant]
-        M2 --> S1[Sendmsg]
-        S1 --> R1[Release Mutex]
-    end
+| Executable | Size |
+| :--- | ---: |
+| `ble-scanner` | 173 KB |
+| `ble-heart-rate` (peripheral) | 192 KB |
+| `ble-raw-hci` | 143 KB |
+| `Zig_BLE` (demo CLI) | 232 KB |
 
-    subgraph Zig-BLE Engine
-        ZB1[Stack Buffer Slicing] --> ZB2[Direct Zero-Copy sendmsg]
-    end
-```
+`x86_64-linux` builds are within a few percent of these sizes.
 
-When compared against `libdbus-1` and `GDBus`:
-1. **Serialization Latency**: Where `libdbus-1` requires **450–1,200 ns** to allocate, populate, and marshal a method call with three arguments due to multiple heap allocations and mutex locks, Zig-BLE completes the same operation in **14.6 ns**—an improvement of **30x to 80x**.
-2. **Binary Footprint**: An executable linking `libdbus-1` and GLib incurs a dynamic dependency tree exceeding **4.5 MB** of shared libraries. A statically compiled Zig-BLE executable on Linux x86_64 or ARM64 produces a fully self-contained binary of **~280 KB** (stripped).
-3. **Startup Time**: Zig-BLE initializes its socket, completes SASL authentication, and queries the BlueZ object manager in under **1.2 milliseconds**, compared to **18–35 milliseconds** for a typical GLib/GDBus initialization loop.
+**Not measured.** No benchmarks of other libraries (`libdbus-1`, GDBus, `btleplug`, `SimpleBLE`, `bleak`) were run with the same inputs, and no end-to-end measurements (startup time, notifications per second, write-to-notify latency over a real link) exist yet. Earlier versions of this paper quoted figures for these comparisons; they were estimates and have been removed. A like-for-like end-to-end comparison on the same hardware and peer device is planned.
 
-### 5.4 Memory Footprint & Allocation Verification
+### 5.4 Heap Usage
 
-To prove the zero-allocation guarantee, the entire test suite was executed against Zig's `std.testing.FailingAllocator` and verified using `std.heap.GeneralPurposeAllocator`:
-* In hot-path serialization (`MessageWriter`), the reader iterator (`MessageIter`), and advertising report processing, the total number of heap allocations recorded was **precisely zero**.
-* Stack allocation is bounded: the header field marshaling buffer in `Message.finalize()` uses a deterministic 2,048-byte stack array, preventing unbounded stack consumption.
+* The decoding paths (`MessageIter`, header parsing, advertising parsing, ATT/SMP/HCI/H4 decoders, ACL reassembly) take no allocator and therefore cannot allocate on the heap. This is guaranteed by construction, not by measurement.
+* Building outgoing D-Bus messages uses `ByteBuffer`, a growable buffer backed by a caller-supplied allocator. It can be pre-sized with `ByteBuffer.initCapacity`, or backed by a fixed buffer allocator to avoid the general-purpose heap.
+* The Windows and BlueZ backends keep devices, characteristics and subscriptions in fixed-size pools.
+* Stack usage is bounded: the header field marshaling buffer in `Message.finalize()` is a fixed 2,048-byte stack array.
 
 ---
 
-## 6. Formal Verification, Fuzzing & Safety Guarantees
+## 6. Testing, Fuzzing & Safety Properties
 
-### 6.1 Spatial and Temporal Safety Guarantees in Zig
+### 6.1 Spatial and Temporal Safety Properties in Zig
 
-Unlike C implementations that are vulnerable to buffer overflows, off-by-one errors, and use-after-free conditions, Zig-BLE leverages the language safety features of Zig:
-* **Slice Bounds Checking**: Every access into wire buffers is automatically bounds-checked at runtime in Debug and ReleaseSafe modes.
-* **Spatial Memory Safety**: Pointers cannot be converted arbitrarily; pointer arithmetic is restricted, and slices retain length information.
-* **No Undefined Behavior**: Integer truncation and addition wrap-around are strictly explicit (`+%`, `*%`, or explicit cast validation).
-* **Safe Sentinel Semantics**: The parser guarantees that all `[:0]const u8` references terminate at an actual null byte verified within the buffer boundaries.
+Zig-BLE relies on Zig's language features to avoid common C memory errors:
+* **Slice Bounds Checking**: Every access into wire buffers is bounds-checked at runtime in `Debug` and `ReleaseSafe` builds. In `ReleaseFast` and `ReleaseSmall` these checks are removed, so the parsers additionally validate lengths explicitly before every access.
+* **Slices carry their length**: Pointer arithmetic is restricted, and buffers are passed as slices rather than raw pointers.
+* **Explicit overflow behavior**: Wrapping arithmetic must be requested explicitly (`+%`, `*%`); ordinary integer overflow is detected in safe build modes.
+* **Sentinel Semantics**: All `[:0]const u8` values returned by the D-Bus reader end at a null byte verified to lie inside the buffer.
 
-### 6.2 Hardened Boundary Validation & Integer Overflow Prevention
+### 6.2 Boundary Validation
 
-When parsing untrusted wire packets received from the network or local IPC, malicious peers can attempt to trigger buffer overreads by supplying falsified length fields:
-* A 32-bit `body_length` set to `0xFFFFFFFF`.
-* Nested container signatures exceeding maximum D-Bus recursion depth (32 levels).
-* Array byte sizes that do not align with item size requirements.
+When parsing untrusted packets, a malicious peer can try to trigger out-of-bounds reads with falsified length fields, for example:
+* A 32-bit `body_length` of `0xFFFFFFFF`.
+* Strings or arrays whose declared length exceeds the remaining buffer.
+* Array byte sizes that do not match the element alignment.
 
-Zig-BLE implements rigorous boundary validation in [`src/dbus/wire/reader.zig`](file:///d:/Programmieren/Lenguage/Zig/Zig-BLE/src/dbus/wire/reader.zig). If `offset + len > end_offset` or if integer addition overflows, the iterator returns `null` or raises a clean error, never accessing out-of-bounds memory.
+[`src/dbus/wire/reader.zig`](../src/dbus/wire/reader.zig) checks `offset + len` against the end of the buffer before every read and returns `null` or an error instead of reading out of bounds. An explicit limit on container nesting depth (the D-Bus specification allows at most 32 levels) is not enforced yet.
 
-### 6.3 Automated Fuzz Testing Suite (Wire & Advertising Engines)
+### 6.3 Fuzz Testing (Wire & Advertising Engines)
 
-To formally verify parser stability against adversarial and corrupted payloads, Zig-BLE incorporates an automated fuzz testing harness:
-* **D-Bus Wire Engine Fuzzer (`build fuzz-dbus`)**: Generates arbitrary byte mutations across fixed headers, header field arrays, variant types, and signature strings. Over **200,000 cycles** of randomized fuzz testing were executed with zero panics, zero segmentation faults, and zero memory leaks.
-* **Advertising Engine Fuzzer (`build fuzz`)**: Generates randomized LTV advertising packets with corrupted length fields, truncated UTF-8 strings, and invalid AD types. Over **500,000 cycles** were executed with 100% graceful rejection of invalid frames.
+Zig-BLE includes randomized fuzz harnesses for its two most exposed parsers:
+* **D-Bus wire fuzzer (`zig build fuzz-dbus`)**: Random mutations of fixed headers, header field arrays, variants and signatures. Default: 200,000 iterations.
+* **Advertising fuzzer (`zig build fuzz`)**: Random advertising packets with corrupted length fields, truncated strings and invalid AD types. Default: 500,000 iterations.
+
+Both run without panics or out-of-bounds accesses. This is randomized testing, not formal verification; the ATT, SMP, HCI-event, H4 and L2CAP signaling parsers are covered by unit and edge-case tests but not yet fuzzed.
 
 ### 6.4 Continuous Integration Matrix
 
-Every commit and pull request to the Zig-BLE repository is automatically validated across a cross-platform GitHub Actions matrix running official **Zig 0.16.0**:
-* **Ubuntu Linux (x86_64)**: Unit tests (54/54 passed), fuzz testing (100,000 iterations), cross-compilation targeting `aarch64-linux`, full benchmark suite execution, and documentation generation.
-* **macOS (aarch64 / Apple Silicon)**: Core cross-platform library and type engine validation.
-* **Windows (x86_64)**: Core cross-platform library validation under native PowerShell.
+Every push and pull request runs on GitHub Actions with Zig 0.17.0:
+* **Ubuntu Linux (x86_64)**: all unit and end-to-end tests, both fuzzers (50,000 iterations each), cross-compilation to `aarch64-linux`, the benchmark suite and documentation generation.
+* **macOS (aarch64)** and **Windows (x86_64)**: unit tests of the core library.
 
 ---
 
@@ -703,19 +683,18 @@ Every commit and pull request to the Zig-BLE repository is automatically validat
 
 ### 7.1 Cross-Compilation Without Sysroots (`aarch64-linux-musl`)
 
-In industrial automation and smart infrastructure, single-board computers (SBCs) such as Raspberry Pi CM4, BeagleBone Black, Toradex Colibri, and custom i.MX8 boards are prevalent. Traditional C development mandates setting up complex cross-toolchains (e.g., `aarch64-linux-gnu-gcc`) and maintaining matching sysroots with `libdbus-1-dev`.
+Single-board computers such as the Raspberry Pi CM4, BeagleBone Black, Toradex Colibri or custom i.MX8 boards are common in industrial automation. With C libraries, targeting them requires a cross-toolchain (e.g. `aarch64-linux-gnu-gcc`) and a sysroot containing `libdbus-1-dev`.
 
-With Zig-BLE, compiling a fully static, standalone binary for a remote ARM64 Linux device requires only:
+With Zig-BLE, building a static, standalone binary for an ARM64 Linux device requires only:
 ```bash
 zig build -Dtarget=aarch64-linux-musl -Doptimize=ReleaseSmall
 ```
-The resulting executable has **zero shared library dependencies** (`ldd` reports "not a dynamic executable") and can be copied directly to the target system via `scp` or flashed into raw read-only root filesystems.
+The result is a statically linked executable of roughly 140–240 KB (see Section 5.3) that can be copied to the target with `scp` or placed in a read-only root filesystem.
 
 ### 7.2 Minimal Footprint Environments (Alpine Linux, Proxmox LXC, Docker Scratch)
 
-Containerized edge workloads often prioritize minimal image sizes:
-* **Docker Scratch**: Because Zig-BLE can compile with `musl` or freestanding Linux targets, applications can be deployed in a `FROM scratch` container consisting of a single binary. Total container image size: **< 1.5 MB**.
-* **Alpine Linux / Proxmox LXC**: Runs without installing `dbus-dev`, `glib-dev`, or `build-essential`. The container only requires the system bus socket to be mounted:
+* **Docker Scratch**: Because the binary is static, an application can run in a `FROM scratch` container that contains only the executable.
+* **Alpine Linux / Proxmox LXC**: No `dbus-dev`, `glib-dev` or `build-essential` packages are needed. The container only needs access to the host's system bus socket (and BlueZ running on the host):
   ```bash
   # Proxmox / LXC configuration
   lxc.mount.entry = /var/run/dbus var/run/dbus none bind,create=dir 0 0
@@ -723,47 +702,33 @@ Containerized edge workloads often prioritize minimal image sizes:
 
 ### 7.3 Edge Gateways & Medical Telemetry
 
-In medical telemetry (e.g., Continuous Glucose Monitors, ECG patches, pulse oximeters) and industrial sensor arrays, gateways must maintain stable connections with dozens of peripheral sensors simultaneously. 
-
-Zig-BLE provides:
-1. **Predictable Memory Footprint**: Because no dynamic allocations occur during advertisement processing or GATT characteristic polling, memory consumption remains perfectly flat over months of continuous operation, eliminating OOM killer events.
-2. **Deterministic Latency**: Eliminating `libdbus` mutex locks ensures that notification events received from BLE sensors are processed with deterministic sub-millisecond dispatch times.
-3. **Resilience to Bus Restarts**: Autonomous connection state management detects D-Bus broker disconnects or controller resets and provides clean recovery hooks.
+Gateways for medical telemetry (glucose monitors, ECG patches, pulse oximeters) and industrial sensors often stay connected to many peripherals for long periods. Zig-BLE helps here in three ways:
+1. **Bounded memory**: Decoding does not allocate, and the backends use fixed-size pools, so memory use does not grow with the number of packets processed. Long-duration soak tests have not been published yet.
+2. **No garbage collector**: Unlike runtimes with garbage collection, there are no collection pauses in the notification path.
+3. **BlueZ restart detection**: The BlueZ backend subscribes to `NameOwnerChanged` and `PropertiesChanged` signals to detect `bluetoothd` restarts and disconnected devices, so applications can react.
 
 ---
 
 ## 8. Conclusion & Future Roadmap
 
-### 8.1 Summary of Contributions
+### 8.1 Summary
 
-Zig-BLE v1.0.0 demonstrates that high-performance, complex system IPC, hardware orchestration, and Bluetooth Low Energy protocols can be unified in a modern systems programming language without relying on legacy C libraries, external daemons, or unpredictable runtime allocations.
+Zig-BLE shows that a BLE library for Linux and Windows can be written entirely in Zig, without C client libraries such as `libdbus-1` or GLib. As of v1.2.0 it provides:
+* **Linux (BlueZ)**: a pure-Zig D-Bus wire client; scanning, connecting, GATT read/write/notifications, pairing via a BlueZ agent, GATT server and advertising; file-descriptor based streaming (`AcquireNotify`/`AcquireWrite`) and L2CAP CoC sockets.
+* **Windows 11 (WinRT)**: scanning, connecting, service discovery and GATT read/write/notifications. Pairing and the peripheral role are not implemented yet.
+* **A platform-independent protocol toolkit**: advertising, ATT/GATT, SMP, HCI, H4 and L2CAP encoders and decoders, the Bluetooth cryptographic functions, a bond store, SIG profiles (Heart Rate, Battery, Device Information, Current Time, Health Thermometer, Blood Pressure, HID, Environmental Sensing, Pulse Oximeter, Fitness Machine, Cycling Power, Running Speed & Cadence, Nordic UART, iBeacon, Eddystone) and a Wireshark PCAP writer.
+* **Simple deployment**: static binaries of 140–240 KB, cross-compiled without sysroots.
+* **Hardware validation**: verified over the air on Windows 11 against a Samsung Galaxy S25 Ultra (8 services, 38 characteristics, 30 of 31 reads successful).
+* **Testing**: unit, end-to-end and edge-case tests, plus fuzzing of the D-Bus and advertising parsers.
 
-With the release of **v1.0.0**, Zig-BLE delivers:
-* **The 7 Architectural Pillars**: Pluggable HAL VTable, Native Tier-1 OS (Windows 11 WinRT & Linux Pure-Zig Wire), Pure-Zig Bare-Metal Host Stack (UART H4/H5), GATT Long Transfers & Resilience, Persistent KeyStore & CCCD NVS (`ZBGR`), Virtual Mock Controller CI Harness, and Wireshark PCAP Exporter.
-* **Elimination of C-toolchains & Sysroots**: True zero-friction cross-compilation for all desktop, server, and embedded targets without `libc` or `libdbus-1`.
-* **Zero-Heap, Zero-Copy Performance**: Sub-microsecond message dispatching, 2.82 ns D-Bus finalize serialization, 359 Mop/s TLV walking, and 0 bytes dynamic allocation on protocol hot-paths.
-* **Physical Hardware Validation**: Confirmed over-the-air communication against active smartphone hardware (Samsung Galaxy S25 Ultra over 2.4 GHz radio) with 96.8% transaction success and comprehensive GATT profile enumeration.
-* **Pre-Built GATT Standard Profiles**: Out-of-the-box support for Heart Rate (HRP v1.0), Battery Service (BAS v1.0), Environmental Sensing (ESS v1.0), and Nordic UART (NUS) with zero-allocation MTU `PacketChunker`.
-* **Proximity & Telemetry Broadcasts**: Native encoders and decoders for 23-byte Apple iBeacon and Google Eddystone (UID, URL, TLM).
-* **Bluetooth 5.0+ Extended Advertising & LE Coded PHY**: Long-range secondary channels and dynamic interval configuration.
-* **Direct Kernel L2CAP CoC Sockets**: High-throughput point-to-point streaming via `AF_BLUETOOTH` and `BTPROTO_L2CAP`.
-* **Formal Safety & Hardened Testing**: 146 automated E2E and edge-case unit tests covering stream fragmentation, boundary conditions, and fuzz-tested packet parsers.
+### 8.2 Future Roadmap
 
-### 8.2 Future Roadmap (v1.1+ & v2.0+)
-
-Following the successful stabilization and physical verification of the v1.0.0 Core Release, subsequent milestones focus on advanced throughput and next-generation specifications:
-1. **v1.1.0 (Throughput & Battery Optimization)**:
-   - Automated MTU / DLE / PHY bandwidth tuner negotiating 2M PHY and 251-byte data lengths.
-   - Enhanced Attribute Protocol (EATT, BT 5.2) with parallel, non-blocking L2CAP credit-based channels.
-   - Bluetooth 5.3 Connection Subrating for ultra-low latency transitions and prolonged battery life.
-2. **v1.2.0 (Fitness & Health Profiles)**:
-   - Bluetooth SIG Fitness Machine Service (FTMS v1.0, `0x1826`), Cycling Power (CPP v1.0, `0x1818`), Running Speed & Cadence (RSCP, `0x1814`), and Pulse Oximeter (PLXP, `0x1822`).
-3. **v1.3.0 (Tier-2 Platforms)**:
-   - Native macOS and iOS `CoreBluetooth` backend via Objective-C runtime ABI.
-4. **v2.0.0+ (Next-Gen Radio & Audio)**:
-   - Bluetooth 5.2 LE Audio (CIS/BIS, Auracast, and LC3 codec integration).
-   - Bluetooth 5.4 Encrypted Advertising Data (EAD) & Periodic Advertising with Responses (PAwR).
-   - Bluetooth 6.0 Channel Sounding (CS) nanosecond round-trip time and phase-based ranging engine.
+The detailed list of open items is maintained in [PRODUCTION_READINESS.md](PRODUCTION_READINESS.md). The main milestones are:
+1. **Production hardening**: correct negotiated-MTU reporting, error propagation instead of silently ignored failures, configurable timeouts, a documented threading model and concrete error sets in the public API.
+2. **Windows feature parity**: pairing (`DeviceInformationCustomPairing`), the peripheral role (`GattServiceProvider`, `BluetoothLEAdvertisementPublisher`) and connection-loss handling.
+3. **Bare-metal host stack**: HCI and UART backends, connection management, ATT client/server and SMP state machines over L2CAP, and wiring the existing EATT bearer bookkeeping to L2CAP credit-based channels.
+4. **Measurement**: end-to-end benchmarks against other libraries on the same hardware, long-duration soak tests and hardware-in-the-loop CI.
+5. **Later**: a macOS/iOS CoreBluetooth backend, LE Audio, Encrypted Advertising Data, PAwR and Channel Sounding.
 
 ---
 
@@ -772,6 +737,6 @@ Following the successful stabilization and physical verification of the v1.0.0 C
 1. **freedesktop.org**: *D-Bus Specification (Version 0.30+)*, [https://dbus.freedesktop.org/doc/dbus-specification.html](https://dbus.freedesktop.org/doc/dbus-specification.html).
 2. **Bluetooth SIG**: *Bluetooth Core Specification Version 5.4 / 6.0*, [https://www.bluetooth.com/specifications/specs/](https://www.bluetooth.com/specifications/specs/).
 3. **BlueZ Project**: *Linux Bluetooth Management & GATT API Documentation*, [https://git.kernel.org/pub/scm/bluetooth/bluez.git](https://git.kernel.org/pub/scm/bluetooth/bluez.git).
-4. **The Zig Software Foundation**: *Zig Language Reference & Standard Library (0.16.0)*, [https://ziglang.org/documentation/](https://ziglang.org/documentation/).
+4. **The Zig Software Foundation**: *Zig Language Reference & Standard Library (0.17.0)*, [https://ziglang.org/documentation/](https://ziglang.org/documentation/).
 5. **POSIX.1-2017 / Linux Foundation**: *UNIX Domain Sockets and SCM_RIGHTS Ancillary Data*, `unix(7)`, `cmsg(3)`, `sendmsg(2)`.
 6. **Zig-BLE Project Repository**: *Native Pure-Zig BLE Stack*, [https://github.com/AritoUser/Zig-BLE](https://github.com/AritoUser/Zig-BLE).

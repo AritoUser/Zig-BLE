@@ -71,6 +71,37 @@ pub const ExtAdvDataCommand = struct {
     }
 };
 
+pub const CreateConnectionParams = struct {
+    scan_interval: u16 = 0x0060, // 60 ms (in 0.625 ms units)
+    scan_window: u16 = 0x0030, // 30 ms (in 0.625 ms units)
+    initiator_filter_policy: u8 = 0x00, // Use Peer_Address_Type and Peer_Address
+    peer_addr_type: AddressType = .public,
+    peer_addr: Address,
+    own_addr_type: AddressType = .public,
+    conn_interval_min: u16 = 0x0018, // 30 ms (in 1.25 ms units)
+    conn_interval_max: u16 = 0x0028, // 50 ms (in 1.25 ms units)
+    conn_latency: u16 = 0x0000,
+    supervision_timeout: u16 = 0x0190, // 4.0 s (in 10 ms units)
+    min_ce_length: u16 = 0x0000,
+    max_ce_length: u16 = 0x0000,
+};
+
+pub const ExtCreateConnectionParams = struct {
+    initiator_filter_policy: u8 = 0x00,
+    own_addr_type: AddressType = .public,
+    peer_addr_type: AddressType = .public,
+    peer_addr: Address,
+    initiating_phys: u8 = 0x01, // Bit 0: LE 1M, Bit 1: LE 2M, Bit 2: LE Coded
+    scan_interval: u16 = 0x0060,
+    scan_window: u16 = 0x0030,
+    conn_interval_min: u16 = 0x0018,
+    conn_interval_max: u16 = 0x0028,
+    conn_latency: u16 = 0x0000,
+    supervision_timeout: u16 = 0x0190,
+    min_ce_length: u16 = 0x0000,
+    max_ce_length: u16 = 0x0000,
+};
+
 pub const Commands = struct {
     /// Helper to format an HCI command into a fixed buffer.
     /// Buffer layout: [PacketType: 1B] [Opcode: 2B LE] [ParamLen: 1B] [Params: NB]
@@ -235,11 +266,143 @@ pub const Commands = struct {
     pub fn disconnect(handle: u16, reason: u8) [7]u8 {
         var buf: [7]u8 = undefined;
         buf[0] = @intFromEnum(constants.PacketType.command);
-        const op = constants.makeOpcode(constants.Ogf.link_control, 0x0006);
-        std.mem.writeInt(u16, buf[1..3], op, .little);
+        std.mem.writeInt(u16, buf[1..3], constants.Opcode.disconnect, .little);
         buf[3] = 3; // Param length: 3
         std.mem.writeInt(u16, buf[4..6], handle, .little);
         buf[6] = reason;
+        return buf;
+    }
+
+    /// HCI_Read_Buffer_Size (OGF 0x04, OCF 0x0005)
+    pub fn readBufferSize() [4]u8 {
+        return [_]u8{
+            @intFromEnum(constants.PacketType.command),
+            @truncate(constants.Opcode.read_buffer_size & 0xFF),
+            @truncate(constants.Opcode.read_buffer_size >> 8),
+            0x00,
+        };
+    }
+
+    /// HCI_LE_Read_Buffer_Size (OGF 0x08, OCF 0x0002)
+    pub fn leReadBufferSize() [4]u8 {
+        return [_]u8{
+            @intFromEnum(constants.PacketType.command),
+            @truncate(constants.Opcode.le_read_buffer_size & 0xFF),
+            @truncate(constants.Opcode.le_read_buffer_size >> 8),
+            0x00,
+        };
+    }
+
+    /// HCI_LE_Create_Connection (OGF 0x08, OCF 0x000D)
+    pub fn leCreateConnection(params: CreateConnectionParams) [29]u8 {
+        var buf: [29]u8 = undefined;
+        buf[0] = @intFromEnum(constants.PacketType.command);
+        std.mem.writeInt(u16, buf[1..3], constants.Opcode.le_create_connection, .little);
+        buf[3] = 25; // Param length: 25
+        std.mem.writeInt(u16, buf[4..6], params.scan_interval, .little);
+        std.mem.writeInt(u16, buf[6..8], params.scan_window, .little);
+        buf[8] = params.initiator_filter_policy;
+        buf[9] = @intFromEnum(params.peer_addr_type);
+        const le_addr = params.peer_addr.toLittleEndian();
+        @memcpy(buf[10..16], &le_addr);
+        buf[16] = @intFromEnum(params.own_addr_type);
+        std.mem.writeInt(u16, buf[17..19], params.conn_interval_min, .little);
+        std.mem.writeInt(u16, buf[19..21], params.conn_interval_max, .little);
+        std.mem.writeInt(u16, buf[21..23], params.conn_latency, .little);
+        std.mem.writeInt(u16, buf[23..25], params.supervision_timeout, .little);
+        std.mem.writeInt(u16, buf[25..27], params.min_ce_length, .little);
+        std.mem.writeInt(u16, buf[27..29], params.max_ce_length, .little);
+        return buf;
+    }
+
+    /// HCI_LE_Create_Connection_Cancel (OGF 0x08, OCF 0x000E)
+    pub fn leCreateConnectionCancel() [4]u8 {
+        return [_]u8{
+            @intFromEnum(constants.PacketType.command),
+            @truncate(constants.Opcode.le_create_connection_cancel & 0xFF),
+            @truncate(constants.Opcode.le_create_connection_cancel >> 8),
+            0x00,
+        };
+    }
+
+    /// HCI_LE_Extended_Create_Connection (OGF 0x08, OCF 0x0043)
+    pub fn leExtendedCreateConnection(params: ExtCreateConnectionParams) [30]u8 {
+        var buf: [30]u8 = undefined;
+        buf[0] = @intFromEnum(constants.PacketType.command);
+        std.mem.writeInt(u16, buf[1..3], constants.Opcode.le_extended_create_connection, .little);
+        buf[3] = 26; // 10 base bytes + 16 bytes for 1 initiating PHY
+        buf[4] = params.initiator_filter_policy;
+        buf[5] = @intFromEnum(params.own_addr_type);
+        buf[6] = @intFromEnum(params.peer_addr_type);
+        const le_addr = params.peer_addr.toLittleEndian();
+        @memcpy(buf[7..13], &le_addr);
+        buf[13] = params.initiating_phys;
+        std.mem.writeInt(u16, buf[14..16], params.scan_interval, .little);
+        std.mem.writeInt(u16, buf[16..18], params.scan_window, .little);
+        std.mem.writeInt(u16, buf[18..20], params.conn_interval_min, .little);
+        std.mem.writeInt(u16, buf[20..22], params.conn_interval_max, .little);
+        std.mem.writeInt(u16, buf[22..24], params.conn_latency, .little);
+        std.mem.writeInt(u16, buf[24..26], params.supervision_timeout, .little);
+        std.mem.writeInt(u16, buf[26..28], params.min_ce_length, .little);
+        std.mem.writeInt(u16, buf[28..30], params.max_ce_length, .little);
+        return buf;
+    }
+
+    /// HCI_LE_Connection_Update (OGF 0x08, OCF 0x0013)
+    pub fn leConnectionUpdate(
+        handle: u16,
+        interval_min: u16,
+        interval_max: u16,
+        latency: u16,
+        supervision_timeout: u16,
+        min_ce_len: u16,
+        max_ce_len: u16,
+    ) [18]u8 {
+        var buf: [18]u8 = undefined;
+        buf[0] = @intFromEnum(constants.PacketType.command);
+        std.mem.writeInt(u16, buf[1..3], constants.Opcode.le_connection_update, .little);
+        buf[3] = 14;
+        std.mem.writeInt(u16, buf[4..6], handle, .little);
+        std.mem.writeInt(u16, buf[6..8], interval_min, .little);
+        std.mem.writeInt(u16, buf[8..10], interval_max, .little);
+        std.mem.writeInt(u16, buf[10..12], latency, .little);
+        std.mem.writeInt(u16, buf[12..14], supervision_timeout, .little);
+        std.mem.writeInt(u16, buf[14..16], min_ce_len, .little);
+        std.mem.writeInt(u16, buf[16..18], max_ce_len, .little);
+        return buf;
+    }
+
+    /// HCI_LE_Start_Encryption (OGF 0x08, OCF 0x0019)
+    pub fn leStartEncryption(handle: u16, rand: u64, ediv: u16, ltk: [16]u8) [32]u8 {
+        var buf: [32]u8 = undefined;
+        buf[0] = @intFromEnum(constants.PacketType.command);
+        std.mem.writeInt(u16, buf[1..3], constants.Opcode.le_start_encryption, .little);
+        buf[3] = 28;
+        std.mem.writeInt(u16, buf[4..6], handle, .little);
+        std.mem.writeInt(u64, buf[6..14], rand, .little);
+        std.mem.writeInt(u16, buf[14..16], ediv, .little);
+        @memcpy(buf[16..32], &ltk);
+        return buf;
+    }
+
+    /// HCI_LE_Long_Term_Key_Request_Reply (OGF 0x08, OCF 0x001A)
+    pub fn leLongTermKeyRequestReply(handle: u16, ltk: [16]u8) [22]u8 {
+        var buf: [22]u8 = undefined;
+        buf[0] = @intFromEnum(constants.PacketType.command);
+        std.mem.writeInt(u16, buf[1..3], constants.Opcode.le_long_term_key_request_reply, .little);
+        buf[3] = 18;
+        std.mem.writeInt(u16, buf[4..6], handle, .little);
+        @memcpy(buf[6..22], &ltk);
+        return buf;
+    }
+
+    /// HCI_LE_Long_Term_Key_Request_Negative_Reply (OGF 0x08, OCF 0x001B)
+    pub fn leLongTermKeyRequestNegativeReply(handle: u16) [6]u8 {
+        var buf: [6]u8 = undefined;
+        buf[0] = @intFromEnum(constants.PacketType.command);
+        std.mem.writeInt(u16, buf[1..3], constants.Opcode.le_long_term_key_request_negative_reply, .little);
+        buf[3] = 2;
+        std.mem.writeInt(u16, buf[4..6], handle, .little);
         return buf;
     }
 
@@ -519,7 +682,7 @@ pub const Commands = struct {
     }
 };
 
-test "HCI Commands: reset and scan parameters serialization" {
+test "HCI Commands: reset, scan, connection, buffer size, and encryption serialization" {
     const rst = Commands.reset();
     try std.testing.expectEqualSlices(u8, &[_]u8{ 0x01, 0x03, 0x0C, 0x00 }, &rst);
 
@@ -577,4 +740,28 @@ test "HCI Commands: reset and scan parameters serialization" {
     try std.testing.expectEqual(@as(u8, 1), ext_adv[4]); // handle 1
     try std.testing.expectEqual(@as(u8, 3), ext_adv[24]); // primary Coded PHY
     try std.testing.expectEqual(@as(u8, 3), ext_adv[26]); // secondary Coded PHY
+
+    // Connection & Encryption commands
+    const peer = try Address.parse("11:22:33:44:55:66");
+    const create_conn = Commands.leCreateConnection(.{ .peer_addr = peer });
+    try std.testing.expectEqual(@as(u8, 0x01), create_conn[0]);
+    try std.testing.expectEqual(@as(u16, 0x200D), std.mem.readInt(u16, create_conn[1..3], .little));
+    try std.testing.expectEqual(@as(u8, 25), create_conn[3]);
+    try std.testing.expectEqualSlices(u8, &[_]u8{ 0x66, 0x55, 0x44, 0x33, 0x22, 0x11 }, create_conn[10..16]);
+
+    const ext_create = Commands.leExtendedCreateConnection(.{ .peer_addr = peer });
+    try std.testing.expectEqual(@as(u16, 0x2043), std.mem.readInt(u16, ext_create[1..3], .little));
+    try std.testing.expectEqual(@as(u8, 26), ext_create[3]);
+
+    const conn_upd = Commands.leConnectionUpdate(0x0040, 24, 40, 0, 400, 0, 0);
+    try std.testing.expectEqual(@as(u16, 0x2013), std.mem.readInt(u16, conn_upd[1..3], .little));
+    try std.testing.expectEqual(@as(u16, 0x0040), std.mem.readInt(u16, conn_upd[4..6], .little));
+
+    const read_buf = Commands.leReadBufferSize();
+    try std.testing.expectEqualSlices(u8, &[_]u8{ 0x01, 0x02, 0x20, 0x00 }, &read_buf);
+
+    const ltk: [16]u8 = @splat(0x5A);
+    const start_enc = Commands.leStartEncryption(0x0040, 0x1122334455667788, 0x99AA, ltk);
+    try std.testing.expectEqual(@as(u16, 0x2019), std.mem.readInt(u16, start_enc[1..3], .little));
+    try std.testing.expectEqual(@as(u8, 28), start_enc[3]);
 }

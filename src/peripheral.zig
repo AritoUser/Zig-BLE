@@ -1,14 +1,17 @@
 //! Zig-BLE Unified Peripheral: Combines BLE advertising, GATT server, and pairing agent
 //! into a turnkey, highly efficient, zero-allocation peripheral abstraction.
+//! Supports both Linux (BlueZ D-Bus) and Windows (WinRT GattServiceProvider + BluetoothLEAdvertisementPublisher).
 
 const std = @import("std");
 const builtin = @import("builtin");
 const core = @import("core/mod.zig");
 const UUID = core.UUID;
+const log = std.log.scoped(.zig_ble);
 
+const wire = @import("dbus/wire/mod.zig");
 const dbus = if (builtin.os.tag == .linux) @import("dbus/mod.zig") else struct {};
-const Connection = if (builtin.os.tag == .linux) dbus.Connection else struct {};
-const Message = if (builtin.os.tag == .linux) dbus.Message else struct {};
+const Connection = if (builtin.os.tag == .linux) dbus.Connection else wire.NonLinuxConnection;
+const Message = if (builtin.os.tag == .linux) dbus.Message else wire.Message;
 
 const advertising = @import("advertising.zig");
 pub const AdvertisementConfig = advertising.AdvertisementConfig;
@@ -78,24 +81,28 @@ pub const Peripheral = struct {
     }
 
     /// Starts all peripheral components:
-    /// 1. Registers GATT server application (services & characteristics in BlueZ ATT database)
+    /// 1. Registers GATT server application (services & characteristics in BlueZ or WinRT ATT database)
     /// 2. Registers BLE advertisement (controller transmits beacons over the air)
-    /// 3. Registers pairing agent (automatic authorization & Just Works)
+    /// 3. Registers pairing agent (on Linux BlueZ)
     pub fn start(self: *Peripheral) !void {
-        if (builtin.os.tag != .linux) return error.NotSupported;
+        if (builtin.os.tag != .linux and builtin.os.tag != .windows) return error.NotSupported;
 
         // 1. Register GATT server
         try self.gatt_app.register();
 
         // 2. Start BLE advertisement
         self.advertisement.register() catch |err| {
-            self.gatt_app.unregister() catch {};
+            self.gatt_app.unregister() catch |unreg_err| {
+                log.warn("Peripheral rollback gatt_app.unregister failed: {s}", .{@errorName(unreg_err)});
+            };
             return err;
         };
 
-        // 3. Start pairing agent (if enabled)
-        if (self.enable_agent) {
-            self.agent.register() catch {};
+        // 3. Start pairing agent (if enabled on Linux)
+        if (builtin.os.tag == .linux and self.enable_agent) {
+            self.agent.register() catch |err| {
+                log.warn("Peripheral agent.register failed: {s}", .{@errorName(err)});
+            };
         }
 
         self.is_running.store(true, .release);
@@ -103,7 +110,9 @@ pub const Peripheral = struct {
 
     fn threadWorker(self: *Peripheral) void {
         while (!self.should_stop.load(.acquire)) {
-            self.step(50) catch {};
+            self.step(50) catch |err| {
+                log.warn("Peripheral worker step error: {s}", .{@errorName(err)});
+            };
         }
     }
 
@@ -116,30 +125,48 @@ pub const Peripheral = struct {
         self.thread = try std.Thread.spawn(.{}, threadWorker, .{self});
     }
 
-    /// Runs a single D-Bus event loop step (timeout in milliseconds).
+    /// Runs a single D-Bus / WinRT event loop step (timeout in milliseconds).
     /// Processes incoming client requests (read, write, notify, pairing, advertising).
     pub fn step(self: *Peripheral, timeout_ms: i32) !void {
-        if (builtin.os.tag != .linux) return;
         if (!self.is_running.load(.acquire)) return;
+
+        if (builtin.os.tag == .windows) {
+            // WinRT GATT & Advertising events are dispatched on the MTA thread pool via COM handlers.
+            std.atomic.spinLoopHint();
+            return;
+        }
+        if (builtin.os.tag != .linux) return error.NotSupported;
 
         _ = self.conn.pollSocket(timeout_ms);
         while (self.conn.popMessage()) |msg| {
             defer msg.deinit();
 
             // 1. Forward to GATT server
-            if (self.gatt_app.processMessage(&msg) catch false) continue;
+            const gatt_handled = self.gatt_app.processMessage(&msg) catch |err| blk: {
+                log.warn("Peripheral gatt_app.processMessage error: {s}", .{@errorName(err)});
+                break :blk false;
+            };
+            if (gatt_handled) continue;
 
             // 2. Forward to advertisement
-            if (self.advertisement.processMessage(&msg) catch false) continue;
+            const adv_handled = self.advertisement.processMessage(&msg) catch |err| blk: {
+                log.warn("Peripheral advertisement.processMessage error: {s}", .{@errorName(err)});
+                break :blk false;
+            };
+            if (adv_handled) continue;
 
             // 3. Forward to agent
             if (self.enable_agent) {
-                if (self.agent.processMessage(&msg) catch false) continue;
+                const agent_handled = self.agent.processMessage(&msg) catch |err| blk: {
+                    log.warn("Peripheral agent.processMessage error: {s}", .{@errorName(err)});
+                    break :blk false;
+                };
+                if (agent_handled) continue;
             }
         }
     }
 
-    /// Gracefully shuts down the peripheral, stops the background thread, and releases all BlueZ resources.
+    /// Gracefully shuts down the peripheral, stops the background thread, and releases all BlueZ / WinRT resources.
     pub fn stop(self: *Peripheral) void {
         self.should_stop.store(true, .release);
         if (self.thread) |t| {
@@ -147,14 +174,20 @@ pub const Peripheral = struct {
             self.thread = null;
         }
 
-        if (builtin.os.tag != .linux) return;
+        if (builtin.os.tag != .linux and builtin.os.tag != .windows) return;
         if (!self.is_running.load(.acquire)) return;
 
-        if (self.enable_agent) {
-            self.agent.unregister() catch {};
+        if (builtin.os.tag == .linux and self.enable_agent) {
+            self.agent.unregister() catch |err| {
+                log.warn("Peripheral agent.unregister error: {s}", .{@errorName(err)});
+            };
         }
-        self.advertisement.unregister() catch {};
-        self.gatt_app.unregister() catch {};
+        self.advertisement.unregister() catch |err| {
+            log.warn("Peripheral advertisement.unregister error: {s}", .{@errorName(err)});
+        };
+        self.gatt_app.unregister() catch |err| {
+            log.warn("Peripheral gatt_app.unregister error: {s}", .{@errorName(err)});
+        };
 
         self.is_running.store(false, .release);
     }
@@ -175,4 +208,9 @@ test "Peripheral: initialization with config" {
     }, .{});
     try std.testing.expectEqualStrings("/org/bluez/hci0", p.adapter_path[0..p.adapter_path_len]);
     try std.testing.expect(!p.is_running.load(.acquire));
+
+    const svc = try p.addService(UUID.from16(0x180D), true);
+    const ch = try svc.addCharacteristic(UUID.from16(0x2A37), .{ .read = true, .notify = true });
+    ch.setValue(&[_]u8{ 0x00, 72 });
+    try std.testing.expectEqual(@as(usize, 2), ch.getValue().len);
 }

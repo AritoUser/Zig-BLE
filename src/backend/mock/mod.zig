@@ -95,8 +95,8 @@ pub const MockController = struct {
         return .{};
     }
 
-    pub fn addDevice(self: *MockController, dev: MockDevice) !*MockDevice {
-        if (self.devices_len >= self.devices.len) return error.OutOfMemory;
+    pub fn addDevice(self: *MockController, dev: MockDevice) BleError!*MockDevice {
+        if (self.devices_len >= self.devices.len) return BleError.PoolExhausted;
         self.devices[self.devices_len] = dev;
         const ptr = &self.devices[self.devices_len];
         self.devices_len += 1;
@@ -110,7 +110,7 @@ pub const MockController = struct {
         return null;
     }
 
-    pub fn triggerNotification(self: *MockController, addr: Address, uuid: UUID, data: []const u8) !void {
+    pub fn triggerNotification(self: *MockController, addr: Address, uuid: UUID, data: []const u8) BleError!void {
         const dev = self.findDeviceByAddress(addr) orelse return BleError.DeviceNotFound;
         if (!dev.is_connected) return BleError.NotConnected;
         if (dev.notify_cb) |cb| {
@@ -123,7 +123,7 @@ pub const MockController = struct {
     }
 
     // Backend implementation methods
-    pub fn openAdapter(ctx: *anyopaque, index: u16) anyerror!void {
+    pub fn openAdapter(ctx: *anyopaque, index: u16) BleError!void {
         _ = index;
         const self: *MockController = @ptrCast(@alignCast(ctx));
         self.powered = true;
@@ -135,18 +135,18 @@ pub const MockController = struct {
         self.powered = false;
     }
 
-    pub fn setPowered(ctx: *anyopaque, powered: bool) anyerror!void {
+    pub fn setPowered(ctx: *anyopaque, powered: bool) BleError!void {
         const self: *MockController = @ptrCast(@alignCast(ctx));
         self.powered = powered;
         if (!powered) self.scanning = false;
     }
 
-    pub fn isPowered(ctx: *anyopaque) anyerror!bool {
+    pub fn isPowered(ctx: *anyopaque) BleError!bool {
         const self: *MockController = @ptrCast(@alignCast(ctx));
         return self.powered;
     }
 
-    pub fn startScan(ctx: *anyopaque, filter: ScanFilter, cb: ScanCallback, user_data: ?*anyopaque) anyerror!void {
+    pub fn startScan(ctx: *anyopaque, filter: ScanFilter, cb: ScanCallback, user_data: ?*anyopaque) BleError!void {
         const self: *MockController = @ptrCast(@alignCast(ctx));
         if (!self.powered) return BleError.NotPowered;
         self.scanning = true;
@@ -170,14 +170,14 @@ pub const MockController = struct {
         }
     }
 
-    pub fn stopScan(ctx: *anyopaque) anyerror!void {
+    pub fn stopScan(ctx: *anyopaque) BleError!void {
         const self: *MockController = @ptrCast(@alignCast(ctx));
         self.scanning = false;
         self.active_scan_cb = null;
         self.active_scan_user_data = null;
     }
 
-    pub fn connectDevice(ctx: *anyopaque, addr: Address, timeout_ms: u32) anyerror!*anyopaque {
+    pub fn connectDevice(ctx: *anyopaque, addr: Address, timeout_ms: u32) BleError!*anyopaque {
         _ = timeout_ms;
         const self: *MockController = @ptrCast(@alignCast(ctx));
         if (!self.powered) return BleError.NotPowered;
@@ -186,7 +186,7 @@ pub const MockController = struct {
         return @ptrCast(dev);
     }
 
-    pub fn disconnectDevice(ctx: *anyopaque, dev_handle: *anyopaque) anyerror!void {
+    pub fn disconnectDevice(ctx: *anyopaque, dev_handle: *anyopaque) BleError!void {
         _ = ctx;
         const dev: *MockDevice = @ptrCast(@alignCast(dev_handle));
         dev.is_connected = false;
@@ -206,13 +206,13 @@ pub const MockController = struct {
         return dev.rssi;
     }
 
-    pub fn discoverServices(ctx: *anyopaque, dev_handle: *anyopaque) anyerror!void {
+    pub fn discoverServices(ctx: *anyopaque, dev_handle: *anyopaque) BleError!void {
         _ = ctx;
         const dev: *MockDevice = @ptrCast(@alignCast(dev_handle));
         if (!dev.is_connected) return BleError.NotConnected;
     }
 
-    pub fn readCharacteristic(ctx: *anyopaque, dev_handle: *anyopaque, char_uuid: UUID, buf: []u8) anyerror!usize {
+    pub fn readCharacteristic(ctx: *anyopaque, dev_handle: *anyopaque, char_uuid: UUID, buf: []u8) BleError!usize {
         _ = ctx;
         const dev: *MockDevice = @ptrCast(@alignCast(dev_handle));
         if (!dev.is_connected) return BleError.NotConnected;
@@ -225,7 +225,7 @@ pub const MockController = struct {
         return copy_len;
     }
 
-    pub fn writeCharacteristic(ctx: *anyopaque, dev_handle: *anyopaque, char_uuid: UUID, data: []const u8, with_response: bool) anyerror!void {
+    pub fn writeCharacteristic(ctx: *anyopaque, dev_handle: *anyopaque, char_uuid: UUID, data: []const u8, with_response: bool) BleError!void {
         _ = ctx;
         _ = with_response;
         const dev: *MockDevice = @ptrCast(@alignCast(dev_handle));
@@ -236,7 +236,7 @@ pub const MockController = struct {
         char.setValue(data);
     }
 
-    pub fn subscribeNotifications(ctx: *anyopaque, dev_handle: *anyopaque, char_uuid: UUID, cb: NotificationCallback, user_data: ?*anyopaque) anyerror!void {
+    pub fn subscribeNotifications(ctx: *anyopaque, dev_handle: *anyopaque, char_uuid: UUID, cb: NotificationCallback, user_data: ?*anyopaque) BleError!void {
         _ = ctx;
         const dev: *MockDevice = @ptrCast(@alignCast(dev_handle));
         if (!dev.is_connected) return BleError.NotConnected;
@@ -248,7 +248,7 @@ pub const MockController = struct {
         dev.subscribed_uuid = char_uuid;
     }
 
-    pub fn unsubscribeNotifications(ctx: *anyopaque, dev_handle: *anyopaque, char_uuid: UUID) anyerror!void {
+    pub fn unsubscribeNotifications(ctx: *anyopaque, dev_handle: *anyopaque, char_uuid: UUID) BleError!void {
         _ = ctx;
         const dev: *MockDevice = @ptrCast(@alignCast(dev_handle));
         if (dev.subscribed_uuid) |sub_uuid| {
@@ -260,7 +260,7 @@ pub const MockController = struct {
         }
     }
 
-    pub fn exchangeMtu(ctx: *anyopaque, dev_handle: *anyopaque, target_mtu: u16) anyerror!u16 {
+    pub fn exchangeMtu(ctx: *anyopaque, dev_handle: *anyopaque, target_mtu: u16) BleError!u16 {
         _ = ctx;
         const dev: *MockDevice = @ptrCast(@alignCast(dev_handle));
         if (!dev.is_connected) return BleError.NotConnected;
@@ -269,7 +269,7 @@ pub const MockController = struct {
         return negotiated;
     }
 
-    pub fn pairDevice(ctx: *anyopaque, dev_handle: *anyopaque, io_cap: types.IoCapability) anyerror!void {
+    pub fn pairDevice(ctx: *anyopaque, dev_handle: *anyopaque, io_cap: types.IoCapability) BleError!void {
         _ = ctx;
         const dev: *MockDevice = @ptrCast(@alignCast(dev_handle));
         if (!dev.is_connected) return BleError.NotConnected;
@@ -277,7 +277,7 @@ pub const MockController = struct {
         dev.bond_state = .bonded;
     }
 
-    pub fn unpairDevice(ctx: *anyopaque, dev_handle: *anyopaque) anyerror!void {
+    pub fn unpairDevice(ctx: *anyopaque, dev_handle: *anyopaque) BleError!void {
         _ = ctx;
         const dev: *MockDevice = @ptrCast(@alignCast(dev_handle));
         dev.bond_state = .not_bonded;

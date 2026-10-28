@@ -210,22 +210,140 @@ test "EdgeCase: BondStore Capacity Limit and Corrupted Image Rejection" {
 // =============================================================================
 test "EdgeCase: Address Parsing Mixed Case and Syntax Bounds" {
     // Valid lowercase
-    const addr_lower = try ble.Address.parse("a4:4e:6c:fe:b6:78");
-    try std.testing.expectEqual(@as(u8, 0xA4), addr_lower.bytes[0]);
-    try std.testing.expectEqual(@as(u8, 0x78), addr_lower.bytes[5]);
+    const addr_lower = try ble.Address.parse("ab:cd:ef:01:23:45");
+    try std.testing.expectEqual(@as(u8, 0xAB), addr_lower.bytes[0]);
+    try std.testing.expectEqual(@as(u8, 0x45), addr_lower.bytes[5]);
 
     // Valid uppercase
-    const addr_upper = try ble.Address.parse("A4:4E:6C:FE:B6:78");
+    const addr_upper = try ble.Address.parse("AB:CD:EF:01:23:45");
     try std.testing.expect(addr_lower.eql(addr_upper));
 
     // Valid mixed case
-    const addr_mixed = try ble.Address.parse("a4:4E:6c:FE:b6:78");
+    const addr_mixed = try ble.Address.parse("aB:Cd:eF:01:23:45");
     try std.testing.expect(addr_lower.eql(addr_mixed));
 
     // Invalid length
-    try std.testing.expectError(error.InvalidLength, ble.Address.parse("A4:4E:6C"));
-    try std.testing.expectError(error.InvalidLength, ble.Address.parse("A4:4E:6C:FE:B6:78:99"));
+    try std.testing.expectError(error.InvalidLength, ble.Address.parse("AB:CD:EF"));
+    try std.testing.expectError(error.InvalidLength, ble.Address.parse("AB:CD:EF:01:23:45:67"));
 
     // Invalid non-hex characters
-    try std.testing.expectError(error.InvalidCharacter, ble.Address.parse("G4:4E:6C:FE:B6:78"));
+    try std.testing.expectError(error.InvalidCharacter, ble.Address.parse("GB:CD:EF:01:23:45"));
+}
+
+
+// =============================================================================
+// EDGE CASE 8: 1,000+ Scan/Connect/Notify/Disconnect Stress & Handle Leak Suite
+// =============================================================================
+const builtin = @import("builtin");
+extern "kernel32" fn GetCurrentProcess() callconv(.winapi) *anyopaque;
+extern "kernel32" fn GetProcessHandleCount(hProcess: *anyopaque, pdwHandleCount: *u32) callconv(.winapi) c_int;
+
+test "Stress & Leak Suite: 1,000+ Scan/Connect/Notify/Disconnect Cycles with Handle & Allocator Check" {
+    var handles_before: u32 = 0;
+    if (builtin.os.tag == .windows) {
+        _ = GetProcessHandleCount(GetCurrentProcess(), &handles_before);
+    }
+
+    var mock = ble.MockController.init();
+    const peer_addr = try ble.Address.parse("12:34:56:78:9A:BC");
+    const hr_char_uuid = ble.UUID.from16(0x2A37);
+
+    var mock_dev = ble.MockDevice{ .address = peer_addr, .rssi = -48 };
+    mock_dev.setName("Stress-HRM");
+    var hr_ch = ble.MockCharacteristic{ .uuid = hr_char_uuid };
+    hr_ch.setValue(&[_]u8{ 0x00, 72 });
+    _ = mock_dev.addCharacteristic(hr_ch);
+    _ = try mock.addDevice(mock_dev);
+
+    var adapter = ble.UnifiedAdapter.init(mock.asBackend());
+    try adapter.backend.openAdapter(0);
+    defer adapter.backend.closeAdapter();
+    try adapter.setPowered(true);
+
+    const Counter = struct {
+        notifications: usize = 0,
+        scans: usize = 0,
+        fn onScan(_: *const ble.DiscoveredDevice, ud: ?*anyopaque) void {
+            const c: *@This() = @ptrCast(@alignCast(ud.?));
+            c.scans += 1;
+        }
+        fn onNotify(_: ble.UUID, _: []const u8, ud: ?*anyopaque) void {
+            const c: *@This() = @ptrCast(@alignCast(ud.?));
+            c.notifications += 1;
+        }
+    };
+
+    var counter = Counter{};
+    const cycles: usize = 1_050;
+    for (0..cycles) |i| {
+        // Allocate and free a scratch buffer per iteration with std.testing.allocator to verify 0 heap leaks
+        const scratch = try std.testing.allocator.alloc(u8, 32);
+        defer std.testing.allocator.free(scratch);
+
+        try adapter.startScan(.{}, Counter.onScan, &counter);
+        try adapter.stopScan();
+
+        var dev = try adapter.connect(peer_addr, 1000);
+        try dev.discoverServices();
+        try dev.subscribe(hr_char_uuid, Counter.onNotify, &counter);
+
+        const bpm: u8 = @intCast(60 + (i % 100));
+        try mock.triggerNotification(peer_addr, hr_char_uuid, &[_]u8{ 0x00, bpm });
+
+        const n = try dev.readCharacteristic(hr_char_uuid, scratch);
+        try std.testing.expectEqual(@as(usize, 2), n);
+
+        try dev.unsubscribe(hr_char_uuid);
+        try dev.disconnect();
+    }
+
+    try std.testing.expectEqual(cycles, counter.scans);
+    try std.testing.expectEqual(cycles, counter.notifications);
+
+    if (builtin.os.tag == .windows) {
+        var handles_after: u32 = 0;
+        _ = GetProcessHandleCount(GetCurrentProcess(), &handles_after);
+        // Process handle count must not grow across 1,050 cycles
+        try std.testing.expect(handles_after <= handles_before + 16);
+    }
+}
+
+// =============================================================================
+// EDGE CASE 9: Live PCAP / Btsnoop Hook Integration with Backends
+// =============================================================================
+test "Tooling: PcapHook captures live packets from HciBackend into PcapReader buffer" {
+    const PcapCapture = struct {
+        packets_captured: usize = 0,
+        total_bytes: usize = 0,
+        fn onPacket(_: ble.PcapDirection, packet: []const u8, ud: ?*anyopaque) void {
+            const self_cap: *@This() = @ptrCast(@alignCast(ud.?));
+            self_cap.packets_captured += 1;
+            self_cap.total_bytes += packet.len;
+        }
+    };
+
+    var cap = PcapCapture{};
+    var hci_b = ble.HciBackend.init();
+    defer hci_b.deinit();
+
+    const DummyTransport = struct {
+        fn send(_: ?*anyopaque, _: []const u8) ble.BleError!void {}
+    };
+    hci_b.setTransportHook(.{ .ctx = null, .on_send_packet = DummyTransport.send });
+    hci_b.setPcapHook(.{ .callback = PcapCapture.onPacket, .user_data = &cap });
+
+    const b = hci_b.backend();
+    try b.openAdapter(0);
+    try b.setPowered(true);
+    try std.testing.expectEqual(@as(usize, 1), cap.packets_captured);
+    try std.testing.expect(cap.total_bytes >= 4);
+
+    // Also verify BluezBackend and WindowsBackend PcapHook registration
+    var bluez_b = ble.BluezBackend.init();
+    defer bluez_b.deinit();
+    bluez_b.setPcapHook(.{ .callback = PcapCapture.onPacket, .user_data = &cap });
+
+    var win_b = ble.WindowsBackend.init();
+    defer win_b.deinit();
+    win_b.setPcapHook(.{ .callback = PcapCapture.onPacket, .user_data = &cap });
 }

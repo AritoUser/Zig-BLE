@@ -414,22 +414,27 @@ pub fn main() !void {
     // Benchmark 12: GATT Long Transfers (Prepare/Execute Write Pipeline)
     // ------------------------------------------------------------------------
     {
-        const test_data = "Zig-BLE-v1.0.0-HighPerformanceEmbeddedBluetoothEngineToken!";
+        var test_data = "Zig-BLE-v1.0.0-HighPerformanceEmbeddedBluetoothEngineToken!".*;
         var queue = Zig_BLE.ServerPrepareWriteQueue.init();
 
         const iterations: u64 = 1_000_000;
         var dummy_bytes: usize = 0;
 
         const timer = Timer.start();
-        for (0..iterations) |_| {
+        for (0..iterations) |i| {
+            // Vary the payload so the whole pipeline cannot be constant-folded
+            test_data[test_data.len - 1] = @truncate(i);
+            std.mem.doNotOptimizeAway(&test_data);
             queue.reset();
-            var iter = Zig_BLE.LongWriteIterator.init(0x0010, test_data, 23);
+            var iter = Zig_BLE.LongWriteIterator.init(0x0010, &test_data, 23);
             while (iter.next()) |chunk| {
                 try queue.enqueue(chunk);
             }
+            std.mem.doNotOptimizeAway(&queue);
             var dest: [128]u8 = undefined;
             const written = try queue.assembleForHandle(0x0010, &dest);
-            dummy_bytes +%= written;
+            std.mem.doNotOptimizeAway(&dest);
+            dummy_bytes +%= written + dest[written - 1];
         }
         const elapsed = timer.read();
         std.mem.doNotOptimizeAway(dummy_bytes);
@@ -442,7 +447,7 @@ pub fn main() !void {
     // ------------------------------------------------------------------------
     {
         var store = Zig_BLE.MemoryBondStore(4).init();
-        const test_addr = Zig_BLE.Address{ .bytes = [_]u8{ 0x78, 0xB6, 0xFE, 0x6C, 0x4E, 0xA4 } };
+        const test_addr = Zig_BLE.Address{ .bytes = [_]u8{ 0xC0, 0x1A, 0x7D, 0xDA, 0x71, 0x13 } };
         var rec = Zig_BLE.BondRecord{
             .address = test_addr,
             .keys = .{
@@ -477,9 +482,9 @@ pub fn main() !void {
     }
 
     std.debug.print("=========================================================================================\n", .{});
-    std.debug.print("Guarantees Verified:\n", .{});
-    std.debug.print("  [x] Heap Allocations during packet parse / iteration: 0 Bytes\n", .{});
-    std.debug.print("  [x] Memory Safety: Bounded stack arrays, zero pointer escapes\n", .{});
-    std.debug.print("  [x] BLE Throughput Headroom: Handles millions of packets/sec (BLE PHY is ~2k pkts/sec)\n", .{});
+    std.debug.print("Notes:\n", .{});
+    std.debug.print("  - Parse / iteration paths take no allocator (heap-free by construction, not measured here)\n", .{});
+    std.debug.print("  - Single-thread microbenchmarks; real BLE throughput is bound by the radio, not the CPU\n", .{});
+    std.debug.print("  - Run several times and compare: sub-ns results are at the limit of timer and CPU noise\n", .{});
     std.debug.print("=========================================================================================\n\n", .{});
 }

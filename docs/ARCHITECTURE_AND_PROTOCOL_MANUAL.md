@@ -1,8 +1,8 @@
 # Zig-BLE: Architecture & Protocol Manual
 
-**Engineering Specification & Systems Reference | Version 2.2 (v1.1.2 Production Release)**  
+**Engineering Specification & Systems Reference | Version 3.0 (v1.2.0)**  
 **Module:** `Zig_BLE`  
-**Compatibility:** Zig 0.17.0+ | Windows 11 Native / Linux BlueZ 5.x / Native POSIX / Bare-Metal UART H4/H5  
+**Compatibility:** Zig 0.17.0+ | Windows 11 (WinRT) / Linux BlueZ 5.x / Linux raw HCI (scanning) / H4 framing for bare-metal (building blocks)  
 **Repository:** [github.com/AritoUser/Zig-BLE](https://github.com/AritoUser/Zig-BLE)  
 
 ---
@@ -12,39 +12,40 @@
 1. [System Architecture & Stack Abstraction](#1-system-architecture--stack-abstraction)
    - 1.1 [Transport Layer Interfaces](#11-transport-layer-interfaces)
 2. [Memory Management & Data-Flow Architecture](#2-memory-management--data-flow-architecture)
-   - 2.1 [Zero-Allocation on the Hot-Path (`no-alloc`)](#21-zero-allocation-on-the-hot-path-no-alloc)
-   - 2.2 [Lock-Free SPSC Circular FIFO (Ring Buffer)](#22-lock-free-spsc-circular-fifo-ring-buffer)
-   - 2.3 [Struct Packing, Endianness & Hardware Alignment](#23-struct-packing-endianness--hardware-alignment)
-3. [GATT Model & Formal State Machine](#3-gatt-model--formal-state-machine)
-   - 3.1 [Connection Lifecycle State Machine](#31-connection-lifecycle-state-machine)
-   - 3.2 [Backpressure & Saturation Policies](#32-backpressure--saturation-policies)
+   - 2.1 [Heap-Free Decoding](#21-heap-free-decoding)
+   - 2.2 [Struct Packing, Endianness & Hardware Alignment](#22-struct-packing-endianness--hardware-alignment)
+3. [GATT Connection Lifecycle (Reference Model)](#3-gatt-connection-lifecycle-reference-model)
 4. [Byte-Level Packet Specifications](#4-byte-level-packet-specifications)
-   - 4.1 [D-Bus Wire Protocol Message Header & Field Layout](#41-d-bus-wire-protocol-message-header--field-layout)
-   - 4.2 [GAP Advertising PDU & TLV Data Structures](#42-gap-advertising-pdu--tlv-data-structures)
-   - 4.3 [128-Bit UUID Canonical Representation & Wire Parsing](#43-128-bit-uuid-canonical-representation--wire-parsing)
-5. [Tooling & Automated Documentation Pipeline](#5-tooling--automated-documentation-pipeline)
-   - 5.1 [Automated Documentation Extraction (`zig build docs`)](#51-automated-documentation-extraction-zig-build-docs)
-   - 5.2 [Documentation Coverage Verification](#52-documentation-coverage-verification)
+   - 4.1 [ATT Handle Value Notification](#41-att-handle-value-notification-att_handle_value_ntf)
+   - 4.2 [ATT Write Request & Command](#42-att-write-request--command-att_write_req--att_write_cmd)
+   - 4.3 [D-Bus Fixed Header Wire Layout](#43-d-bus-fixed-header-wire-layout-16-bytes)
+   - 4.4 [D-Bus Header Fields Array & Alignment Padding](#44-d-bus-header-fields-array-ayv--alignment-padding)
+   - 4.5 [Bluetooth LE Advertising LTV Structure](#45-bluetooth-le-advertising-ltv-structure)
+   - 4.6 [Apple iBeacon Wire Specification](#46-apple-ibeacon-wire-specification-23-byte-payload)
+   - 4.7 [Google Eddystone Frame Specifications](#47-google-eddystone-frame-specifications)
+   - 4.8 [GATT Standard Profiles Binary Layouts](#48-gatt-standard-profiles-binary-layouts)
+   - 4.9 [Linux Kernel L2CAP Connection-Oriented Channels](#49-linux-kernel-l2cap-connection-oriented-channels-coc)
+5. [Tooling & Documentation](#5-tooling--documentation)
 6. [GATT Data Typing & Format Engine (IEEE-11073-20601 & 0x2904)](#6-gatt-data-typing--format-engine-ieee-11073-20601--0x2904)
 7. [Zero-Copy Attribute Protocol (ATT) Engine](#7-zero-copy-attribute-protocol-att-engine)
 8. [BLE Cryptographic Toolbox & Security Manager Protocol (SMP)](#8-ble-cryptographic-toolbox--security-manager-protocol-smp)
 9. [Standard Bluetooth SIG Profile Ecosystem](#9-standard-bluetooth-sig-profile-ecosystem)
 10. [L2CAP Connection-Oriented Channels & LE Signaling Engine](#10-l2cap-connection-oriented-channels--le-signaling-engine)
-11. [Raw HCI Subsystem (Zero-Daemon / Embedded Mode)](#11-raw-hci-subsystem-zero-daemon--embedded-mode)
+11. [Raw HCI Subsystem (Without bluetoothd)](#11-raw-hci-subsystem-without-bluetoothd)
 12. [Unified HAL & VTable Architecture (`src/backend/vtable.zig`)](#12-unified-hal--vtable-architecture-srcbackendvtablezig)
 13. [Windows 11 Native Architecture & WinRT COM Integration](#13-windows-11-native-architecture--winrt-com-integration)
-14. [Pure-Zig Bare-Metal Host-Stack (UART H4 & L2CAP ACL Engine)](#14-pure-zig-bare-metal-host-stack-uart-h4--l2cap-acl-engine)
+14. [Bare-Metal Host-Stack Building Blocks (UART H4 & L2CAP ACL)](#14-bare-metal-host-stack-building-blocks-uart-h4--l2cap-acl)
 15. [GATT Long Attribute Transfers Engine (`src/core/transfers.zig`)](#15-gatt-long-attribute-transfers-engine-srccoretransferszig)
 16. [Security Manager & Persistent KeyStore (`src/storage/bond_store.zig`)](#16-security-manager--persistent-keystore-srcstoragebond_storezig)
 17. [Wireshark PCAP Protocol Sniffing Architecture (`src/tooling/pcap.zig`)](#17-wireshark-pcap-protocol-sniffing-architecture-srctoolingpcapzig)
-18. [Empirical Benchmarks & Physical Hardware Verification](#18-empirical-benchmarks--physical-hardware-verification)
+18. [Benchmarks & Hardware Verification](#18-benchmarks--hardware-verification)
 19. [References & Standards Compliance](#19-references--standards-compliance)
 
 ---
 
 ## 1. System Architecture & Stack Abstraction
 
-Zig-BLE is an allocation-conscious, zero-dependency Bluetooth Low Energy (BLE) systems library designed for mission-critical embedded Linux gateways, real-time telemetry pipelines, and bare-metal environments. It models the entire BLE protocol hierarchy—from raw physical frames to high-level GATT applications—without relying on C runtimes or external shared libraries.
+Zig-BLE is an allocation-conscious, dependency-free Bluetooth Low Energy (BLE) library for Linux and Windows, aimed at embedded Linux gateways, telemetry applications and tools. On Linux and Windows it uses the operating system's Bluetooth stack (BlueZ, WinRT) for connections, encryption and pairing. In addition, it provides platform-independent encoders and decoders for the BLE protocol layers (HCI, H4, L2CAP, ATT/GATT, SMP, advertising), written without C runtimes or external shared libraries. For a per-platform feature overview see the "Platform Status" table in the [README](../README.md#platform-status).
 
 ### 1.1 Transport Layer Interfaces
 
@@ -64,11 +65,10 @@ graph TD
         Native_HCI[Raw Kernel HCI Socket AF_BLUETOOTH]
     end
 
-    subgraph Zig-BLE Zero-Copy Architecture
+    subgraph Zig-BLE
         POSIX_Engine[Direct POSIX Syscall Engine std.posix]
         Wire_Engine[Pure-Zig D-Bus Wire Protocol Engine]
-        L2CAP_Engine[L2CAP & ATT Protocol Parser]
-        SPSC_Queue[Lock-Free SPSC Circular FIFO]
+        L2CAP_Engine[HCI / L2CAP / ATT Protocol Codecs]
     end
 
     subgraph Userland Application API
@@ -91,10 +91,8 @@ graph TD
     POSIX_Engine --> Wire_Engine
     POSIX_Engine --> L2CAP_Engine
 
-    Wire_Engine --> SPSC_Queue
-    L2CAP_Engine --> SPSC_Queue
-
-    SPSC_Queue --> Core_API
+    Wire_Engine --> Core_API
+    L2CAP_Engine --> Core_API
     Core_API --> GATT_Client
     Core_API --> GATT_Server
     GATT_Client --> User_App
@@ -106,100 +104,24 @@ graph TD
    * Bypasses `libdbus-1` and `GDBus` entirely by synthesizing and parsing binary D-Bus wire messages directly over Linux POSIX system calls (`std.posix.sendmsg`, `recvmsg`, `poll`, `epoll`).
    * Supports `SCM_RIGHTS` ancillary control messages (`cmsg`) for zero-copy file descriptor handovers (used in GATT `AcquireWrite` / `AcquireNotify` streaming).
 2. **Direct Kernel HCI Socket Interface (`AF_BLUETOOTH`)**:
-   * Direct user-space channel to the Bluetooth Controller via raw HCI sockets (`HCI_CHANNEL_USER` / `HCI_CHANNEL_RAW`).
-   * Eliminates the BlueZ daemon overhead completely for minimal embedded systems.
-3. **Embedded Bare-Metal Serial HCI (UART H4/H5)**:
-   * Direct framing over UART rings for microcontrollers (e.g., Nordic nRF52, Espressif ESP32-C3/C6, STM32WB) using 3-wire slip framing (H5) or 4-wire standard UART (H4).
-4. **Android Multi-Path Transport Architecture (`src/android/` / NDK ABI)**:
-   * Because Android does not support BlueZ D-Bus and sandboxed applications cannot open raw HCI sockets without root privileges, Zig-BLE provides three configurable integration paths:
-     * **Path A: Zero-Copy JNI Buffer Bridge (GATT Consumer / Standard)**:
-       The Android application layer (Kotlin/Java) manages runtime permissions, BLE discovery, and GATT lifecycle (`BluetoothGatt`). Incoming notifications (`onCharacteristicChanged`) are forwarded allocation-free to the native Zig shared library (`.so`) using direct byte buffers (`GetDirectBufferAddress`). Zig handles frame reassembly, checksum validation (CRC8/CRC16/CRC32), record decoding, SPSC ring buffering, and real-time DSP/biometrics.
-     * **Path B: Native L2CAP CoC Socket Handover (High-Throughput)**:
-       On Android 10+, an L2CAP Connection-Oriented Channel is established via `device.createL2capChannel(psm)`. The underlying native POSIX file descriptor (`fd`) is handed over to Zig via JNI. Zig reads and writes directly using `std.posix.recv`/`send` with native kernel credit-based backpressure, entirely bypassing Java runtime overhead during data transmission. Ideal for continuous 100 Hz IMU/PPG telemetry.
-     * **Path C: Direct Kernel HCI / Rooted & Embedded Android**:
-       On rooted hardware, custom ROMs (e.g., LineageOS), or dedicated embedded Android boards, Zig-BLE operates as an autonomous background daemon. It opens raw HCI sockets (`AF_BLUETOOTH`) or communicates over serial UART interfaces (`/dev/tty*`), matching native embedded Linux operation.
+   * Direct user-space channel to the Bluetooth Controller via raw HCI sockets (`HCI_CHANNEL_USER` / `HCI_CHANNEL_RAW`), without `bluetoothd`.
+   * Scanning works (`HciController`). An experimental `HciBackend` (`src/backend/hci.zig`) implements the backend interface on top of raw HCI, but connections, GATT and pairing do not work against a real controller yet; use the BlueZ backend for those.
+3. **Embedded Bare-Metal Serial HCI (UART H4)**:
+   * H4 (4-wire) and H5 (3-wire, `src/hci/h5.zig`) framing for host controllers such as Nordic nRF52, Espressif ESP32-C3/C6 or STM32WB are implemented (see Section 14). The experimental `UartBackend` (`src/backend/uart.zig`) builds on `HciBackend` and has the same limitations.
+4. **Android**: There is no Android integration yet. Possible future approaches include forwarding GATT notifications from the Android app to Zig via JNI direct buffers, or handing the file descriptor of an L2CAP CoC channel (`createL2capChannel`) to Zig.
 
 ---
 
 ## 2. Memory Management & Data-Flow Architecture
 
-### 2.1 Zero-Allocation on the Hot-Path (`no-alloc`)
+### 2.1 Heap-Free Decoding
 
-In high-throughput sensor telemetry (e.g., multi-channel ECG, 200 Hz IMU sensors, industrial vibration monitoring), dynamic heap allocation (`malloc` / `std.heap.page_allocator`) introduces two catastrophic failure modes:
-1. **Latency Spikes**: Heap lock contention and free-list traversal cause non-deterministic processing delays.
-2. **Memory Fragmentation**: Long-running embedded gateways experience out-of-memory (OOM) faults after weeks of uptime due to memory fragmentation.
+Long-running gateways and sensor pipelines benefit from memory use that does not grow with traffic: no fragmentation over weeks of uptime and no allocator work in the receive path. Zig-BLE follows these rules:
+* **Borrow semantics**: Parsers (`AdvertisingReport.parse`, `MessageIter`, the ATT/SMP/HCI decoders) take no allocator and return structures whose string, byte and payload members point directly into the receive buffer (`[]const u8`).
+* **Fixed-size pools**: The Windows and BlueZ backends store devices, characteristics and subscriptions in fixed-size arrays.
+* **Serialization**: `Message.finalize` and the advertising builder use bounded stack buffers. Building outgoing D-Bus message bodies uses `ByteBuffer`, a growable buffer backed by a caller-supplied allocator; it can be pre-sized with `ByteBuffer.initCapacity` or backed by a fixed buffer allocator.
 
-Zig-BLE enforces a strict **Zero-Allocation Guarantee** on all hot-paths:
-* **Borrow-Semantics**: Parsers (`AdvertisingReport.parse`, `MessageIter`, `parseNotification`) return structures whose string, byte, and payload members point directly into the underlying socket or frame receive buffer (`[]const u8`).
-* **Fixed Stack Workspaces**: Buffer serialization (e.g., `MessageWriter`, `Message.finalize`, `AdvertisingDataBuilder`) uses bounded, deterministic stack buffers.
-
-### 2.2 Lock-Free SPSC Circular FIFO (Ring Buffer)
-
-To decouple high-frequency I/O packet reception from application processing without lock contention, Zig-BLE implements a Single-Producer Single-Consumer (SPSC) lock-free ring buffer:
-
-$$\text{Capacity} = 2^k \quad (k \in \mathbb{N})$$
-
-$$\text{Mask} = \text{Capacity} - 1$$
-
-$$\text{Index}_{\text{physical}} = \text{Sequence} \land \text{Mask}$$
-
-```
-+-----------------------------------------------------------------------+
-| SPSC Lock-Free Circular Ring Buffer                                   |
-|                                                                       |
-|  [0]      [1]      [2]      [3]      [4]      [5]      [6]      [7]   |
-| +------+ +------+ +------+ +------+ +------+ +------+ +------+ +------+
-| | Slot | | Slot | | Slot | | Slot | | Slot | | Slot | | Slot | | Slot |
-| +------+ +------+ +------+ +------+ +------+ +------+ +------+ +------+
-|             ^                                  ^                      |
-|             |                                  |                      |
-|       Tail (Consumer)                    Head (Producer)              |
-|       Atomic(usize)                      Atomic(usize)                |
-|       Cache-Line Padded (64B)            Cache-Line Padded (64B)      |
-+-----------------------------------------------------------------------+
-```
-
-#### Cache-Line Padding & False Sharing Elimination
-To maximize hardware performance on multi-core processors, the `head` (written by the I/O thread) and `tail` (written by the worker thread) pointers are separated by 64 bytes of padding (matching modern CPU L1 data cache lines):
-```zig
-pub fn RingBuffer(comptime T: type, comptime capacity: usize) type {
-    std.debug.assert(std.math.isPowerOfTwo(capacity));
-    return struct {
-        const Self = @This();
-        const mask = capacity - 1;
-
-        slots: [capacity]T = undefined,
-        
-        // Align head to separate cache line to prevent false sharing
-        head: std.atomic.Value(usize) align(64) = std.atomic.Value(usize).init(0),
-        
-        // Align tail to separate cache line
-        tail: std.atomic.Value(usize) align(64) = std.atomic.Value(usize).init(0),
-
-        pub fn push(self: *Self, item: T) bool {
-            const h = self.head.load(.monotonic);
-            const t = self.tail.load(.acquire);
-            if (h -% t >= capacity) return false; // Buffer full
-
-            self.slots[h & mask] = item;
-            self.head.store(h +% 1, .release);
-            return true;
-        }
-
-        pub fn pop(self: *Self) ?T {
-            const t = self.tail.load(.monotonic);
-            const h = self.head.load(.acquire);
-            if (t == h) return null; // Buffer empty
-
-            const item = self.slots[t & mask];
-            self.tail.store(t +% 1, .release);
-            return item;
-        }
-    };
-}
-```
-
-### 2.3 Struct Packing, Endianness & Hardware Alignment
+### 2.2 Struct Packing, Endianness & Hardware Alignment
 
 #### `packed struct` vs. `extern struct`
 * **`packed struct`**: Used exclusively for bitfields defined by the Bluetooth specification where bit layout must be exact down to the individual bit (e.g., `CharacteristicProperties` 8-bit flags, `AdvertisingFlags`, `Cccd` 16-bit descriptor).
@@ -208,11 +130,9 @@ pub fn RingBuffer(comptime T: type, comptime capacity: usize) type {
 
 ---
 
-## 3. GATT Model & Formal State Machine
+## 3. GATT Connection Lifecycle (Reference Model)
 
-### 3.1 Connection Lifecycle State Machine
-
-The interaction between a Central device and a Peripheral follows a deterministic finite state machine (FSM):
+The interaction between a Central device and a Peripheral follows the sequence below. On Linux and Windows these steps are carried out by BlueZ and WinRT; Zig-BLE triggers them through the backend API (`connectDevice`, `discoverServices`, `subscribeNotifications`) but does not implement this state machine itself. It is shown here as a reference for the order of operations and the ATT PDUs involved.
 
 ```mermaid
 stateDiagram-v2
@@ -236,24 +156,16 @@ stateDiagram-v2
     Disconnected --> [*]
 ```
 
-#### Formal State Definitions
+#### State Definitions
 1. **`Disconnected`**: The radio is idle or in passive/active scanning mode. No Link Layer connection exists.
 2. **`Connecting`**: A connection request PDU (`CONNECT_IND` / `AUX_CONNECT_REQ`) has been transmitted. The connection supervision timer is initialized.
 3. **`Connected_Raw`**: Link Layer is connected, but ATT MTU is at default baseline (23 bytes; 20 bytes maximum payload).
 4. **`MTU_Exchange`**: Asymmetric client-server negotiation of Maximum Transmission Unit ($23 \le \text{MTU} \le 517$).
 5. **`Service_Discovery`**: Enumeration of Primary and Secondary GATT Services (`0x2800`, `0x2801`) via BlueZ ObjectManager or ATT Read By Group Type requests.
 6. **`Characteristic_Discovery`**: Enumeration of Characteristics (`0x2803`) and Descriptors (`CCCD 0x2902`, `CUDD 0x2901`).
-7. **`Subscribed_Streaming`**: Active notification/indication subscription via Client Characteristic Configuration Descriptor. Sensor data streams into the notification dispatcher.
+7. **`Subscribed_Streaming`**: Active notification/indication subscription via Client Characteristic Configuration Descriptor. Notifications are delivered to the callback registered with `subscribeNotifications`.
 
-### 3.2 Backpressure & Saturation Policies
-
-When peripheral sensors transmit notifications faster than the application consumer can process them (e.g., telemetry burst at 200 Hz), the queue will saturate. Zig-BLE defines three formal backpressure policies:
-
-| Policy | Behavior on Buffer Full | Data Guarantee | Typical Use Case |
-| :--- | :--- | :--- | :--- |
-| **`Drop-Oldest` (Lossy)** | Overwrites the oldest packet in the circular buffer. | **Latest State Guaranteed**; older samples discarded. | Real-time dashboards, battery telemetry, live UI gauges. |
-| **`Drop-Newest` (Lossy)** | Rejects incoming packet; retains buffer backlog. | **Historical Continuity Guaranteed**; new samples lost. | State transition logging, alert sequence auditing. |
-| **`Block / Throttle` (Lossless)** | Blocks producer thread or suspends socket polling (`EPOLL_CTL_MOD` removing `EPOLLIN`). | **Zero Loss Guaranteed**; radio flow control halts peer. | OTA Firmware Updates, bulk file transfer, medical ECG dumps. |
+Zig-BLE delivers notifications directly to the registered callback; there is no internal queue. If an application needs buffering or a drop policy (drop oldest, drop newest, throttle), it implements it in the callback.
 
 ---
 
@@ -394,13 +306,11 @@ For point-to-point binary transport bypassing ATT/GATT MTU ceilings, Zig-BLE com
 +-----------------------------------------------------------------------+
 ```
 
-Credit-based flow control is managed transparently by the Linux kernel Bluetooth subsystem (`l2cap_core.ko`), ensuring zero packet loss and automatic TCP-like stream backpressure.
+Credit-based flow control is handled by the Linux kernel Bluetooth subsystem: when the peer runs out of credits, writes block (or return `EAGAIN` on non-blocking sockets).
 
 ---
 
-## 5. Tooling & Automated Documentation Pipeline
-
-Zig-BLE provides integrated native tooling to generate both interactive HTML API documentation and compiler-verified test logs.
+## 5. Tooling & Documentation
 
 ### 5.1 Generating Interactive HTML Documentation
 
@@ -415,28 +325,13 @@ The resulting interactive documentation is generated in `zig-out/docs/`:
 * `main.js` & `main.wasm`: Client-side search index and type cross-reference engine.
 * `sources.tar`: Embedded syntax-highlighted source code browser.
 
-### 5.2 Compiling with mdBook (Optional Handbuch Build)
-
-To serve this architecture manual and the technical white paper as an interactive web book:
-
-```bash
-# Install mdBook if not already installed
-cargo install mdbook
-
-# Build the book
-mdbook build docs
-
-# Serve with live reload on http://localhost:3000
-mdbook serve docs
-```
-
 ---
 
 ## 6. GATT Data Typing & Format Engine (IEEE-11073-20601 & 0x2904)
 
 Standardized Bluetooth Low Energy profiles (e.g., Health Thermometer `0x1809`, Pulse Oximeter `0x1822`, Environmental Sensing `0x181A`, Weight Scale `0x181D`) mandate binary floating-point encodings adhering to the **IEEE-11073-20601 Medical Device Communication Standard**.
 
-Zig-BLE provides zero-allocation, mathematically verified decoders and encoders for these types, directly integrated into the client and server GATT pipelines.
+Zig-BLE provides zero-allocation, unit-tested decoders and encoders for these types, integrated into the client and server GATT APIs.
 
 ### 6.1 IEEE-11073-20601 16-Bit SFLOAT & 32-Bit FLOAT
 
@@ -502,11 +397,11 @@ Both GATT Client (`GattCharacteristic`) and GATT Server (`ServerCharacteristic`)
 
 ## 7. Zero-Copy Attribute Protocol (ATT) Engine
 
-`Zig-BLE` implements a complete, zero-allocation Attribute Protocol (ATT) PDU codec strictly conforming to **Bluetooth Core Specification v5.4 / v6.0, Vol 3, Part F**.
+`Zig-BLE` implements a zero-allocation Attribute Protocol (ATT) PDU codec following **Bluetooth Core Specification v5.4 / v6.0, Vol 3, Part F**. It encodes and decodes PDUs. On Linux and Windows, request/response handling over a live link is done by BlueZ or WinRT. An `AttBearer` state machine for raw L2CAP exists (used by the experimental `HciBackend`), but it is not yet usable against a real controller.
 
 ### 7.1 Supported ATT Opcode Matrix
 
-The engine provides zero-copy parsers and serializers for all 20 standard ATT PDUs:
+The engine provides zero-copy parsers and serializers for the following ATT PDUs:
 
 | Opcode | Command / Request / Response PDU | Zero-Copy Parser / Iterator |
 | :--- | :--- | :--- |
@@ -530,7 +425,7 @@ The engine provides zero-copy parsers and serializers for all 20 standard ATT PD
 | `0x12` | **ATT_WRITE_REQ** | `WriteRequest.parse(raw)` |
 | `0x13` | **ATT_WRITE_RSP** | `WriteResponse.parse(raw)` |
 | `0x52` | **ATT_WRITE_CMD** | `WriteCommand.parse(raw)` |
-| `0xD2` | **ATT_SIGNED_WRITE_CMD** | `SignedWriteCommand.parse(raw)` (with 12-byte MAC signature verification) |
+| `0xD2` | **ATT_SIGNED_WRITE_CMD** | `SignedWriteCommand.parse(raw)` (12-byte signature; verify with `verifyAttSign`) |
 | `0x16` | **ATT_PREPARE_WRITE_REQ** | `PrepareWriteRequest.parse(raw)` |
 | `0x17` | **ATT_PREPARE_WRITE_RSP** | `PrepareWriteResponse.parse(raw)` |
 | `0x18` | **ATT_EXECUTE_WRITE_REQ** | `ExecuteWriteRequest.parse(raw)` |
@@ -593,7 +488,7 @@ std.debug.print("Rotated MAC: {s}\n", .{rpa.toString()});
 
 ### 8.3 Security Manager Protocol (SMP) PDU Engine (L2CAP CID 0x0006)
 
-Complete zero-copy representation of all standard SMP packets:
+Zero-copy encoders and decoders for all standard SMP packets. An experimental `SmpStateMachine` covers Legacy Pairing and LE Secure Connections Just Works with ECDH P-256. Not implemented yet: user confirmation for numeric comparison, SC passkey entry, key distribution and starting link encryption. On Linux and Windows, pairing is performed by BlueZ or Windows.
 - `PairingRequest` & `PairingResponse` (`AuthReq`, `IoCapability`, `KeyDistribution`)
 - `PairingConfirm` & `PairingRandom`
 - `PairingFailed` (`PairingFailedReason`)
@@ -664,11 +559,13 @@ All signaling commands on the fixed LE Signaling Channel (`CID 0x0005`) are mode
 
 ---
 
-## 11. Raw HCI Subsystem (Zero-Daemon / Embedded Mode)
+## 11. Raw HCI Subsystem (Without bluetoothd)
 
 Compliant with Bluetooth Core Specification v5.4 / v6.0, Volume 4, Part E (HCI Functional Specification).
 
-Designed for bare-metal embedded Linux gateways and deterministic real-time systems where `bluetoothd` (BlueZ daemon), D-Bus IPC, and systemd are omitted to achieve sub-microsecond packet latency and zero heap allocations.
+Intended for minimal embedded Linux systems where `bluetoothd` and D-Bus are not available.
+
+**Current status:** `HciController` opens a raw HCI socket, reads the controller address and runs LE scans. The command encoders and event decoders below cover a much larger part of the HCI specification, The experimental `HciBackend` wires connection commands, ACL flow control, ATT and SMP together, but it does not yet wait for controller events (e.g. LE Connection Complete) or ATT responses, so it is not usable against a real controller.
 
 ### 11.1 Low-Level Architecture & Packet Framing
 - **Transport**: Communicates directly with the Linux Bluetooth subsystem via `AF_BLUETOOTH` and `BTPROTO_HCI` (`HciSocket`).
@@ -708,7 +605,7 @@ Parses incoming controller events directly from network buffers:
 
 ## 12. Unified HAL & VTable Architecture (`src/backend/vtable.zig`)
 
-To decouple high-level GATT application logic from platform-specific operating system drivers and transport media, Zig-BLE v1.0.0 introduces a pluggable Hardware Abstraction Layer (HAL) governed by `BackendVTable`:
+To decouple GATT application logic from platform-specific drivers, Zig-BLE uses a pluggable Hardware Abstraction Layer (HAL) governed by `BackendVTable` (abridged; see [`src/backend/vtable.zig`](../src/backend/vtable.zig) for MTU, pairing and bonding functions):
 
 ```zig
 pub const BackendVTable = struct {
@@ -731,12 +628,12 @@ pub const BackendVTable = struct {
 };
 ```
 
-This abstraction allows userland code to target the single `UnifiedAdapter` struct, which routes calls transparently to:
+This abstraction allows userland code to target the single `UnifiedAdapter` struct, which routes calls to one of the implemented backends:
 * **Windows Native Backend (`src/backend/windows/`)**: Windows 11 Win32 + WinRT Bluetooth subsystem.
-* **Linux D-Bus Wire Backend (`src/dbus/`)**: Direct UNIX socket communications with `bluetoothd`.
-* **Linux Direct HCI Backend (`src/hci/`)**: Zero-daemon direct kernel socket communications (`AF_BLUETOOTH`).
-* **Serial UART Backend (`src/hci/h4.zig`)**: Bare-metal embedded microcontrollers.
-* **Virtual Mock Backend (`src/backend/mock.zig`)**: In-memory deterministic test runner for headless CI.
+* **Linux BlueZ Backend (`src/backend/bluez/`)**: BlueZ over the pure-Zig D-Bus wire client (`src/dbus/wire/`).
+* **Virtual Mock Backend (`src/backend/mock/`)**: In-memory deterministic backend for tests without hardware.
+
+Experimental backends for raw HCI (`src/backend/hci.zig`) and serial UART (`src/backend/uart.zig`) implement the same interface but are not yet usable against a real controller (see Section 11).
 
 ---
 
@@ -776,9 +673,9 @@ Unlike traditional C++ solutions that require MSVC C++ runtime DLLs, Windows SDK
 
 ---
 
-## 14. Pure-Zig Bare-Metal Host-Stack (UART H4 & L2CAP ACL Engine)
+## 14. Bare-Metal Host-Stack Building Blocks (UART H4 & L2CAP ACL)
 
-For microcontroller environments lacking an operating system, Zig-BLE provides a standalone Bluetooth Host Stack:
+For environments without an operating system Bluetooth stack, Zig-BLE provides the lower building blocks of a host stack. A complete host stack (connection management, ATT and SMP state machines on top of these layers) is not implemented yet; see [PRODUCTION_READINESS.md](PRODUCTION_READINESS.md).
 
 ### 14.1 H4 UART Streaming Parser (`src/hci/h4.zig`)
 Conforms strictly to Bluetooth Core Spec Vol 4, Part A (HCI UART Transport Layer):
@@ -845,41 +742,28 @@ Serializes security state into a compact, endian-safe binary image for non-volat
 Zig-BLE features an integrated binary PCAP generator conformant with standard Libpcap format:
 * **Global Header**: Magic number `0xA1B2C3D4`, Version 2.4, Link-Layer Header Type `DLT_BLUETOOTH_HCI_H4` (LinkType `187`).
 * **Packet Record**: 16-byte record header with POSIX microsecond timestamps, captured length, original length, and direction indicator byte.
-* Enables zero-overhead protocol auditing in Wireshark with full Bluetooth SIG profile dissection.
+* Captures can be opened directly in Wireshark, which dissects the HCI, L2CAP, ATT and SMP layers.
 
 ---
 
-## 18. Empirical Benchmarks & Physical Hardware Verification
+## 18. Benchmarks & Hardware Verification
 
-### 18.1 Microbenchmark Suite (`ReleaseFast` on AMD64)
+### 18.1 Microbenchmark Suite
 
-```
-=========================================================================================
-                       Zig-BLE High-Performance Microbenchmark Suite                    
-                   Bluetooth Core Spec v5.4/v6.0 - Zero Dynamic Allocations             
-=========================================================================================
-Benchmark Target                           | Iterationen| Gesamtzeit |    Latenz  |   Durchsatz
--------------------------------------------+------------+------------+------------+--------------
-AdvertisingReport.parse (Full Packet)      |    2000000 |   15.30 ms |    7.65 ns |   130.70 Mop/s
-AdIterator.next (TLV Element Walk)         |    5000000 |   13.89 ms |    2.78 ns |   359.95 Mop/s
-UUID.parse (128-bit Canonical SIMD)        |    2000000 |   25.45 ms |   12.72 ns |    78.59 Mop/s
-UUID.parse (128-bit Flat 32-char SIMD)     |    2000000 |   21.29 ms |   10.64 ns |    93.96 Mop/s
-AdStructure.asServiceData16 (Zero-Copy)    |    5000000 |    2.33 ms |    0.47 ns |  2144.63 Mop/s
-UUID.toString (128-bit to Canonical)       |    2000000 |    2.25 ms |    1.13 ns |   888.02 Mop/s
-Address.parse + classifyRandom             |    3000000 |    2.09 ms |    0.70 ns |  1433.28 Mop/s
-Cccd.encode + Cccd.decode                  |   10000000 |    5.70 ms |    0.57 ns |  1755.83 Mop/s
-AssignedNumbers (Service Registry)         |    5000000 |    3.00 ms |    0.60 ns |  1667.00 Mop/s
-D-Bus Wire Message.finalize (OPTIMIERT)    |    2000000 |    6.35 ms |    3.18 ns |   314.87 Mop/s
-D-Bus Wire MessageIter (Zero-Copy)         |    3000000 |    6.97 ms |    2.32 ns |   430.71 Mop/s
-H4StreamParser.feed (UART Frame Parser)    |    5000000 |   42.44 ms |    8.49 ns |   117.81 Mop/s
-AclReassembler.processFragment (Zero-Copy) |    5000000 |    5.08 ms |    1.02 ns |   984.58 Mop/s
-GATT LongWrite (Chunk + Server Queue)      |    1000000 |    0.00 ms |    0.00 ns |  1000.00 Mop/s
-BondStore.deserialize (NVS Image)          |    2000000 |   26.34 ms |   13.17 ns |    75.94 Mop/s
-=========================================================================================
-```
+`zig build run-bench` measures the protocol parsers and encoders (`ReleaseFast`, single thread). Selected results on an AMD Ryzen 9 9950X3D (Windows 11, median of three runs):
+
+| Operation | ns/op |
+| :--- | ---: |
+| `AdvertisingReport.parse` (complete packet) | 5.5 |
+| `H4StreamParser.feed` (one frame) | 5.1 |
+| GATT Long Write (60 bytes, chunk + server queue) | 8.1 |
+| `UUID.parse` (128-bit, hyphenated) | 11.4 |
+| `BondStore.deserialize` | 11.9 |
+
+The full table, the measurement method and how to interpret the numbers are in the [White Paper, Section 5](WHITEPAPER.md#5-microbenchmarks--performance-evaluation). In short: parsing cost is negligible compared to radio and operating system latency.
 
 ### 18.2 Real Hardware Over-The-Air Telemetry
-Tested against an active Samsung Galaxy S25 Ultra (`78:B6:FE:6C:4E:A4`) via Intel Bluetooth Controller (`A9:94:CA:4E:47:C4`):
+Tested on Windows 11 with a PC Bluetooth adapter against a Samsung Galaxy S25 Ultra:
 * **Discovery Time**: 324.36 ms (8 Services discovered).
 * **Air Interface Latency**: Min 37.59 ms, Avg 57.10 ms, Max 73.17 ms per GATT read transaction.
 * **Success Rate**: 30/31 operations completed successfully over 2.4 GHz physical radio.
@@ -908,5 +792,5 @@ Tested against an active Samsung Galaxy S25 Ultra (`78:B6:FE:6C:4E:A4`) via Inte
 5. **freedesktop.org**: *D-Bus Specification*, Version 0.30+, [https://dbus.freedesktop.org/doc/dbus-specification.html](https://dbus.freedesktop.org/doc/dbus-specification.html).
 6. **Linux Foundation**: *BlueZ Linux Bluetooth Subsystem API Documentation*, `doc/adapter-api.txt`, `doc/device-api.txt`, `doc/gatt-api.txt`.
 7. **POSIX IEEE Std 1003.1-2017**: Standard for Information Technology—Portable Operating System Interface (POSIX), UNIX Domain Sockets & `SCM_RIGHTS`.
-8. **The Zig Software Foundation**: *The Zig Language Specification (0.16.0)*, Memory Safety, Comptime, and Alignment Guarantees.
+8. **The Zig Software Foundation**: *The Zig Language Reference (0.17.0)*, Memory Safety, Comptime, and Alignment Guarantees.
 

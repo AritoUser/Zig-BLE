@@ -5,6 +5,40 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2026-10-28
+
+### Major Release: Production Readiness & Full Protocol Engine (P0/P1/P2)
+This milestone release fulfills all 37 requirements from `docs/PRODUCTION_READINESS.md`, transforming Zig-BLE into an audited, fully verified, production-ready Bluetooth Low Energy library:
+
+* **Security & Crypto Hardening**:
+  * Fixed CSPRNG fallback in `src/crypto/toolbox.zig` (`getrandom` / `SystemFunction036`), eliminated fixed-seed fallback, enforced `isValidPrand22Bits` according to Core Spec Vol 6, Part B, 1.3.2.2.
+  * Official Bluetooth Core Spec Vol 3, Part H, Appendix D cryptographic test vectors (`f4`, `f5`, `f6`, `g2`, `h6`, `h7`, `ah`, `c1`, `s1`, and RFC 4493 AES-CMAC).
+  * Authenticated Bond Store (`src/storage/bond_store.zig`): AES-128-CTR key encryption, constant-time `CmacAes128` MAC tag verification, Windows DPAPI integration, Linux `0600` permission checks, and atomic temp-file write + sync + rename persistence.
+  * Hardened BlueZ Pairing Agent (`src/agent.zig`): strict default-deny (`org.bluez.Error.Rejected`) with path/UUID/passkey validation against malicious D-Bus input.
+* **Backend Robustness & Native Features**:
+  * Removed all silent error drops (`catch {}`), replaced with typed `BleError` or scoped logging (`std.log.scoped(.zig_ble)`).
+  * Real negotiated MTU query (`IGattSession.get_MaxPduSize` on Windows, `GattCharacteristic1.MTU` on Linux).
+  * Windows native pairing & unpairing (`DeviceInformationCustomPairing`), disconnect & reconnect lifecycle tracking (`ConnectionStatusChanged`), and configurable device/characteristic static pool sizing.
+  * Windows peripheral role via `BluetoothLEAdvertisementPublisher` and `GattServiceProvider`.
+  * BlueZ signal and daemon recovery handling (`Connected=false`, `InterfacesRemoved`, `NameOwnerChanged`).
+  * GATT server attribute security permissions (`encrypt-read/write`, `authenticated-*`, `secure-*`, `authorize`).
+* **Raw-HCI & Bare-Metal Stack**:
+  * Added `HciBackend` and `UartBackend` (supporting H4 and 3-Wire H5 SLIP framing with CRC-16) conforming to `BackendVTable`.
+  * Complete connection management (LE Create/Extended Create Connection, Disconnect, Connection Update, Data Length, Encryption) and ACL flow controller (`AclFlowController`).
+  * Full `AttBearer` state machine over L2CAP CID `0x0004` with 30s transaction timeout, request correlation, long reads/writes, and server dispatcher.
+  * Full `SmpStateMachine` over L2CAP CID `0x0006` supporting Legacy & LE Secure Connections (ECDH P-256 via `std.crypto.ecc.P256`).
+  * EATT bearer multiplexer over L2CAP Credit-Based Flow Control (`local_credits`, `remote_credits`, MPS K-frame segmentation & reassembly).
+* **API Hardening, Testing & CI**:
+  * 0 occurrences of `anyerror` in `src/`, fully explicit `BleError` error sets across HAL and backends.
+  * Thread-safe architecture via `SyncMutex`, configurable operation timeouts (`TimeoutConfig`), and atomic lifecycle guards.
+  * Added coverage-guided fuzzing targets (`src/fuzz.zig` with `std.testing.fuzz`).
+  * 1,050-cycle stress test with leak detection (`std.testing.allocator` + Windows `GetProcessHandleCount`).
+  * Integration testing for Wireshark PCAP streaming hook (`PcapHook`).
+  * Automated compile tests for README examples (`tests/test_readme_examples.zig`).
+  * Added `SECURITY.md`, Hardware-in-the-Loop runner (`scripts/hil_runner.zig`), and virtual HCI (`btvirt`/`vhci`) CI workflows.
+
+---
+
 ## [1.2.0] - 2026-10-27
 
 ### Feature Release: Bluetooth SIG Fitness, Ergometer & Health Suite

@@ -13,6 +13,7 @@ pub const ScanCallback = types.ScanCallback;
 pub const NotificationCallback = types.NotificationCallback;
 pub const DiscoveredDevice = types.DiscoveredDevice;
 pub const BleError = types.BleError;
+pub const TimeoutConfig = types.TimeoutConfig;
 pub const Backend = vtable_mod.Backend;
 
 pub const UnifiedDevice = struct {
@@ -20,7 +21,7 @@ pub const UnifiedDevice = struct {
     handle: *anyopaque,
     address: Address,
 
-    pub fn disconnect(self: *UnifiedDevice) !void {
+    pub fn disconnect(self: *UnifiedDevice) BleError!void {
         return self.backend.disconnectDevice(self.handle);
     }
 
@@ -32,35 +33,35 @@ pub const UnifiedDevice = struct {
         return self.backend.getDeviceRssi(self.handle);
     }
 
-    pub fn discoverServices(self: *UnifiedDevice) !void {
+    pub fn discoverServices(self: *UnifiedDevice) BleError!void {
         return self.backend.discoverServices(self.handle);
     }
 
-    pub fn readCharacteristic(self: *UnifiedDevice, uuid: UUID, buf: []u8) !usize {
+    pub fn readCharacteristic(self: *UnifiedDevice, uuid: UUID, buf: []u8) BleError!usize {
         return self.backend.readCharacteristic(self.handle, uuid, buf);
     }
 
-    pub fn writeCharacteristic(self: *UnifiedDevice, uuid: UUID, data: []const u8, with_response: bool) !void {
+    pub fn writeCharacteristic(self: *UnifiedDevice, uuid: UUID, data: []const u8, with_response: bool) BleError!void {
         return self.backend.writeCharacteristic(self.handle, uuid, data, with_response);
     }
 
-    pub fn subscribe(self: *UnifiedDevice, uuid: UUID, cb: NotificationCallback, user_data: ?*anyopaque) !void {
+    pub fn subscribe(self: *UnifiedDevice, uuid: UUID, cb: NotificationCallback, user_data: ?*anyopaque) BleError!void {
         return self.backend.subscribeNotifications(self.handle, uuid, cb, user_data);
     }
 
-    pub fn unsubscribe(self: *UnifiedDevice, uuid: UUID) !void {
+    pub fn unsubscribe(self: *UnifiedDevice, uuid: UUID) BleError!void {
         return self.backend.unsubscribeNotifications(self.handle, uuid);
     }
 
-    pub fn exchangeMtu(self: *UnifiedDevice, target_mtu: u16) !u16 {
+    pub fn exchangeMtu(self: *UnifiedDevice, target_mtu: u16) BleError!u16 {
         return self.backend.exchangeMtu(self.handle, target_mtu);
     }
 
-    pub fn pair(self: *UnifiedDevice, io_cap: types.IoCapability) !void {
+    pub fn pair(self: *UnifiedDevice, io_cap: types.IoCapability) BleError!void {
         return self.backend.pairDevice(self.handle, io_cap);
     }
 
-    pub fn unpair(self: *UnifiedDevice) !void {
+    pub fn unpair(self: *UnifiedDevice) BleError!void {
         return self.backend.unpairDevice(self.handle);
     }
 
@@ -68,40 +69,46 @@ pub const UnifiedDevice = struct {
         return self.backend.getBondState(self.handle);
     }
 
-    pub fn acquireNotifyFd(self: *UnifiedDevice, uuid: UUID, out_mtu: *u16) !std.posix.fd_t {
+    pub fn acquireNotifyFd(self: *UnifiedDevice, uuid: UUID, out_mtu: *u16) BleError!std.posix.fd_t {
         return self.backend.acquireNotifyFd(self.handle, uuid, out_mtu);
     }
 };
 
 pub const UnifiedAdapter = struct {
     backend: Backend,
+    timeouts: TimeoutConfig = .{},
 
     pub fn init(backend_inst: Backend) UnifiedAdapter {
         return .{ .backend = backend_inst };
+    }
+
+    pub fn initWithTimeouts(backend_inst: Backend, timeouts: TimeoutConfig) UnifiedAdapter {
+        return .{ .backend = backend_inst, .timeouts = timeouts };
     }
 
     pub fn getBackendName(self: *const UnifiedAdapter) []const u8 {
         return self.backend.getName();
     }
 
-    pub fn setPowered(self: *UnifiedAdapter, powered: bool) !void {
+    pub fn setPowered(self: *UnifiedAdapter, powered: bool) BleError!void {
         return self.backend.setPowered(powered);
     }
 
-    pub fn isPowered(self: *UnifiedAdapter) !bool {
+    pub fn isPowered(self: *UnifiedAdapter) BleError!bool {
         return self.backend.isPowered();
     }
 
-    pub fn startScan(self: *UnifiedAdapter, filter: ScanFilter, cb: ScanCallback, user_data: ?*anyopaque) !void {
+    pub fn startScan(self: *UnifiedAdapter, filter: ScanFilter, cb: ScanCallback, user_data: ?*anyopaque) BleError!void {
         return self.backend.startScan(filter, cb, user_data);
     }
 
-    pub fn stopScan(self: *UnifiedAdapter) !void {
+    pub fn stopScan(self: *UnifiedAdapter) BleError!void {
         return self.backend.stopScan();
     }
 
-    pub fn connect(self: *UnifiedAdapter, addr: Address, timeout_ms: u32) !UnifiedDevice {
-        const handle = try self.backend.connectDevice(addr, timeout_ms);
+    pub fn connect(self: *UnifiedAdapter, addr: Address, timeout_ms: u32) BleError!UnifiedDevice {
+        const eff_timeout = if (timeout_ms == 0) self.timeouts.connect_ms else timeout_ms;
+        const handle = try self.backend.connectDevice(addr, eff_timeout);
         return UnifiedDevice{
             .backend = self.backend,
             .handle = handle,

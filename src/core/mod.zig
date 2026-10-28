@@ -34,6 +34,11 @@ pub const parseNotification = gatt.parseNotification;
 pub const AttErrorCode = att.AttErrorCode;
 pub const AttPdu = att.AttPdu;
 pub const AttError = att.AttError;
+pub const AttBearer = att.AttBearer;
+pub const AttServerAttribute = att.AttServerAttribute;
+pub const ServiceDiscoveryClient = att.ServiceDiscoveryClient;
+pub const LongReadClient = att.LongReadClient;
+pub const QueuedWriteClient = att.QueuedWriteClient;
 
 pub const AdType = advertising.AdType;
 pub const AdvertisingFlags = advertising.AdvertisingFlags;

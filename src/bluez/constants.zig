@@ -96,6 +96,7 @@ pub const BlueZ = struct {
             /// Essential: Becomes true once BlueZ has resolved all GATT services and characteristics!
             /// Prevents the ServicesResolved race condition.
             pub const ServicesResolved = "ServicesResolved"; // bool
+            pub const MTU = "MTU"; // u16
         };
     };
 

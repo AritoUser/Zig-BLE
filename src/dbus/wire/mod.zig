@@ -34,6 +34,66 @@ pub const RequestNameFlags = connection.RequestNameFlags;
 pub const RequestNameReply = connection.RequestNameReply;
 pub const ReleaseNameReply = connection.ReleaseNameReply;
 
+pub const NonLinuxConnection = struct {
+    pub fn initSystem() error{NotSupported}!@This() {
+        return error.NotSupported;
+    }
+    pub fn deinit(self: *@This()) void {
+        _ = self;
+    }
+    pub fn addMatch(self: *@This(), rule: [:0]const u8) error{NotSupported}!void {
+        _ = self;
+        _ = rule;
+        return error.NotSupported;
+    }
+    pub fn pollSocket(self: *@This(), timeout_ms: c_int) usize {
+        _ = self;
+        _ = timeout_ms;
+        return 0;
+    }
+    pub fn popMessage(self: *@This()) ?Message {
+        _ = self;
+        return null;
+    }
+    pub fn popMatching(
+        self: *@This(),
+        context: anytype,
+        comptime predicate: anytype,
+    ) ?Message {
+        _ = self;
+        _ = context;
+        _ = predicate;
+        return null;
+    }
+    pub fn requeueMessage(self: *@This(), msg: Message) error{NotSupported}!void {
+        _ = self;
+        _ = msg;
+        return error.NotSupported;
+    }
+    pub fn callMethod(
+        self: *@This(),
+        dest: [:0]const u8,
+        path: [:0]const u8,
+        iface: [:0]const u8,
+        method: [:0]const u8,
+        timeout_ms: u32,
+    ) error{NotSupported}!Message {
+        _ = self;
+        _ = dest;
+        _ = path;
+        _ = iface;
+        _ = method;
+        _ = timeout_ms;
+        return error.NotSupported;
+    }
+    pub fn sendMessage(self: *@This(), msg: *Message, timeout_ms: u32) error{NotSupported}!Message {
+        _ = self;
+        _ = msg;
+        _ = timeout_ms;
+        return error.NotSupported;
+    }
+};
+
 test {
     _ = types;
     _ = socket;

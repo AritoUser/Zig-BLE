@@ -102,7 +102,7 @@ pub const AttErrorCode = enum(u8) {
     }
 
     /// Maps an ATT error code into an idiomatic Zig error.
-    pub fn toError(self: AttErrorCode) anyerror {
+    pub fn toError(self: AttErrorCode) AttError {
         return switch (self) {
             .invalid_handle => error.InvalidHandle,
             .read_not_permitted => error.ReadNotPermitted,
@@ -164,6 +164,13 @@ pub const AttError = error{
     ValueNotAllowed,
     CccdImproperlyConfigured,
     GattError,
+    TransactionInProgress,
+    TransactionTimeout,
+    BearerTimedOut,
+    BearerDisconnected,
+    UnexpectedResponse,
+    UnexpectedOpcode,
+    InvalidMtu,
 };
 
 // ============================================================================
@@ -1246,4 +1253,598 @@ test "ATT: SignedWriteCommand encode and decode roundtrip" {
     try std.testing.expectEqual(@as(u16, 0x0055), parsed.signed_write_cmd.handle);
     try std.testing.expectEqualStrings("AuthPayload", parsed.signed_write_cmd.value);
     try std.testing.expectEqual([_]u8{ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12 }, parsed.signed_write_cmd.signature);
+}
+
+
+// ============================================================================
+// ATT Transaction State Machine (Client & Server over L2CAP CID 0x0004)
+// Bluetooth Core Specification Vol 3, Part F, Section 3.3.2 & 3.3.3
+// ============================================================================
+
+/// Fixed L2CAP Channel Identifier for the Attribute Protocol (ATT).
+pub const ATT_CID: u16 = 0x0004;
+
+/// Default ATT_MTU for LE Unenhanced ATT bearer (23 octets).
+pub const DEFAULT_ATT_MTU: u16 = 23;
+
+/// Maximum ATT_MTU per Bluetooth Core Specification (517 octets).
+pub const MAX_ATT_MTU: u16 = 517;
+
+/// Mandatory ATT transaction timeout (30 seconds = 30,000 ms) per Vol 3, Part F, Section 3.3.3.
+pub const TRANSACTION_TIMEOUT_MS: u64 = 30_000;
+
+/// Lifecycle state of an ATT Bearer.
+pub const BearerState = enum {
+    /// Connected and ready to initiate a client request.
+    idle,
+    /// Client request sent; awaiting matching response or ErrorResponse.
+    waiting_response,
+    /// A transaction exceeded 30 seconds; no more requests/indications may be sent on this bearer.
+    timed_out,
+    /// Underlying L2CAP / HCI link is disconnected.
+    disconnected,
+};
+
+/// Result returned when processing an incoming PDU on the Client side of an `AttBearer`.
+pub const ClientRxEvent = union(enum) {
+    /// Correlated response to the active client request.
+    response: AttPdu,
+    /// Asynchronous server notification (does not affect active client transaction).
+    notification: HandleValueNotification,
+    /// Asynchronous server indication plus the number of bytes written to `confirm_out_buf` (0x1E).
+    indication: struct {
+        indication: HandleValueIndication,
+        confirm_len: usize,
+    },
+};
+
+/// Server attribute entry for `AttBearer.handleServerRx`.
+pub const AttServerAttribute = struct {
+    handle: u16,
+    uuid: UUID,
+    end_group_handle: u16 = 0,
+    permissions: struct {
+        readable: bool = true,
+        writable: bool = false,
+        encrypt_required: bool = false,
+        authn_required: bool = false,
+    } = .{},
+    value: []u8,
+    value_len: usize,
+};
+
+/// Queued PrepareWrite entry stored in the bearer for atomic `ExecuteWriteRequest`.
+pub const PreparedWriteEntry = struct {
+    handle: u16 = 0,
+    offset: u16 = 0,
+    data: [64]u8 = @splat(0),
+    len: usize = 0,
+};
+
+/// Stateful ATT Bearer managing Client & Server transactions over L2CAP CID `0x0004`.
+pub const AttBearer = struct {
+    state: BearerState = .idle,
+    mtu: u16 = DEFAULT_ATT_MTU,
+    local_max_mtu: u16 = MAX_ATT_MTU,
+    pending_request_opcode: ?AttOpcode = null,
+    request_sent_ms: u64 = 0,
+    indication_pending_confirm: bool = false,
+    indication_sent_ms: u64 = 0,
+    link_encrypted: bool = false,
+    link_authenticated: bool = false,
+    prep_queue: [8]PreparedWriteEntry = @splat(.{}),
+    prep_queue_count: usize = 0,
+
+    /// Maps a client request opcode to its expected positive response opcode.
+    pub fn expectedResponseOpcode(req_op: AttOpcode) ?AttOpcode {
+        return switch (req_op) {
+            .exchange_mtu_req => .exchange_mtu_rsp,
+            .find_info_req => .find_info_rsp,
+            .find_by_type_val_req => .find_by_type_val_rsp,
+            .read_by_type_req => .read_by_type_rsp,
+            .read_req => .read_rsp,
+            .read_blob_req => .read_blob_rsp,
+            .read_multiple_req => .read_multiple_rsp,
+            .read_by_group_type_req => .read_by_group_type_rsp,
+            .write_req => .write_rsp,
+            .prepare_write_req => .prepare_write_rsp,
+            .execute_write_req => .execute_write_rsp,
+            else => null,
+        };
+    }
+
+    /// Resets bearer state upon establishing a new BLE connection.
+    pub fn onConnect(self: *AttBearer) void {
+        self.state = .idle;
+        self.mtu = DEFAULT_ATT_MTU;
+        self.pending_request_opcode = null;
+        self.request_sent_ms = 0;
+        self.indication_pending_confirm = false;
+        self.indication_sent_ms = 0;
+        self.link_encrypted = false;
+        self.link_authenticated = false;
+        self.prep_queue_count = 0;
+    }
+
+    /// Handles link disconnection. If a transaction was in flight, returns `AttError.BearerDisconnected`.
+    pub fn onDisconnect(self: *AttBearer) AttError!void {
+        const had_active_tx = (self.state == .waiting_response) or self.indication_pending_confirm;
+        self.state = .disconnected;
+        self.pending_request_opcode = null;
+        self.indication_pending_confirm = false;
+        self.prep_queue_count = 0;
+        if (had_active_tx) return AttError.BearerDisconnected;
+    }
+
+    /// Checks whether the active client request or server indication has exceeded the 30s timeout.
+    pub fn checkTimeout(self: *AttBearer, now_ms: u64) AttError!void {
+        if (self.state == .waiting_response) {
+            if (now_ms -| self.request_sent_ms >= TRANSACTION_TIMEOUT_MS) {
+                self.state = .timed_out;
+                self.pending_request_opcode = null;
+                return AttError.TransactionTimeout;
+            }
+        }
+        if (self.indication_pending_confirm) {
+            if (now_ms -| self.indication_sent_ms >= TRANSACTION_TIMEOUT_MS) {
+                self.state = .timed_out;
+                self.indication_pending_confirm = false;
+                return AttError.TransactionTimeout;
+            }
+        }
+    }
+
+    /// Begins a client request transaction, enforcing Sequential Flow Control (Vol 3, Part F, 3.3.2).
+    pub fn beginRequest(self: *AttBearer, req_pdu: AttPdu, now_ms: u64, out_buf: []u8) AttError!usize {
+        switch (self.state) {
+            .disconnected => return AttError.BearerDisconnected,
+            .timed_out => return AttError.BearerTimedOut,
+            .waiting_response => return AttError.TransactionInProgress,
+            .idle => {},
+        }
+
+        const effective_cap = @min(out_buf.len, @as(usize, self.mtu));
+        const encoded_len = try req_pdu.serialize(out_buf[0..effective_cap]);
+        const req_op: AttOpcode = @enumFromInt(out_buf[0]);
+        if (expectedResponseOpcode(req_op) == null) return AttError.InvalidOpcode;
+
+        if (req_pdu == .exchange_mtu_req) {
+            if (req_pdu.exchange_mtu_req.client_rx_mtu < DEFAULT_ATT_MTU) return AttError.InvalidMtu;
+            self.local_max_mtu = req_pdu.exchange_mtu_req.client_rx_mtu;
+        }
+
+        self.state = .waiting_response;
+        self.pending_request_opcode = req_op;
+        self.request_sent_ms = now_ms;
+        return encoded_len;
+    }
+
+    /// Sends an unacknowledged client command (`WriteCommand` or `SignedWriteCommand`) without starting a transaction.
+    pub fn sendCommand(self: *const AttBearer, cmd_pdu: AttPdu, out_buf: []u8) AttError!usize {
+        if (self.state == .disconnected) return AttError.BearerDisconnected;
+        if (self.state == .timed_out) return AttError.BearerTimedOut;
+        if (cmd_pdu != .write_cmd and cmd_pdu != .signed_write_cmd) return AttError.InvalidOpcode;
+
+        const effective_cap = @min(out_buf.len, @as(usize, self.mtu));
+        return cmd_pdu.serialize(out_buf[0..effective_cap]);
+    }
+
+    /// Processes an incoming PDU on the Client bearer, correlating responses and auto-confirming indications.
+    pub fn handleClientRx(self: *AttBearer, raw_pdu: []const u8, confirm_out_buf: ?[]u8) AttError!ClientRxEvent {
+        if (self.state == .disconnected) return AttError.BearerDisconnected;
+        if (self.state == .timed_out) return AttError.BearerTimedOut;
+        if (raw_pdu.len == 0) return AttError.PayloadTooShort;
+
+        const pdu = try AttPdu.parse(raw_pdu);
+
+        // Server-initiated PDUs may arrive at any time, even while a client request is pending.
+        switch (pdu) {
+            .handle_value_ntf => |ntf| return .{ .notification = ntf },
+            .handle_value_ind => |ind| {
+                var cfm_len: usize = 0;
+                if (confirm_out_buf) |buf| {
+                    cfm_len = try HandleValueConfirmation.encode(buf);
+                }
+                return .{ .indication = .{ .indication = ind, .confirm_len = cfm_len } };
+            },
+            else => {},
+        }
+
+        // Response correlation
+        if (self.state != .waiting_response or self.pending_request_opcode == null) {
+            return AttError.UnexpectedResponse;
+        }
+
+        const pending_op = self.pending_request_opcode.?;
+        if (pdu == .error_rsp) {
+            if (pdu.error_rsp.request_opcode != @intFromEnum(pending_op)) {
+                return AttError.UnexpectedOpcode;
+            }
+            self.state = .idle;
+            self.pending_request_opcode = null;
+            return pdu.error_rsp.error_code.toError();
+        }
+
+        const expected_op = expectedResponseOpcode(pending_op) orelse return AttError.UnexpectedOpcode;
+        const actual_op: AttOpcode = @enumFromInt(raw_pdu[0]);
+        if (actual_op != expected_op) {
+            return AttError.UnexpectedOpcode;
+        }
+
+        if (pdu == .exchange_mtu_rsp) {
+            if (pdu.exchange_mtu_rsp.server_rx_mtu < DEFAULT_ATT_MTU) {
+                self.state = .idle;
+                self.pending_request_opcode = null;
+                return AttError.InvalidMtu;
+            }
+            self.mtu = @max(DEFAULT_ATT_MTU, @min(self.local_max_mtu, pdu.exchange_mtu_rsp.server_rx_mtu));
+        }
+
+        self.state = .idle;
+        self.pending_request_opcode = null;
+        return .{ .response = pdu };
+    }
+
+    /// Sends a server-initiated indication (`0x1D`), enforcing single-indication-in-flight rule.
+    pub fn beginServerIndication(self: *AttBearer, ind: HandleValueIndication, now_ms: u64, out_buf: []u8) AttError!usize {
+        if (self.state == .disconnected) return AttError.BearerDisconnected;
+        if (self.state == .timed_out) return AttError.BearerTimedOut;
+        if (self.indication_pending_confirm) return AttError.TransactionInProgress;
+
+        const effective_cap = @min(out_buf.len, @as(usize, self.mtu));
+        const len = try ind.encode(out_buf[0..effective_cap]);
+        self.indication_pending_confirm = true;
+        self.indication_sent_ms = now_ms;
+        return len;
+    }
+
+    /// Processes an incoming client request/command/confirmation on the Server side of the bearer.
+    /// Returns the number of response bytes written to `out_buf` (0 for `WriteCommand` or `HandleValueConfirmation`).
+    pub fn handleServerRx(self: *AttBearer, raw_pdu: []const u8, db: []AttServerAttribute, out_buf: []u8) AttError!usize {
+        if (self.state == .disconnected) return AttError.BearerDisconnected;
+        if (self.state == .timed_out) return AttError.BearerTimedOut;
+        if (raw_pdu.len == 0) return AttError.PayloadTooShort;
+
+        const req_op_raw = raw_pdu[0];
+        const pdu = AttPdu.parse(raw_pdu) catch |err| {
+            const err_code: AttErrorCode = switch (err) {
+                error.InvalidOpcode => .request_not_supported,
+                else => .invalid_pdu,
+            };
+            return (ErrorResponse{
+                .request_opcode = req_op_raw,
+                .handle = 0x0000,
+                .error_code = err_code,
+            }).encode(out_buf);
+        };
+
+        switch (pdu) {
+            .handle_value_cfm => {
+                if (!self.indication_pending_confirm) return AttError.UnexpectedResponse;
+                self.indication_pending_confirm = false;
+                return 0;
+            },
+            .exchange_mtu_req => |req| {
+                if (req.client_rx_mtu < DEFAULT_ATT_MTU) {
+                    return (ErrorResponse{
+                        .request_opcode = req_op_raw,
+                        .handle = 0x0000,
+                        .error_code = .invalid_pdu,
+                    }).encode(out_buf);
+                }
+                self.mtu = @max(DEFAULT_ATT_MTU, @min(self.local_max_mtu, req.client_rx_mtu));
+                return (ExchangeMtuResponse{ .server_rx_mtu = self.local_max_mtu }).encode(out_buf);
+            },
+            .read_req => |req| {
+                for (db) |*attr| {
+                    if (attr.handle == req.handle) {
+                        if (!attr.permissions.readable) {
+                            return (ErrorResponse{ .request_opcode = req_op_raw, .handle = req.handle, .error_code = .read_not_permitted }).encode(out_buf);
+                        }
+                        if (attr.permissions.encrypt_required and !self.link_encrypted) {
+                            return (ErrorResponse{ .request_opcode = req_op_raw, .handle = req.handle, .error_code = .insufficient_encryption }).encode(out_buf);
+                        }
+                        if (attr.permissions.authn_required and !self.link_authenticated) {
+                            return (ErrorResponse{ .request_opcode = req_op_raw, .handle = req.handle, .error_code = .insufficient_authentication }).encode(out_buf);
+                        }
+                        const max_val = @min(attr.value_len, @as(usize, self.mtu) - 1);
+                        return (ReadResponse{ .value = attr.value[0..max_val] }).encode(out_buf);
+                    }
+                }
+                return (ErrorResponse{ .request_opcode = req_op_raw, .handle = req.handle, .error_code = .invalid_handle }).encode(out_buf);
+            },
+            .read_blob_req => |req| {
+                for (db) |*attr| {
+                    if (attr.handle == req.handle) {
+                        if (!attr.permissions.readable) {
+                            return (ErrorResponse{ .request_opcode = req_op_raw, .handle = req.handle, .error_code = .read_not_permitted }).encode(out_buf);
+                        }
+                        if (req.offset > attr.value_len) {
+                            return (ErrorResponse{ .request_opcode = req_op_raw, .handle = req.handle, .error_code = .invalid_offset }).encode(out_buf);
+                        }
+                        const remaining = attr.value_len - req.offset;
+                        const chunk_len = @min(remaining, @as(usize, self.mtu) - 1);
+                        return (ReadBlobResponse{ .part_value = attr.value[req.offset .. req.offset + chunk_len] }).encode(out_buf);
+                    }
+                }
+                return (ErrorResponse{ .request_opcode = req_op_raw, .handle = req.handle, .error_code = .invalid_handle }).encode(out_buf);
+            },
+            .write_req => |req| {
+                for (db) |*attr| {
+                    if (attr.handle == req.handle) {
+                        if (!attr.permissions.writable) {
+                            return (ErrorResponse{ .request_opcode = req_op_raw, .handle = req.handle, .error_code = .write_not_permitted }).encode(out_buf);
+                        }
+                        if (attr.permissions.encrypt_required and !self.link_encrypted) {
+                            return (ErrorResponse{ .request_opcode = req_op_raw, .handle = req.handle, .error_code = .insufficient_encryption }).encode(out_buf);
+                        }
+                        if (req.value.len > attr.value.len) {
+                            return (ErrorResponse{ .request_opcode = req_op_raw, .handle = req.handle, .error_code = .invalid_attribute_value_length }).encode(out_buf);
+                        }
+                        @memcpy(attr.value[0..req.value.len], req.value);
+                        attr.value_len = req.value.len;
+                        return WriteResponse.encode(out_buf);
+                    }
+                }
+                return (ErrorResponse{ .request_opcode = req_op_raw, .handle = req.handle, .error_code = .invalid_handle }).encode(out_buf);
+            },
+            .write_cmd => |cmd| {
+                for (db) |*attr| {
+                    if (attr.handle == cmd.handle and attr.permissions.writable and cmd.value.len <= attr.value.len) {
+                        @memcpy(attr.value[0..cmd.value.len], cmd.value);
+                        attr.value_len = cmd.value.len;
+                        break;
+                    }
+                }
+                return 0;
+            },
+            .prepare_write_req => |req| {
+                if (self.prep_queue_count >= self.prep_queue.len or req.part_value.len > 64) {
+                    return (ErrorResponse{ .request_opcode = req_op_raw, .handle = req.handle, .error_code = .prepare_queue_full }).encode(out_buf);
+                }
+                var entry = &self.prep_queue[self.prep_queue_count];
+                entry.handle = req.handle;
+                entry.offset = req.offset;
+                entry.len = req.part_value.len;
+                @memcpy(entry.data[0..req.part_value.len], req.part_value);
+                self.prep_queue_count += 1;
+                return (PrepareWriteResponse{
+                    .handle = req.handle,
+                    .offset = req.offset,
+                    .part_value = req.part_value,
+                }).encode(out_buf);
+            },
+            .execute_write_req => |req| {
+                defer self.prep_queue_count = 0;
+                if (req.flags == .commit) {
+                    for (self.prep_queue[0..self.prep_queue_count]) |entry| {
+                        var found = false;
+                        for (db) |*attr| {
+                            if (attr.handle == entry.handle) {
+                                found = true;
+                                if (!attr.permissions.writable) {
+                                    return (ErrorResponse{ .request_opcode = req_op_raw, .handle = entry.handle, .error_code = .write_not_permitted }).encode(out_buf);
+                                }
+                                if (entry.offset > attr.value_len) {
+                                    return (ErrorResponse{ .request_opcode = req_op_raw, .handle = entry.handle, .error_code = .invalid_offset }).encode(out_buf);
+                                }
+                                if (entry.offset + entry.len > attr.value.len) {
+                                    return (ErrorResponse{ .request_opcode = req_op_raw, .handle = entry.handle, .error_code = .invalid_attribute_value_length }).encode(out_buf);
+                                }
+                                @memcpy(attr.value[entry.offset .. entry.offset + entry.len], entry.data[0..entry.len]);
+                                if (entry.offset + entry.len > attr.value_len) {
+                                    attr.value_len = entry.offset + entry.len;
+                                }
+                                break;
+                            }
+                        }
+                        if (!found) {
+                            return (ErrorResponse{ .request_opcode = req_op_raw, .handle = entry.handle, .error_code = .invalid_handle }).encode(out_buf);
+                        }
+                    }
+                }
+                return ExecuteWriteResponse.encode(out_buf);
+            },
+            else => {
+                return (ErrorResponse{
+                    .request_opcode = req_op_raw,
+                    .handle = 0x0000,
+                    .error_code = .request_not_supported,
+                }).encode(out_buf);
+            },
+        }
+    }
+};
+
+/// Client-side GATT Service Discovery state machine (`ReadByGroupType` -> `ReadByType` -> `FindInformation`).
+pub const ServiceDiscoveryClient = struct {
+    pub const Phase = enum {
+        primary_services,
+        characteristics,
+        descriptors,
+        complete,
+    };
+
+    phase: Phase = .primary_services,
+    next_start_handle: u16 = 0x0001,
+    range_end_handle: u16 = 0xFFFF,
+
+    /// Generates the next ATT request PDU for the current discovery phase, or `null` when complete.
+    pub fn nextRequest(self: *const ServiceDiscoveryClient) ?AttPdu {
+        if (self.phase == .complete) return null;
+        if (self.next_start_handle == 0 or self.next_start_handle > self.range_end_handle) return null;
+
+        return switch (self.phase) {
+            .primary_services => AttPdu{ .read_by_group_type_req = .{
+                .start_handle = self.next_start_handle,
+                .end_handle = self.range_end_handle,
+                .group_uuid = UUID.from16(0x2800),
+            } },
+            .characteristics => AttPdu{ .read_by_type_req = .{
+                .start_handle = self.next_start_handle,
+                .end_handle = self.range_end_handle,
+                .uuid = UUID.from16(0x2803),
+            } },
+            .descriptors => AttPdu{ .find_info_req = .{
+                .start_handle = self.next_start_handle,
+                .end_handle = self.range_end_handle,
+            } },
+            .complete => null,
+        };
+    }
+
+    /// Advances the discovery cursor when a response or `AttributeNotFound` error is received.
+    pub fn advanceOnEndHandle(self: *ServiceDiscoveryClient, last_handle: u16) void {
+        if (last_handle == 0xFFFF or last_handle >= self.range_end_handle) {
+            self.advancePhase();
+        } else {
+            self.next_start_handle = last_handle + 1;
+        }
+    }
+
+    /// Transitions to the next discovery phase when `AttributeNotFound` (`0x0A`) is received.
+    pub fn advancePhase(self: *ServiceDiscoveryClient) void {
+        self.next_start_handle = 0x0001;
+        self.range_end_handle = 0xFFFF;
+        self.phase = switch (self.phase) {
+            .primary_services => .characteristics,
+            .characteristics => .descriptors,
+            .descriptors, .complete => .complete,
+        };
+    }
+};
+
+/// Client-side Long Read helper (`ReadRequest` followed by `ReadBlobRequest` chunks).
+pub const LongReadClient = struct {
+    handle: u16,
+    offset: u16 = 0,
+    started: bool = false,
+    done: bool = false,
+
+    pub fn nextRequest(self: *LongReadClient) ?AttPdu {
+        if (self.done) return null;
+        if (!self.started) {
+            self.started = true;
+            return AttPdu{ .read_req = .{ .handle = self.handle } };
+        }
+        return AttPdu{ .read_blob_req = .{ .handle = self.handle, .offset = self.offset } };
+    }
+
+    pub fn onChunkReceived(self: *LongReadClient, chunk: []const u8, mtu: u16, dest: []u8) AttError!void {
+        if (self.offset + chunk.len > dest.len) return AttError.BufferTooSmall;
+        @memcpy(dest[self.offset .. self.offset + chunk.len], chunk);
+        self.offset += @intCast(chunk.len);
+        if (chunk.len < @as(usize, mtu - 1)) {
+            self.done = true;
+        }
+    }
+};
+
+/// Client-side Queued Write helper (`PrepareWriteRequest` chunks followed by `ExecuteWriteRequest`).
+pub const QueuedWriteClient = struct {
+    handle: u16,
+    payload: []const u8,
+    offset: u16 = 0,
+    executing: bool = false,
+    done: bool = false,
+
+    pub fn nextRequest(self: *QueuedWriteClient, mtu: u16) ?AttPdu {
+        if (self.done) return null;
+        const max_chunk = @as(usize, mtu) -| 5;
+        if (self.offset < self.payload.len and max_chunk > 0) {
+            const end = @min(self.payload.len, @as(usize, self.offset) + max_chunk);
+            const part = self.payload[self.offset..end];
+            const req = AttPdu{ .prepare_write_req = .{
+                .handle = self.handle,
+                .offset = self.offset,
+                .part_value = part,
+            } };
+            self.offset = @intCast(end);
+            return req;
+        }
+        if (!self.executing) {
+            self.executing = true;
+            return AttPdu{ .execute_write_req = .{ .flags = .commit } };
+        }
+        self.done = true;
+        return null;
+    }
+};
+
+test "ATT State Machine: Request-Response correlation, duplicate response, and 30s timeout" {
+    var client = AttBearer{};
+    var server = AttBearer{};
+    var tx_buf: [64]u8 = undefined;
+    var rsp_buf: [64]u8 = undefined;
+
+    // 1. Exchange MTU Request (Client -> Server -> Client)
+    const req_len = try client.beginRequest(.{ .exchange_mtu_req = .{ .client_rx_mtu = 247 } }, 1000, &tx_buf);
+    try std.testing.expectEqual(BearerState.waiting_response, client.state);
+
+    // Concurrent request while waiting must fail with TransactionInProgress
+    try std.testing.expectError(AttError.TransactionInProgress, client.beginRequest(.{ .read_req = .{ .handle = 0x0001 } }, 1005, &tx_buf));
+
+    var empty_db: [0]AttServerAttribute = .{};
+    const rsp_len = try server.handleServerRx(tx_buf[0..req_len], &empty_db, &rsp_buf);
+    const ev = try client.handleClientRx(rsp_buf[0..rsp_len], null);
+    try std.testing.expectEqual(@as(u16, 247), client.mtu);
+    try std.testing.expectEqual(@as(u16, 247), server.mtu);
+    try std.testing.expect(ev == .response);
+
+    // 2. Duplicate response when idle must be rejected
+    try std.testing.expectError(AttError.UnexpectedResponse, client.handleClientRx(rsp_buf[0..rsp_len], null));
+
+    // 3. 30-second Transaction Timeout
+    _ = try client.beginRequest(.{ .read_req = .{ .handle = 0x0010 } }, 5000, &tx_buf);
+    try client.checkTimeout(34_999);
+    try std.testing.expectError(AttError.TransactionTimeout, client.checkTimeout(35_000));
+    try std.testing.expectEqual(BearerState.timed_out, client.state);
+    try std.testing.expectError(AttError.BearerTimedOut, client.beginRequest(.{ .read_req = .{ .handle = 0x0010 } }, 35_001, &tx_buf));
+}
+
+test "ATT State Machine: Server ReadBlob and Queued Write (PrepareWrite + ExecuteWrite)" {
+    var client = AttBearer{};
+    var server = AttBearer{};
+    client.mtu = 23;
+    server.mtu = 23;
+
+    var storage: [64]u8 = @splat(0);
+    @memcpy(storage[0..30], "0123456789ABCDEFGHIJKLMNOPQRST");
+    var db = [_]AttServerAttribute{
+        .{
+            .handle = 0x0010,
+            .uuid = UUID.from16(0x2A37),
+            .permissions = .{ .readable = true, .writable = true },
+            .value = &storage,
+            .value_len = 30,
+        },
+    };
+
+    var req_buf: [64]u8 = undefined;
+    var rsp_buf: [64]u8 = undefined;
+    var read_out: [64]u8 = undefined;
+
+    // Long Read via LongReadClient
+    var long_reader = LongReadClient{ .handle = 0x0010 };
+    while (long_reader.nextRequest()) |req_pdu| {
+        const req_len = try client.beginRequest(req_pdu, 100, &req_buf);
+        const rsp_len = try server.handleServerRx(req_buf[0..req_len], &db, &rsp_buf);
+        const ev = try client.handleClientRx(rsp_buf[0..rsp_len], null);
+        switch (ev.response) {
+            .read_rsp => |r| try long_reader.onChunkReceived(r.value, client.mtu, &read_out),
+            .read_blob_rsp => |r| try long_reader.onChunkReceived(r.part_value, client.mtu, &read_out),
+            else => unreachable,
+        }
+    }
+    try std.testing.expectEqualStrings("0123456789ABCDEFGHIJKLMNOPQRST", read_out[0..long_reader.offset]);
+
+    // Queued Write via QueuedWriteClient
+    const new_payload = "ZYXWVUTSRQPONMLKJIHGFEDCBA9876543210";
+    var q_writer = QueuedWriteClient{ .handle = 0x0010, .payload = new_payload };
+    while (q_writer.nextRequest(client.mtu)) |req_pdu| {
+        const req_len = try client.beginRequest(req_pdu, 200, &req_buf);
+        const rsp_len = try server.handleServerRx(req_buf[0..req_len], &db, &rsp_buf);
+        _ = try client.handleClientRx(rsp_buf[0..rsp_len], null);
+    }
+    try std.testing.expectEqualStrings(new_payload, db[0].value[0..db[0].value_len]);
 }

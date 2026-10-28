@@ -37,7 +37,7 @@ pub const WindowsRadio = struct {
         self.apis.unload();
     }
 
-    pub fn openDefault(self: *WindowsRadio) !void {
+    pub fn openDefault(self: *WindowsRadio) BleError!void {
         self.close();
 
         var radio_handle: windows.HANDLE = undefined;

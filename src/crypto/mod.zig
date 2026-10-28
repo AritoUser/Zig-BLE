@@ -12,6 +12,10 @@ pub const toolbox = @import("toolbox.zig");
 pub const smp = @import("smp.zig");
 
 // Direct re-exports of common toolbox functions
+pub const CryptoError = toolbox.CryptoError;
+pub const getRandomBytes = toolbox.getRandomBytes;
+pub const getRandom3Bytes = toolbox.getRandom3Bytes;
+pub const isValidPrand22Bits = toolbox.isValidPrand22Bits;
 pub const e = toolbox.e;
 pub const eBe = toolbox.eBe;
 pub const ahBe = toolbox.ahBe;
@@ -25,6 +29,7 @@ pub const f5 = toolbox.f5;
 pub const f6 = toolbox.f6;
 pub const g2 = toolbox.g2;
 pub const h6 = toolbox.h6;
+pub const h7 = toolbox.h7;
 pub const signAtt = toolbox.signAtt;
 pub const verifyAttSign = toolbox.verifyAttSign;
 pub const gattHash = toolbox.gattHash;
@@ -53,6 +58,12 @@ pub const SecurityRequest = smp.SecurityRequest;
 pub const PairingPublicKey = smp.PairingPublicKey;
 pub const PairingDhKeyCheck = smp.PairingDhKeyCheck;
 pub const PairingKeypressNotification = smp.PairingKeypressNotification;
+pub const SmpStateMachine = smp.SmpStateMachine;
+pub const SmpRole = smp.SmpRole;
+pub const SmpState = smp.SmpState;
+pub const PairingMethod = smp.PairingMethod;
+pub const generateEcdhKeyPair = smp.generateEcdhKeyPair;
+pub const computeDhKey = smp.computeDhKey;
 
 test {
     _ = toolbox;

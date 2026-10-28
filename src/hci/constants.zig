@@ -63,6 +63,9 @@ pub inline fn getOcf(opcode: u16) u10 {
 
 /// Common HCI Command Opcodes
 pub const Opcode = struct {
+    // Link Control (OGF 0x01)
+    pub const disconnect: u16 = makeOpcode(Ogf.link_control, 0x0006);
+
     // Host Controller & Baseband (OGF 0x03)
     pub const reset: u16 = makeOpcode(Ogf.host_controller_baseband, 0x0003);
     pub const set_event_mask: u16 = makeOpcode(Ogf.host_controller_baseband, 0x0001);
@@ -73,6 +76,7 @@ pub const Opcode = struct {
     pub const read_local_version_information: u16 = makeOpcode(Ogf.informational_parameters, 0x0001);
     pub const read_local_supported_commands: u16 = makeOpcode(Ogf.informational_parameters, 0x0002);
     pub const read_local_supported_features: u16 = makeOpcode(Ogf.informational_parameters, 0x0003);
+    pub const read_buffer_size: u16 = makeOpcode(Ogf.informational_parameters, 0x0005);
     pub const read_bd_addr: u16 = makeOpcode(Ogf.informational_parameters, 0x0009);
 
     // LE Controller Commands (OGF 0x08)
@@ -93,6 +97,13 @@ pub const Opcode = struct {
     pub const le_clear_filter_accept_list: u16 = makeOpcode(Ogf.le_controller, 0x0010);
     pub const le_add_device_to_filter_accept_list: u16 = makeOpcode(Ogf.le_controller, 0x0011);
     pub const le_remove_device_from_filter_accept_list: u16 = makeOpcode(Ogf.le_controller, 0x0012);
+    pub const le_connection_update: u16 = makeOpcode(Ogf.le_controller, 0x0013);
+    pub const le_read_remote_features: u16 = makeOpcode(Ogf.le_controller, 0x0016);
+    pub const le_encrypt: u16 = makeOpcode(Ogf.le_controller, 0x0017);
+    pub const le_rand: u16 = makeOpcode(Ogf.le_controller, 0x0018);
+    pub const le_start_encryption: u16 = makeOpcode(Ogf.le_controller, 0x0019);
+    pub const le_long_term_key_request_reply: u16 = makeOpcode(Ogf.le_controller, 0x001A);
+    pub const le_long_term_key_request_negative_reply: u16 = makeOpcode(Ogf.le_controller, 0x001B);
     pub const le_set_data_length: u16 = makeOpcode(Ogf.le_controller, 0x0022);
     pub const le_read_suggested_default_data_length: u16 = makeOpcode(Ogf.le_controller, 0x0023);
     pub const le_write_suggested_default_data_length: u16 = makeOpcode(Ogf.le_controller, 0x0024);
@@ -145,6 +156,8 @@ pub const LeSubevent = struct {
     pub const data_length_change: u8 = 0x07;
     pub const read_local_p256_public_key_complete: u8 = 0x08;
     pub const generate_dhkey_complete: u8 = 0x09;
+    pub const enhanced_connection_complete: u8 = 0x0A;
+    pub const directed_advertising_report: u8 = 0x0B;
     pub const phy_update_complete: u8 = 0x0C;
     pub const extended_advertising_report: u8 = 0x0D;
     pub const periodic_advertising_sync_established: u8 = 0x0E;

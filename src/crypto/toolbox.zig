@@ -15,6 +15,11 @@ const AddressType = types.AddressType;
 const Aes128 = std.crypto.core.aes.Aes128;
 const CmacAes128 = std.crypto.auth.cmac.CmacAes128;
 
+pub const CryptoError = error{
+    EntropyUnavailable,
+    InvalidPrand,
+};
+
 // -------------------------------------------------------------------------------------------------
 // Helper Endianness Functions
 // -------------------------------------------------------------------------------------------------
@@ -103,12 +108,15 @@ pub fn ahLe(irk_le: [16]u8, prand_le: [3]u8) [3]u8 {
 /// Resolves whether a given Bluetooth Device Address is a Resolvable Private Address (RPA)
 /// belonging to an identity identified by the specified Identity Resolving Key (IRK).
 ///
-/// Constant-time comparison is used to prevent timing attacks.
+/// Constant-time comparison is used to prevent timing attacks (Core Spec Vol 6, Part B, 1.3.2.2).
 pub fn resolveRpa(irk: [16]u8, rpa: Address) bool {
     // Top 2 bits of Address.bytes[0] must be 0b01
     if ((rpa.bytes[0] >> 6) != 0b01) return false;
 
     const prand_be = rpa.bytes[0..3].*;
+    // Core Spec Vol 6, Part B, Section 1.3.2.2: random part of prand shall not be all 0s or all 1s
+    if (!isValidPrand22Bits(prand_be[0], prand_be[1], prand_be[2])) return false;
+
     const expected_hash = ahBe(irk, prand_be);
     const actual_hash = rpa.bytes[3..6].*;
 
@@ -117,24 +125,71 @@ pub fn resolveRpa(irk: [16]u8, rpa: Address) bool {
 
 extern "advapi32" fn SystemFunction036(pbBuffer: [*]u8, dwLen: u32) callconv(.winapi) u8;
 
-fn getRandom3Bytes() [3]u8 {
-    var buf: [3]u8 = undefined;
+/// Fills `buf` with cryptographically secure random bytes from the OS CSPRNG.
+/// Checks system call return codes and returns `error.EntropyUnavailable` on failure.
+pub fn getRandomBytes(buf: []u8) CryptoError!void {
     if (builtin.os.tag == .linux) {
-        _ = std.os.linux.getrandom(&buf, buf.len, 0);
+        var offset: usize = 0;
+        while (offset < buf.len) {
+            const rc = std.os.linux.getrandom(buf[offset..].ptr, buf.len - offset, 0);
+            switch (std.os.linux.errno(rc)) {
+                .SUCCESS => {
+                    if (rc == 0) return error.EntropyUnavailable;
+                    offset += rc;
+                },
+                .INTR => continue,
+                else => return error.EntropyUnavailable,
+            }
+        }
     } else if (builtin.os.tag == .windows) {
-        _ = SystemFunction036(&buf, buf.len);
+        if (buf.len > std.math.maxInt(u32)) return error.EntropyUnavailable;
+        if (SystemFunction036(buf.ptr, @intCast(buf.len)) == 0) {
+            return error.EntropyUnavailable;
+        }
     } else {
-        var prng = std.Random.DefaultPrng.init(0x87654321A1B2C3D4);
-        prng.random().bytes(&buf);
+        return error.EntropyUnavailable;
     }
+}
+
+/// Generates 3 cryptographically secure random bytes from the OS CSPRNG.
+pub fn getRandom3Bytes() CryptoError![3]u8 {
+    var buf: [3]u8 = undefined;
+    try getRandomBytes(&buf);
     return buf;
+}
+
+/// Validates that the 22 random bits of `prand` are neither all zeros nor all ones
+/// as required by Bluetooth Core Specification Vol 6, Part B, Section 1.3.2.2.
+pub fn isValidPrand22Bits(msb: u8, mid: u8, lsb: u8) bool {
+    const high6 = msb & 0x3F;
+    const all_zeros = (high6 == 0x00) and (mid == 0x00) and (lsb == 0x00);
+    const all_ones = (high6 == 0x3F) and (mid == 0xFF) and (lsb == 0xFF);
+    return !all_zeros and !all_ones;
 }
 
 /// Generates a compliant Resolvable Private Address (RPA) using the specified Identity Resolving Key (IRK).
 ///
 /// If `prand_override` is null, cryptographically secure random bytes are generated automatically.
-pub fn generateRpa(irk: [16]u8, prand_override: ?[3]u8) Address {
-    var prand = prand_override orelse getRandom3Bytes();
+/// Validates that the 22 random bits of `prand` are not all zeros or all ones (Core Spec Vol 6, Part B, 1.3.2.2).
+pub fn generateRpa(irk: [16]u8, prand_override: ?[3]u8) CryptoError!Address {
+    var prand: [3]u8 = undefined;
+    if (prand_override) |override| {
+        if (!isValidPrand22Bits(override[0], override[1], override[2])) {
+            return error.InvalidPrand;
+        }
+        prand = override;
+    } else {
+        var valid = false;
+        for (0..8) |_| {
+            const candidate = try getRandom3Bytes();
+            if (isValidPrand22Bits(candidate[0], candidate[1], candidate[2])) {
+                prand = candidate;
+                valid = true;
+                break;
+            }
+        }
+        if (!valid) return error.EntropyUnavailable;
+    }
 
     // Bluetooth Core Spec requires the two most significant bits of prand to be 0b01
     // and that prand cannot be all zeros or all ones (excluding MSBs).
@@ -357,14 +412,24 @@ pub fn g2(u: [32]u8, v: [32]u8, x: [16]u8, y: [16]u8) u32 {
 }
 
 // -------------------------------------------------------------------------------------------------
-// 10. Link Key Conversion Function h6 - Section 2.2.9
+// 10. Link Key Conversion Functions h6 & h7 - Sections 2.2.9 & 2.2.10
 // -------------------------------------------------------------------------------------------------
 
-/// Link Key conversion function `h6`:
+/// Link Key conversion function `h6` (Section 2.2.9):
 /// `h6(w, keyid) = AES-CMAC_w(keyid)`
 pub fn h6(w: [16]u8, keyid: [4]u8) [16]u8 {
     var res: [16]u8 = undefined;
     aesCmac(w, &keyid, &res);
+    return res;
+}
+
+/// Link Key conversion function `h7` (Section 2.2.10):
+/// `h7(salt, w) = AES-CMAC_salt(w)`
+///
+/// Inputs `salt` and `w` and the returned 128-bit key are in Little-Endian byte order.
+pub fn h7(salt: [16]u8, w: [16]u8) [16]u8 {
+    var res: [16]u8 = undefined;
+    aesCmac(salt, &w, &res);
     return res;
 }
 
@@ -454,8 +519,26 @@ pub fn sih(sirk: [16]u8, r: [3]u8) [3]u8 {
 }
 
 /// Generates a 6-byte Resolvable Set Identifier (RSI) for CSIP (LE Audio coordinated device sets).
-pub fn generateRsi(sirk: [16]u8, prand_override: ?[3]u8) [6]u8 {
-    var prand = prand_override orelse getRandom3Bytes();
+/// Validates that the 22 random bits of `prand` are not all zeros or all ones.
+pub fn generateRsi(sirk: [16]u8, prand_override: ?[3]u8) CryptoError![6]u8 {
+    var prand: [3]u8 = undefined;
+    if (prand_override) |override| {
+        if (!isValidPrand22Bits(override[2], override[1], override[0])) {
+            return error.InvalidPrand;
+        }
+        prand = override;
+    } else {
+        var valid = false;
+        for (0..8) |_| {
+            const candidate = try getRandom3Bytes();
+            if (isValidPrand22Bits(candidate[2], candidate[1], candidate[0])) {
+                prand = candidate;
+                valid = true;
+                break;
+            }
+        }
+        if (!valid) return error.EntropyUnavailable;
+    }
 
     // The two MSBs of prand shall be 0b01
     prand[2] = (prand[2] & 0x3F) | 0x40;
@@ -469,10 +552,10 @@ pub fn generateRsi(sirk: [16]u8, prand_override: ?[3]u8) [6]u8 {
 }
 
 // -------------------------------------------------------------------------------------------------
-// Unit Tests (Official Bluetooth SIG Test Vectors)
+// Unit Tests (Official Bluetooth SIG Test Vectors - Core Spec Vol 3, Part H, Appendix D)
 // -------------------------------------------------------------------------------------------------
 
-test "ah random address hash test vector" {
+test "ah random address hash test vector (Core Spec Vol 3, Part H, Appendix D.7)" {
     // Official Bluetooth SIG Sample Data:
     // IRK: ec0234a3 57c8ad05 341010a6 0a397d9b
     const irk = [_]u8{
@@ -483,7 +566,7 @@ test "ah random address hash test vector" {
     };
     const prand = [_]u8{ 0x70, 0x81, 0x94 };
 
-    const rpa = generateRpa(irk, prand);
+    const rpa = try generateRpa(irk, prand);
     const rpa_str = rpa.toString();
     try std.testing.expectEqualStrings("70:81:94:0D:FB:AA", &rpa_str);
     try std.testing.expect(resolveRpa(irk, rpa));
@@ -493,7 +576,49 @@ test "ah random address hash test vector" {
     try std.testing.expect(!resolveRpa(bad_irk, rpa));
 }
 
-test "h6 key conversion test vector" {
+test "generateRpa and generateRsi validate CSPRNG and reject all-0 / all-1 prand (Core Spec Vol 6, Part B, 1.3.2.2)" {
+    const irk = [_]u8{
+        0xec, 0x02, 0x34, 0xa3,
+        0x57, 0xc8, 0xad, 0x05,
+        0x34, 0x10, 0x10, 0xa6,
+        0x0a, 0x39, 0x7d, 0x9b,
+    };
+
+    // Reject all-zeros in the 22 random bits
+    try std.testing.expectError(error.InvalidPrand, generateRpa(irk, [_]u8{ 0x00, 0x00, 0x00 }));
+    try std.testing.expectError(error.InvalidPrand, generateRpa(irk, [_]u8{ 0x40, 0x00, 0x00 }));
+    try std.testing.expectError(error.InvalidPrand, generateRpa(irk, [_]u8{ 0xC0, 0x00, 0x00 }));
+
+    // Reject all-ones in the 22 random bits
+    try std.testing.expectError(error.InvalidPrand, generateRpa(irk, [_]u8{ 0x3F, 0xFF, 0xFF }));
+    try std.testing.expectError(error.InvalidPrand, generateRpa(irk, [_]u8{ 0x7F, 0xFF, 0xFF }));
+    try std.testing.expectError(error.InvalidPrand, generateRpa(irk, [_]u8{ 0xFF, 0xFF, 0xFF }));
+
+    // Also reject in resolveRpa if an attacker crafts an RPA with all-zero or all-one prand
+    const zero_hash = ahBe(irk, [_]u8{ 0x40, 0x00, 0x00 });
+    const invalid_zero_rpa = Address{ .bytes = [_]u8{ 0x40, 0x00, 0x00, zero_hash[0], zero_hash[1], zero_hash[2] } };
+    try std.testing.expect(!resolveRpa(irk, invalid_zero_rpa));
+
+    const ones_hash = ahBe(irk, [_]u8{ 0x7F, 0xFF, 0xFF });
+    const invalid_ones_rpa = Address{ .bytes = [_]u8{ 0x7F, 0xFF, 0xFF, ones_hash[0], ones_hash[1], ones_hash[2] } };
+    try std.testing.expect(!resolveRpa(irk, invalid_ones_rpa));
+
+    // Reject all-zero / all-one prand in generateRsi
+    try std.testing.expectError(error.InvalidPrand, generateRsi(irk, [_]u8{ 0x00, 0x00, 0x40 }));
+    try std.testing.expectError(error.InvalidPrand, generateRsi(irk, [_]u8{ 0xFF, 0xFF, 0x7F }));
+
+    // OS CSPRNG generation test (on supported OS)
+    if (builtin.os.tag == .linux or builtin.os.tag == .windows) {
+        const random_rpa = try generateRpa(irk, null);
+        try std.testing.expect(resolveRpa(irk, random_rpa));
+        try std.testing.expect(isValidPrand22Bits(random_rpa.bytes[0], random_rpa.bytes[1], random_rpa.bytes[2]));
+
+        const random_rsi = try generateRsi(irk, null);
+        try std.testing.expect(isValidPrand22Bits(random_rsi[5], random_rsi[4], random_rsi[3]));
+    }
+}
+
+test "h6 key conversion test vector (Core Spec Vol 3, Part H, Appendix D.6)" {
     const w = [_]u8{
         0x9b, 0x7d, 0x39, 0x0a, 0xa6, 0x10, 0x10, 0x34,
         0x05, 0xad, 0xc8, 0x57, 0xa3, 0x34, 0x02, 0xec,
@@ -506,6 +631,46 @@ test "h6 key conversion test vector" {
 
     const res = h6(w, keyid);
     try std.testing.expectEqualSlices(u8, &exp, &res);
+}
+
+test "h7 key conversion test vector (Core Spec Vol 3, Part H, Appendix D.8)" {
+    const w = swapTest(16, hexToBytes(16, "ec0234a3 57c8ad05 341010a6 0a397d9b"));
+    const salt = swapTest(16, hexToBytes(16, "00000000 00000000 00000000 746d7031"));
+    const exp = swapTest(16, hexToBytes(16, "fb173597 c6a3c0ec d2998c2a 75a57011"));
+
+    const res = h7(salt, w);
+    try std.testing.expectEqualSlices(u8, &exp, &res);
+}
+
+test "AES-CMAC RFC 4493 test vectors (Core Spec Vol 3, Part H, Appendix D.1)" {
+    const k = swapTest(16, hexToBytes(16, "2b7e1516 28aed2a6 abf71588 09cf4f3c"));
+
+    // D.1.1: 0-byte message
+    var out0: [16]u8 = undefined;
+    aesCmac(k, &[_]u8{}, &out0);
+    const exp0 = swapTest(16, hexToBytes(16, "bb1d6929 e9593728 7fa37d12 9b756746"));
+    try std.testing.expectEqualSlices(u8, &exp0, &out0);
+
+    // D.1.2: 16-byte message
+    const m16 = swapTest(16, hexToBytes(16, "6bc1bee2 2e409f96 e93d7e11 7393172a"));
+    var out16: [16]u8 = undefined;
+    aesCmac(k, &m16, &out16);
+    const exp16 = swapTest(16, hexToBytes(16, "070a16b4 6b4d4144 f79bdd9d d04a287c"));
+    try std.testing.expectEqualSlices(u8, &exp16, &out16);
+
+    // D.1.3: 40-byte message
+    const m40 = swapTest(40, hexToBytes(40, "6bc1bee2 2e409f96 e93d7e11 7393172a ae2d8a57 1e03ac9c 9eb76fac 45af8e51 30c81c46 a35ce411"));
+    var out40: [16]u8 = undefined;
+    aesCmac(k, &m40, &out40);
+    const exp40 = swapTest(16, hexToBytes(16, "dfa66747 de9ae630 30ca3261 1497c827"));
+    try std.testing.expectEqualSlices(u8, &exp40, &out40);
+
+    // D.1.4: 64-byte message
+    const m64 = swapTest(64, hexToBytes(64, "6bc1bee2 2e409f96 e93d7e11 7393172a ae2d8a57 1e03ac9c 9eb76fac 45af8e51 30c81c46 a35ce411 e5fbc119 1a0a52ef f69f2445 df4f9b17 ad2b417b e66c3710"));
+    var out64: [16]u8 = undefined;
+    aesCmac(k, &m64, &out64);
+    const exp64 = swapTest(16, hexToBytes(16, "51f0bebf 7e3b9d92 fc497417 79363cfe"));
+    try std.testing.expectEqualSlices(u8, &exp64, &out64);
 }
 
 test "signAtt and verifyAttSign test vectors" {
@@ -623,7 +788,7 @@ test "official spec s1 stk generation test vector" {
     try std.testing.expectEqualSlices(u8, &exp, &res);
 }
 
-test "official spec f4 le sc confirm test vector" {
+test "official spec f4 le sc confirm test vector (Core Spec Vol 3, Part H, Appendix D.2)" {
     const u = swapTest(32, hexToBytes(32, "20b003d2 f297be2c 5e2c83a7 e9f9a5b9 eff49111 acf4fddb cc030148 0e359de6"));
     const v = swapTest(32, hexToBytes(32, "55188b3d 32f6bb9a 900afcfb eed4e72a 59cb9ac2 f19d7cfb 6b4fdd49 f47fc5fd"));
     const x = swapTest(16, hexToBytes(16, "d5cb8454 d177733e ffffb2ec 712baeab"));
@@ -634,7 +799,7 @@ test "official spec f4 le sc confirm test vector" {
     try std.testing.expectEqualSlices(u8, &exp, &res);
 }
 
-test "official spec f5 le sc key generation test vector" {
+test "official spec f5 le sc key generation test vector (Core Spec Vol 3, Part H, Appendix D.3)" {
     const w = swapTest(32, hexToBytes(32, "ec0234a3 57c8ad05 341010a6 0a397d9b 99796b13 b4f866f1 868d34f3 73bfa698"));
     const n1 = swapTest(16, hexToBytes(16, "d5cb8454 d177733e ffffb2ec 712baeab"));
     const n2 = swapTest(16, hexToBytes(16, "a6e8e7cc 25a75f6e 216583f7 ff3dc4cf"));
@@ -649,7 +814,7 @@ test "official spec f5 le sc key generation test vector" {
     try std.testing.expectEqualSlices(u8, &exp_ltk, &res.ltk);
 }
 
-test "official spec f6 le sc check value test vector" {
+test "official spec f6 le sc check value test vector (Core Spec Vol 3, Part H, Appendix D.4)" {
     const w = swapTest(16, hexToBytes(16, "2965f176 a1084a02 fd3f6a20 ce636e20"));
     const n1 = swapTest(16, hexToBytes(16, "d5cb8454 d177733e ffffb2ec 712baeab"));
     const n2 = swapTest(16, hexToBytes(16, "a6e8e7cc 25a75f6e 216583f7 ff3dc4cf"));
@@ -664,7 +829,7 @@ test "official spec f6 le sc check value test vector" {
     try std.testing.expectEqualSlices(u8, &exp, &res);
 }
 
-test "official spec g2 numeric comparison test vector" {
+test "official spec g2 numeric comparison test vector (Core Spec Vol 3, Part H, Appendix D.5)" {
     const u = swapTest(32, hexToBytes(32, "20b003d2 f297be2c 5e2c83a7 e9f9a5b9 eff49111 acf4fddb cc030148 0e359de6"));
     const v = swapTest(32, hexToBytes(32, "55188b3d 32f6bb9a 900afcfb eed4e72a 59cb9ac2 f19d7cfb 6b4fdd49 f47fc5fd"));
     const x = swapTest(16, hexToBytes(16, "d5cb8454 d177733e ffffb2ec 712baeab"));

@@ -10,7 +10,7 @@ const BlueZ = constants.BlueZ;
 
 const dbus = if (builtin.os.tag == .linux) @import("dbus/mod.zig") else struct {};
 const Connection = if (builtin.os.tag == .linux) dbus.Connection else struct {};
-const DBusError = if (builtin.os.tag == .linux) dbus.DBusError else anyerror;
+const DBusError = if (builtin.os.tag == .linux) dbus.DBusError else error{ NotSupported, AccessDenied, MethodCallFailed, InvalidResponse, NotConnected, Timeout, InvalidArguments };
 
 /// Direct ATT streaming channel over a native Linux Unix domain socket / file descriptor.
 /// Obtained via BlueZ `AcquireNotify` or `AcquireWrite`.
@@ -68,6 +68,32 @@ pub const GattCharacteristic = struct {
 
     pub fn getObjectPath(self: *const GattCharacteristic) [:0]const u8 {
         return self.object_path[0..self.object_path_len :0];
+    }
+
+    /// Queries the negotiated ATT MTU for this characteristic from BlueZ (`org.bluez.GattCharacteristic1` `MTU`).
+    pub fn getMtu(self: *GattCharacteristic) !u16 {
+        if (builtin.os.tag != .linux) return error.NotSupported;
+        var msg = try Connection.createMethodCall(
+            BlueZ.service_name,
+            self.getObjectPath(),
+            BlueZ.Properties.interface_name,
+            BlueZ.Properties.Methods.Get,
+        );
+        defer msg.deinit();
+
+        var b = msg.builder();
+        try b.appendString(BlueZ.GattCharacteristic1.interface_name);
+        try b.appendString(BlueZ.GattCharacteristic1.Properties.MTU);
+
+        var reply = try self.conn.sendMessage(&msg, 5000);
+        defer reply.deinit();
+
+        var it = reply.iterator();
+        if (it.getVariant()) |*v| {
+            var var_iter = v.*;
+            if (var_iter.getUInt16()) |val| return val;
+        }
+        return error.MtuExchangeFailed;
     }
 
     /// Reads the current value of the characteristic (ATT Read Request).

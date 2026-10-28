@@ -175,6 +175,18 @@ pub fn build(b: *std.Build) void {
     });
     const run_v1_2_feature_tests = b.addRunArtifact(v1_2_feature_tests);
 
+    const readme_example_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tests/test_readme_examples.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "Zig_BLE", .module = mod },
+            },
+        }),
+    });
+    const run_readme_example_tests = b.addRunArtifact(readme_example_tests);
+
     // A top level step for running all tests. dependOn can be called multiple
     // times and since the two run steps do not depend on one another, this will
     // make the two of them run in parallel.
@@ -185,6 +197,7 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_v1_edgecase_tests.step);
     test_step.dependOn(&run_v1_1_feature_tests.step);
     test_step.dependOn(&run_v1_2_feature_tests.step);
+    test_step.dependOn(&run_readme_example_tests.step);
 
     // ========================================================================
     // Standalone Examples (run-scanner, run-heart-rate)
@@ -415,6 +428,25 @@ pub fn build(b: *std.Build) void {
 
     const bench_step = b.step("bench", "Alias for run-bench");
     bench_step.dependOn(&run_bench_cmd.step);
+
+    // ========================================================================
+    // Mock End-to-End Smoke Test (run-mock-e2e)
+    // ========================================================================
+    const mock_e2e_exe = b.addExecutable(.{
+        .name = "ble-mock-e2e",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("scripts/hil_runner.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "Zig_BLE", .module = mod },
+            },
+        }),
+    });
+
+    const run_mock_e2e_cmd = b.addRunArtifact(mock_e2e_exe);
+    const run_mock_e2e_step = b.step("run-mock-e2e", "Run the end-to-end smoke test against the in-memory mock backend (no radio)");
+    run_mock_e2e_step.dependOn(&run_mock_e2e_cmd.step);
 
     // ========================================================================
     // Fuzz Testing Suite (zig build fuzz / test-fuzz)
