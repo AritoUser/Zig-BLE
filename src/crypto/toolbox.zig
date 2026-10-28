@@ -146,6 +146,9 @@ pub fn getRandomBytes(buf: []u8) CryptoError!void {
         if (SystemFunction036(buf.ptr, @intCast(buf.len)) == 0) {
             return error.EntropyUnavailable;
         }
+    } else if (builtin.os.tag.isDarwin()) {
+        // libSystem is always linked on Darwin; arc4random_buf cannot fail.
+        std.c.arc4random_buf(buf.ptr, buf.len);
     } else {
         return error.EntropyUnavailable;
     }

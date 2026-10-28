@@ -355,7 +355,7 @@ pub fn build(b: *std.Build) void {
 
         const run_read_phone_gatt_cmd = b.addRunArtifact(read_phone_gatt_exe);
         run_read_phone_gatt_cmd.addPassthruArgs();
-        const run_read_phone_gatt_step = b.step("run-read-phone-gatt", "Read real live GATT characteristics from S25 Ultra over the air");
+        const run_read_phone_gatt_step = b.step("run-read-phone-gatt", "Read live GATT characteristics (GAP service) from a paired device over the air");
         run_read_phone_gatt_step.dependOn(&run_read_phone_gatt_cmd.step);
     }
 

@@ -9,6 +9,10 @@
 //! - Full-image integrity protection via constant-time AES-CMAC-128 verification.
 //! - OS-level protection on disk: Windows DPAPI (`CryptProtectData` / `CryptUnprotectData`)
 //!   and Linux `0600` (`S_IRUSR | S_IWUSR`) owner-only file mode enforcement.
+//! - Linux file persistence requires an explicit store key (`initWithKey` or `initWithKeyFile`);
+//!   the built-in default key is only used for in-memory images and inside the DPAPI blob.
+//! - Images from v1.2.x (plaintext keys, no MAC) are rejected with `error.LegacyFormat` and can be
+//!   imported once via `deserializeLegacy`.
 //! - Atomic persistence via write-to-temp-file + flush + atomic rename.
 
 const std = @import("std");
@@ -33,6 +37,10 @@ pub const BondStoreError = error{
     InsecureFilePermissions,
     IoError,
     EntropyUnavailable,
+    /// Linux file persistence was requested without an explicit store key.
+    EncryptionKeyRequired,
+    /// The image is a v1.2.x plaintext bond store; import it with `deserializeLegacy`.
+    LegacyFormat,
 };
 
 /// Cryptographic security keys exchanged during SMP Pairing / Bonding.
@@ -277,6 +285,8 @@ pub fn dpapiUnprotect(in_data: []const u8, out_buf: []u8) BondStoreError!usize {
 // Internal Key Wrapping & Integrity Helpers
 // -------------------------------------------------------------------------------------------------
 
+/// Fallback key for in-memory images and for the inner layer of the Windows DPAPI blob. It is
+/// public (it is in this source file), so it only obfuscates; it is never used for Linux files.
 const DEFAULT_STORE_WRAP_KEY = [16]u8{
     0x5A, 0x42, 0x4C, 0x45, 0xA5, 0x5A, 0x3C, 0xC3,
     0x96, 0x69, 0x0F, 0xF0, 0x1E, 0xE1, 0x87, 0x78,
@@ -311,6 +321,62 @@ fn cryptKeyBlock(enc_key: [16]u8, nonce: [16]u8, record_idx: u32, slot_id: u8, i
     return out;
 }
 
+/// Loads the 16-byte store key from `path`, or creates it with fresh random bytes and mode `0600`
+/// if it does not exist yet. An existing key file readable by group or others is rejected.
+/// Linux only; on other targets this returns `error.IoError`.
+pub fn loadOrCreateKeyFile(path: [:0]const u8) BondStoreError![16]u8 {
+    if (builtin.os.tag != .linux) return error.IoError;
+    const linux = std.os.linux;
+
+    var key: [16]u8 = undefined;
+    const open_rc = std.posix.system.open(path.ptr, .{ .ACCMODE = .RDONLY, .CLOEXEC = true }, 0);
+    switch (std.posix.errno(open_rc)) {
+        .SUCCESS => {
+            const fd: std.posix.fd_t = @intCast(open_rc);
+            defer _ = std.posix.system.close(fd);
+
+            var stx: linux.Statx = undefined;
+            const stx_rc = linux.statx(fd, "", linux.AT.EMPTY_PATH, .{ .MODE = true }, &stx);
+            if (linux.errno(stx_rc) != .SUCCESS) return error.IoError;
+            if ((stx.mode & 0o077) != 0) return error.InsecureFilePermissions;
+
+            var total: usize = 0;
+            while (total < key.len) {
+                const r_rc = std.posix.system.read(fd, key[total..].ptr, key.len - total);
+                if (std.posix.errno(r_rc) != .SUCCESS) return error.IoError;
+                if (r_rc == 0) return error.InvalidData;
+                total += r_rc;
+            }
+            return key;
+        },
+        .NOENT => {
+            toolbox.getRandomBytes(&key) catch return error.EntropyUnavailable;
+            errdefer std.crypto.secureZero(u8, &key);
+
+            const flags = std.posix.O{ .ACCMODE = .WRONLY, .CREAT = true, .EXCL = true, .CLOEXEC = true };
+            const create_rc = std.posix.system.open(path.ptr, flags, 0o600);
+            if (std.posix.errno(create_rc) != .SUCCESS) return error.IoError;
+            const fd: std.posix.fd_t = @intCast(create_rc);
+            _ = linux.fchmod(fd, 0o600);
+
+            var total: usize = 0;
+            while (total < key.len) {
+                const w_rc = std.posix.system.write(fd, key[total..].ptr, key.len - total);
+                if (std.posix.errno(w_rc) != .SUCCESS or w_rc == 0) {
+                    _ = std.posix.system.close(fd);
+                    _ = linux.unlink(path.ptr);
+                    return error.IoError;
+                }
+                total += w_rc;
+            }
+            _ = linux.fsync(fd);
+            _ = std.posix.system.close(fd);
+            return key;
+        },
+        else => return error.IoError,
+    }
+}
+
 /// High-performance in-memory bond store with zero heap allocations and fixed capacity.
 pub fn MemoryBondStore(comptime max_devices: usize) type {
     return struct {
@@ -326,6 +392,11 @@ pub fn MemoryBondStore(comptime max_devices: usize) type {
 
         pub fn initWithKey(key: [16]u8) Self {
             return .{ .encryption_key = key };
+        }
+
+        /// Initializes the store with the key from `key_path` (see `loadOrCreateKeyFile`).
+        pub fn initWithKeyFile(key_path: [:0]const u8) BondStoreError!Self {
+            return initWithKey(try loadOrCreateKeyFile(key_path));
         }
 
         /// Securely wipes all stored keys and master encryption key from memory.
@@ -549,6 +620,7 @@ pub fn MemoryBondStore(comptime max_devices: usize) type {
             CmacAes128.create(&expected_mac, in_buf[0..payload_end], &subkeys.mac_key);
 
             if (!std.crypto.timing_safe.eql([16]u8, expected_mac, actual_mac)) {
+                if (self.parseLegacy(in_buf, false)) |_| return error.LegacyFormat else |_| {}
                 return error.IntegrityCheckFailed;
             }
 
@@ -639,12 +711,91 @@ pub fn MemoryBondStore(comptime max_devices: usize) type {
             if (offset != payload_end) return error.IntegrityCheckFailed;
         }
 
+        /// Imports a v1.2.x bond store image (plaintext keys, no integrity tag). The image is not
+        /// authenticated, so only use this once to migrate a file you trust, then persist the
+        /// store again with `saveToFile` (or `serialize`) and delete the old file.
+        pub fn deserializeLegacy(self: *Self, in_buf: []const u8) BondStoreError!void {
+            try self.parseLegacy(in_buf, false);
+            try self.parseLegacy(in_buf, true);
+        }
+
+        /// Parses the v1.2.x layout. With `commit == false` it only validates the structure,
+        /// which must consume the buffer exactly.
+        fn parseLegacy(self: *Self, in_buf: []const u8, commit: bool) BondStoreError!void {
+            if (in_buf.len < 8) return error.InvalidData;
+            if (!std.mem.eql(u8, in_buf[0..4], "ZBGR")) return error.InvalidMagic;
+            const count = std.mem.readInt(u32, in_buf[4..8], .little);
+            if (count > max_devices) return error.BondStoreFull;
+            var offset: usize = 8;
+
+            var i: usize = 0;
+            while (i < count) : (i += 1) {
+                if (offset + 34 > in_buf.len) return error.UnexpectedEof;
+                var rec: BondRecord = .{
+                    .address = .{ .bytes = @splat(0) },
+                    .keys = .{},
+                };
+                @memcpy(&rec.address.bytes, in_buf[offset .. offset + 6]);
+                offset += 6;
+                rec.address_type = switch (in_buf[offset]) {
+                    0 => .public,
+                    1 => .random,
+                    else => return error.InvalidData,
+                };
+                offset += 1;
+                @memcpy(&rec.keys.ltk, in_buf[offset .. offset + 16]);
+                offset += 16;
+                rec.keys.rand = std.mem.readInt(u64, in_buf[offset..][0..8], .little);
+                offset += 8;
+                rec.keys.ediv = std.mem.readInt(u16, in_buf[offset..][0..2], .little);
+                offset += 2;
+
+                const has_irk = in_buf[offset];
+                offset += 1;
+                if (has_irk == 1) {
+                    if (offset + 16 > in_buf.len) return error.UnexpectedEof;
+                    var irk: [16]u8 = undefined;
+                    @memcpy(&irk, in_buf[offset .. offset + 16]);
+                    rec.keys.irk = irk;
+                    offset += 16;
+                } else if (has_irk != 0) {
+                    return error.InvalidData;
+                }
+
+                if (offset + 4 > in_buf.len) return error.UnexpectedEof;
+                rec.keys.authenticated = in_buf[offset] == 1;
+                offset += 1;
+                rec.keys.key_size = in_buf[offset];
+                offset += 1;
+
+                const cccd_cnt = std.mem.readInt(u16, in_buf[offset..][0..2], .little);
+                offset += 2;
+                rec.cccd_count = @min(@as(usize, cccd_cnt), MAX_CCCDS_PER_DEVICE);
+                var c: usize = 0;
+                while (c < cccd_cnt) : (c += 1) {
+                    if (offset + 4 > in_buf.len) return error.UnexpectedEof;
+                    const handle = std.mem.readInt(u16, in_buf[offset..][0..2], .little);
+                    offset += 2;
+                    const val = std.mem.readInt(u16, in_buf[offset..][0..2], .little);
+                    offset += 2;
+                    if (c < MAX_CCCDS_PER_DEVICE) {
+                        rec.cccds[c] = .{ .handle = handle, .value = val };
+                    }
+                }
+                if (commit) try self.save(rec);
+            }
+
+            if (offset != in_buf.len) return error.InvalidData;
+        }
+
         /// Atomically saves the bond store to `path` by writing to `<path>.tmp`, flushing,
         /// and atomically renaming to `path`.
         /// - On Windows: Protects the serialized image with Windows DPAPI (`CryptProtectData`).
-        /// - On Linux: Enforces `0600` (`S_IRUSR | S_IWUSR`) file permissions.
+        /// - On Linux: Enforces `0600` (`S_IRUSR | S_IWUSR`) file permissions and requires an
+        ///   explicit store key (`error.EncryptionKeyRequired` otherwise).
         pub fn saveToFile(self: *const Self, path: [:0]const u8) BondStoreError!void {
             if (path.len == 0 or path.len + 5 > 512) return error.InvalidData;
+            if (builtin.os.tag == .linux and self.encryption_key == null) return error.EncryptionKeyRequired;
 
             var tmp_path_buf: [512]u8 = undefined;
             @memcpy(tmp_path_buf[0..path.len], path);
@@ -730,6 +881,7 @@ pub fn MemoryBondStore(comptime max_devices: usize) type {
         /// Loads the bond store from `path`, verifying OS-level security (DPAPI on Windows,
         /// `0600` permission check on Linux) and AES-CMAC-128 integrity.
         pub fn loadFromFile(self: *Self, path: [:0]const u8) BondStoreError!void {
+            if (builtin.os.tag == .linux and self.encryption_key == null) return error.EncryptionKeyRequired;
             if (builtin.os.tag == .windows) {
                 const handle_opt = CreateFileA(
                     path.ptr,
@@ -768,7 +920,7 @@ pub fn MemoryBondStore(comptime max_devices: usize) type {
 
                 // Verify file is not readable/writable by group or others (must be 0600)
                 var stx: std.os.linux.Statx = undefined;
-                const stx_rc = std.os.linux.statx(fd, "", std.os.linux.AT.EMPTY_PATH, std.os.linux.STATX.MODE, &stx);
+                const stx_rc = std.os.linux.statx(fd, "", std.os.linux.AT.EMPTY_PATH, .{ .MODE = true }, &stx);
                 if (std.os.linux.errno(stx_rc) == .SUCCESS) {
                     if ((stx.mode & 0o077) != 0) {
                         return error.InsecureFilePermissions;
@@ -977,4 +1129,88 @@ test "MemoryBondStore atomic file persistence with DPAPI (Windows) / 0600 (Linux
     try std.testing.expectEqual(@as(u8, 0xAD), restored.keys.irk.?[0]);
     try std.testing.expect(restored.keys.authenticated);
     try std.testing.expectEqual(@as(u16, 0x0002), restored.getCccd(0x0042));
+}
+
+test "MemoryBondStore detects and imports v1.2.x legacy images" {
+    // v1.2.x layout: "ZBGR", count, then per record: addr, type, LTK, rand, ediv, IRK flag (+IRK),
+    // authenticated, key_size, CCCD count, CCCD entries. No nonce, no MAC, keys in plaintext.
+    var legacy: [64]u8 = undefined;
+    @memcpy(legacy[0..4], "ZBGR");
+    std.mem.writeInt(u32, legacy[4..8], 1, .little);
+    var o: usize = 8;
+    @memcpy(legacy[o .. o + 6], &[_]u8{ 0x10, 0x20, 0x30, 0x40, 0x50, 0x60 });
+    o += 6;
+    legacy[o] = 1; // random
+    o += 1;
+    @memset(legacy[o .. o + 16], 0x5C);
+    o += 16;
+    std.mem.writeInt(u64, legacy[o..][0..8], 0x1122334455667788, .little);
+    o += 8;
+    std.mem.writeInt(u16, legacy[o..][0..2], 0xBEEF, .little);
+    o += 2;
+    legacy[o] = 0; // no IRK
+    o += 1;
+    legacy[o] = 1; // authenticated
+    o += 1;
+    legacy[o] = 16; // key size
+    o += 1;
+    std.mem.writeInt(u16, legacy[o..][0..2], 1, .little);
+    o += 2;
+    std.mem.writeInt(u16, legacy[o..][0..2], 0x002A, .little);
+    o += 2;
+    std.mem.writeInt(u16, legacy[o..][0..2], 0x0001, .little);
+    o += 2;
+    const image = legacy[0..o];
+
+    var store = MemoryBondStore(4).initWithKey(@splat(0x11));
+    defer store.deinit();
+    try std.testing.expectError(error.LegacyFormat, store.deserialize(image));
+    try std.testing.expectEqual(@as(usize, 0), store.count);
+
+    try store.deserializeLegacy(image);
+    const addr = Address{ .bytes = [_]u8{ 0x10, 0x20, 0x30, 0x40, 0x50, 0x60 } };
+    const rec = store.load(addr).?;
+    try std.testing.expectEqual(AddressType.random, rec.address_type);
+    try std.testing.expectEqual(@as(u8, 0x5C), rec.keys.ltk[15]);
+    try std.testing.expectEqual(@as(u64, 0x1122334455667788), rec.keys.rand);
+    try std.testing.expectEqual(@as(u16, 0xBEEF), rec.keys.ediv);
+    try std.testing.expect(rec.keys.authenticated);
+    try std.testing.expectEqual(@as(u16, 0x0001), rec.getCccd(0x002A));
+
+    // Re-serialized in the current format, the import round-trips with the same key.
+    var buf: [256]u8 = undefined;
+    const n = try store.serialize(&buf);
+    var restored = MemoryBondStore(4).initWithKey(@splat(0x11));
+    defer restored.deinit();
+    try restored.deserialize(buf[0..n]);
+    try std.testing.expect(restored.load(addr) != null);
+
+    // A truncated legacy image is rejected without importing anything.
+    var fresh = MemoryBondStore(4).init();
+    try std.testing.expectError(error.UnexpectedEof, fresh.deserializeLegacy(image[0 .. o - 3]));
+    try std.testing.expectEqual(@as(usize, 0), fresh.count);
+}
+
+test "MemoryBondStore requires an explicit key for Linux files and creates 0600 key files" {
+    if (builtin.os.tag != .linux) return;
+    const linux = std.os.linux;
+
+    var keyless = MemoryBondStore(2).init();
+    try std.testing.expectError(error.EncryptionKeyRequired, keyless.saveToFile("zig-cache-bond-keyless.bin"));
+    try std.testing.expectError(error.EncryptionKeyRequired, keyless.loadFromFile("zig-cache-bond-keyless.bin"));
+
+    const key_path: [:0]const u8 = "zig-cache-bond-store-test.key";
+    _ = linux.unlink(key_path.ptr);
+    defer _ = linux.unlink(key_path.ptr);
+
+    const k1 = try loadOrCreateKeyFile(key_path);
+    const k2 = try loadOrCreateKeyFile(key_path);
+    try std.testing.expectEqualSlices(u8, &k1, &k2);
+
+    var store = try MemoryBondStore(2).initWithKeyFile(key_path);
+    defer store.deinit();
+    try std.testing.expectEqualSlices(u8, &k1, &store.encryption_key.?);
+
+    _ = linux.chmod(key_path.ptr, 0o644);
+    try std.testing.expectError(error.InsecureFilePermissions, loadOrCreateKeyFile(key_path));
 }

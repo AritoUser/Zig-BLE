@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.1] - 2026-10-29
+
+### Fixed
+* **BlueZ backend did not compile for Linux**: `Connection.initSystem` call signature, D-Bus timeout type (`u32` → `i32`), `WriteType` member names and the GATT discovery visitor (`parseManagedObjects` instead of the non-existent `walkManagedObjects`). Cross-compiling the executables did not catch this because none of them references the backend; `zig build test -Dtarget=x86_64-linux-gnu` now compiles.
+* **No CSPRNG on macOS**: `toolbox.getRandomBytes` returned `error.EntropyUnavailable` on Darwin, so SMP pairing and bond store serialization failed there (CI for v1.3.0 was red on macOS). It now uses `arc4random_buf`.
+* **Bond store `statx` mask**: `loadFromFile` used `STATX.MODE`, which does not exist on Zig 0.17 (`STATX` is a packed struct).
+
+### Security
+* **Bond store on Linux requires an explicit key**: `saveToFile` / `loadFromFile` return `error.EncryptionKeyRequired` without `initWithKey` / `initWithKeyFile`. The built-in default key is no longer used for Linux files.
+* **`loadOrCreateKeyFile` / `initWithKeyFile`**: loads a 16-byte store key or creates it from the system CSPRNG with mode `0600` (`O_EXCL`); key files readable by group or others are rejected.
+* **Migration from v1.2.x**: plaintext images are reported as `error.LegacyFormat` instead of a generic integrity failure and can be imported once with `deserializeLegacy`.
+
+### Changed
+* `examples/read_real_phone_gatt.zig` takes the GAP service interface path as an argument instead of a hard-coded device path.
+
 ## [1.3.0] - 2026-10-28
 
 ### Major Release: Production Readiness & Full Protocol Engine (P0/P1/P2)

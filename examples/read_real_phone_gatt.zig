@@ -1,18 +1,29 @@
 //! # Read Real Phone GATT Characteristics Over the Air with Win32 Error Reporting
+//!
+//! Usage: `zig build run-read-phone-gatt -- "<GAP service interface path>"`
+//! The path has the form `\\?\BTHLEDEVICE#{00001800-...}_<DEVICE_ADDRESS>#...#{...}`;
+//! `zig build run-probe-ble` lists the interfaces of paired devices.
 
 const std = @import("std");
 const windows = std.os.windows;
 const ble = @import("Zig_BLE");
 const bindings = ble.backend.windows.bindings;
 
-pub fn main() !void {
+pub fn main(init: std.process.Init) !void {
     std.debug.print("=========================================================\n", .{});
-    std.debug.print("  LIVE OVER-THE-AIR GATT READ: S25 Ultra (GAP 0x1800)    \n", .{});
+    std.debug.print("  LIVE OVER-THE-AIR GATT READ: paired device (GAP 0x1800)\n", .{});
     std.debug.print("=========================================================\n\n", .{});
 
-    const bth_apis = bindings.WindowsBluetoothApis.load() orelse return;
+    var args = try std.process.Args.Iterator.initAllocator(init.minimal.args, init.gpa);
+    defer args.deinit();
+    _ = args.skip(); // skip exe name
+    const dev_path = args.next() orelse {
+        std.debug.print("Usage: zig build run-read-phone-gatt -- \"<GAP service interface path>\"\n", .{});
+        std.debug.print("Run `zig build run-probe-ble` to list the interface paths of paired devices.\n", .{});
+        return;
+    };
 
-    const dev_path = "\\\\?\\BTHLEDEVICE#{00001800-0000-1000-8000-00805F9B34FB}_78B6FE6C4EA4#B&84E7F2D&0&0014#{e0cbf06c-cd8b-4647-bb8a-263b43f0f974}";
+    const bth_apis = bindings.WindowsBluetoothApis.load() orelse return;
 
     const kernel32 = bindings.LoadLibraryA("kernel32.dll") orelse return;
     const CreateFileAFn = *const fn (

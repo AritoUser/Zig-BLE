@@ -13,8 +13,8 @@ produktionsreifen BLE-Bibliothek machen. Sortiert nach Priorität:
 
 - **Erledigt:** P0 weitgehend, Windows-/BlueZ-Punkte aus P1, die meisten Diagnose- und Release-Punkte.
 - **Implementiert, aber nicht auf Hardware verifiziert:** Windows-Pairing, -Peripheral-Rolle, -MTU-Abfrage und -Verbindungsabbruch (Punkte 6, 9–11). Erst nach einem Test mit echtem Gerät als verifiziert betrachten.
-- **Offen:** Raw-HCI/UART-Backend, ATT/SMP über Raw-L2CAP, EATT-Anbindung (15, 16, 18, 19, 21), Hardware- und vHCI-Tests (26, 27), Langzeittests (30), README-Beispieltests (36), Schlüsselquelle für den Bond-Speicher unter Linux (3).
-- Tests: `zig build test` läuft unter Windows (236 Tests); Linux, aarch64-musl und macOS kompilieren.
+- **Offen:** Raw-HCI/UART-Backend, ATT/SMP über Raw-L2CAP, EATT-Anbindung (15, 16, 18, 19, 21), Hardware- und vHCI-Tests (26, 27), Langzeittests (30), README-Beispieltests (36).
+- Tests: `zig build test` läuft unter Windows (238 Tests); die Test-Binaries für Linux (gnu, musl) und macOS kompilieren, ausgeführt werden sie erst in der CI.
 
 ---
 
@@ -28,7 +28,7 @@ produktionsreifen BLE-Bibliothek machen. Sortiert nach Priorität:
   - [x] Prüfen, dass `prand` nicht nur aus Nullen bzw. Einsen besteht (Core Spec, Vol 6, Part B, 1.3.2.2)
 - [x] **2. Krypto gegen offizielle Testvektoren prüfen**: `f4`, `f5`, `f6`, `g2`, `h6`, `h7`, `ah`, `c1`, `s1` gegen Core Spec, Vol 3, Part H, Appendix D
 - [x] **3. Bond-Speicher härten** ([`src/storage/bond_store.zig`](../src/storage/bond_store.zig))
-  - [ ] LTK und IRK nicht im Klartext speichern (DPAPI unter Windows, Dateirechte 0600 unter Linux, optional Verschlüsselung) — *Windows: erledigt (DPAPI). Linux: AES-CTR schützt nur mit eigenem Schlüssel (`initWithKey`); ohne ihn wird ein im Quellcode stehender Standard-Schlüssel verwendet. Offen: Schlüssel aus einer Schlüsselquelle des Systems ableiten oder den Standard-Schlüssel entfernen. Außerdem fehlt eine Migration: Bond-Dateien im alten Format können nicht mehr gelesen werden.*
+  - [x] LTK und IRK nicht im Klartext speichern (DPAPI unter Windows, Dateirechte 0600 unter Linux, optional Verschlüsselung) — *Windows: DPAPI. Linux: `saveToFile`/`loadFromFile` verlangen einen eigenen Schlüssel (`initWithKey` oder `initWithKeyFile`, Schlüsseldatei mit zufälligem Inhalt und Rechten 0600); der Standard-Schlüssel wird für Dateien unter Linux nicht mehr verwendet. Dateien aus v1.2.x werden mit `error.LegacyFormat` erkannt und lassen sich einmalig mit `deserializeLegacy` importieren. Der Schutz unter Linux beruht weiter auf den Dateirechten (Schlüssel und Daten liegen beim selben Benutzer); TPM oder Secret Service sind nicht angebunden.*
   - [x] Integritätsprüfung per MAC statt nur über das Magic `ZBGR`
   - [x] Atomares Speichern (Temp-Datei schreiben, dann umbenennen)
 - [x] **4. Pairing-Agent** ([`src/agent.zig`](../src/agent.zig)): Security-Review, Tests, dass nicht behandelte Anfragen immer abgelehnt werden, Tests mit böswilligen D-Bus-Nachrichten

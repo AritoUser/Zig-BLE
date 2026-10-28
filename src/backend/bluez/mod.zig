@@ -396,7 +396,7 @@ pub const BluezBackend = struct {
             self.conn = null;
         }
 
-        self.conn = dbus.Connection.initSystem(std.heap.page_allocator) catch return BleError.DaemonDisconnected;
+        self.conn = dbus.Connection.initSystem() catch return BleError.DaemonDisconnected;
         if (self.conn) |*c| {
             c.addMatch("type='signal',sender='org.bluez'") catch |err| {
                 log.warn("Failed to register org.bluez signal match rule: {s}", .{@errorName(err)});
@@ -417,7 +417,7 @@ pub const BluezBackend = struct {
         self.adapter_index = index;
 
         if (self.conn == null) {
-            self.conn = dbus.Connection.initSystem(std.heap.page_allocator) catch return BleError.AdapterNotFound;
+            self.conn = dbus.Connection.initSystem() catch return BleError.AdapterNotFound;
             if (self.conn) |*c| {
                 c.addMatch("type='signal',sender='org.bluez'") catch |err| {
                     log.warn("Failed to register org.bluez signal match rule: {s}", .{@errorName(err)});
@@ -637,17 +637,17 @@ pub const BluezBackend = struct {
         ) catch return BleError.IoError;
         defer msg.deinit();
 
-        var reply = conn_ptr.sendMessage(&msg, self.timeouts.discovery_ms) catch return BleError.Timeout;
+        var reply = conn_ptr.sendMessage(&msg, std.math.lossyCast(i32, self.timeouts.discovery_ms)) catch return BleError.Timeout;
         defer reply.deinit();
 
         const DiscoverVisitor = struct {
             slot: *BluezDeviceContext,
             overflow_error: bool = false,
 
-            pub fn onCharacteristic(v_self: *@This(), info: object_manager.GattCharacteristicInfo) void {
+            pub fn onGattCharacteristic(v_self: *@This(), info: object_manager.GattCharacteristicInfo) void {
                 // Only add if characteristic path starts with our device's object path
-                if (std.mem.startsWith(u8, info.getPath(), v_self.slot.getPath())) {
-                    v_self.slot.addCharacteristic(info.uuid, info.getPath()) catch {
+                if (std.mem.startsWith(u8, info.getObjectPath(), v_self.slot.getPath())) {
+                    v_self.slot.addCharacteristic(info.uuid, info.getObjectPath()) catch {
                         v_self.overflow_error = true;
                     };
                 }
@@ -655,7 +655,8 @@ pub const BluezBackend = struct {
         };
 
         var visitor = DiscoverVisitor{ .slot = dev_slot };
-        object_manager.walkManagedObjects(&reply, &visitor) catch return BleError.GattError;
+        var it = reply.iterator();
+        object_manager.parseManagedObjects(&it, DiscoverVisitor, &visitor);
         if (visitor.overflow_error) return BleError.PoolExhausted;
     }
 
@@ -714,7 +715,7 @@ pub const BluezBackend = struct {
 
         const ch_slot = dev_slot.findCharacteristic(char_uuid) orelse return BleError.CharacteristicNotFound;
         var ch = gatt_client.GattCharacteristic.init(conn_ptr, ch_slot.getPath());
-        const w_type: core.WriteType = if (with_response) .request else .command;
+        const w_type: core.WriteType = if (with_response) .with_response else .without_response;
         if (self.pcap_hook) |hook| {
             var req_pdu: [517]u8 = undefined;
             req_pdu[0] = if (with_response) @intFromEnum(core.AttOpcode.write_req) else @intFromEnum(core.AttOpcode.write_cmd);
@@ -866,7 +867,7 @@ pub const BluezBackend = struct {
         var b = msg.builder();
         b.appendObjectPath(dev_slot.getPath()) catch return BleError.IoError;
 
-        var reply = conn_ptr.sendMessage(&msg, self.timeouts.pair_ms) catch return BleError.IoError;
+        var reply = conn_ptr.sendMessage(&msg, std.math.lossyCast(i32, self.timeouts.pair_ms)) catch return BleError.IoError;
         defer reply.deinit();
         dev_slot.clearSubscriptions();
         dev_slot.is_connected = false;

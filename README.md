@@ -1,9 +1,9 @@
-# Zig-BLE v1.3.0
+# Zig-BLE v1.3.1
 
 A Bluetooth Low Energy (BLE) library written entirely in Zig (0.17.0+). It works through the native Bluetooth stacks of **Windows 11 (WinRT)** and **Linux (BlueZ)** and ships with a platform-independent toolkit of BLE protocol parsers and encoders, cryptographic functions and SIG profiles.
 
 [![CI](https://github.com/AritoUser/Zig-BLE/actions/workflows/ci.yml/badge.svg)](https://github.com/AritoUser/Zig-BLE/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/badge/Release-v1.3.0-brightgreen.svg)](https://github.com/AritoUser/Zig-BLE/releases)
+[![Release](https://img.shields.io/badge/Release-v1.3.1-brightgreen.svg)](https://github.com/AritoUser/Zig-BLE/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 ---
@@ -78,7 +78,7 @@ graph TD
 - SMP PDU encoding/decoding and an experimental `SmpStateMachine` (Legacy & LE Secure Connections Just Works with ECDH P-256; no user confirmation for numeric comparison, no SC passkey entry, no key distribution yet) over L2CAP CID `0x0006`, plus the Bluetooth crypto toolbox verified against Core Spec Vol 3, Part H, Appendix D test vectors: AES-128, AES-CMAC, `ah`, `c1`, `s1`, `f4`, `f5`, `f6`, `g2`, `h6`, `h7` (`src/crypto/`).
 - HCI command and event encoding (LE Create/Extended Create Connection, Disconnect, Connection Update, Data Length, Encryption, LE Connection Subrating), ACL flow controller (`AclFlowController`), H4 and 3-Wire H5 UART framing, L2CAP ACL reassembly and signaling (`src/hci/`, `src/l2cap/`).
 - EATT bearer & multiplexer (`src/core/eatt.zig`) over L2CAP Credit-Based Flow Control (`local_credits`, `remote_credits`, MPS K-frame SDU segmentation and reassembly, per-bearer fault isolation).
-- Authenticated bond store (`src/storage/bond_store.zig`): AES-128-CTR encryption for LTK, IRK and CSRK with an application-supplied key (`initWithKey`; without one, a built-in default key is used, which only obfuscates), constant-time `CmacAes128` integrity tag, Windows DPAPI (`CryptProtectData`), Linux `0600` permission enforcement, and atomic write-temp-fsync-rename persistence.
+- Authenticated bond store (`src/storage/bond_store.zig`): AES-128-CTR encryption for LTK, IRK and CSRK with an application-supplied key (`initWithKey`, or `initWithKeyFile` for a random `0600` key file; Linux file persistence refuses to run without one, the built-in default key is only used for in-memory images and inside the DPAPI blob), import of v1.2.x files via `deserializeLegacy`, constant-time `CmacAes128` integrity tag, Windows DPAPI (`CryptProtectData`), Linux `0600` permission enforcement, and atomic write-temp-fsync-rename persistence.
 - SIG profiles: Heart Rate, Battery, Device Information, Current Time, Health Thermometer, Blood Pressure, HID over GATT, Environmental Sensing, Pulse Oximeter, Fitness Machine, Cycling Power, Running Speed & Cadence, Nordic UART, iBeacon and Eddystone (`src/profiles/`).
 - Wireshark PCAP writer (`DLT_BLUETOOTH_HCI_H4`) (`src/tooling/pcap.zig`) with live `PcapHook` integration across backends.
 
@@ -251,7 +251,7 @@ pub fn main() !void {
 
 Qualitativer Vergleich der Bauweise, keine Performance-Messung. Für die anderen Bibliotheken wurden keine Benchmarks mit denselben Daten durchgeführt, deshalb enthält diese Tabelle bewusst keine Durchsatzzahlen.
 
-| Kriterium | **Zig-BLE v1.3.0** | **Rust (`btleplug`)** | **C++ (`SimpleBLE`)** | **Embedded C (`NimBLE`)** | **Python (`bleak`)** |
+| Kriterium | **Zig-BLE v1.3.1** | **Rust (`btleplug`)** | **C++ (`SimpleBLE`)** | **Embedded C (`NimBLE`)** | **Python (`bleak`)** |
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | **Sprache** | Zig 0.17+ | Rust | C++17 | C99 | Python 3.8+ |
 | **`libc` nötig (Linux)** | Nein (eigener D-Bus-Wire-Client) | Ja (indirekt) | Ja | Teilweise | Ja (Python-Runtime) |
