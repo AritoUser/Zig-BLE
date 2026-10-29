@@ -11,9 +11,11 @@ pub const AddressType = core.AddressType;
 pub const UUID = core.UUID;
 pub const WriteType = core.WriteType;
 pub const AttErrorCode = core.AttErrorCode;
+pub const AttError = core.AttError;
+pub const SmpError = @import("../crypto/smp.zig").SmpError;
 
-/// Standardized BLE error set across all backends.
-pub const BleError = error{
+/// Core HAL and platform-specific error set.
+pub const HalError = error{
     NotSupported,
     NotPowered,
     AdapterNotFound,
@@ -40,15 +42,16 @@ pub const BleError = error{
     InvalidState,
     IoError,
     GattError,
-
-    // Granular ATT & Security errors (v1.1.0)
-    InsufficientAuthentication, // ATT 0x05
-    InsufficientEncryption, // ATT 0x0F
-    CccdImproperlyConfigured, // ATT 0xFD
-    ValueNotAllowed, // ATT 0x13
     MtuExchangeFailed,
     PairingFailed,
+    CccdImproperlyConfigured,
+    ValueNotAllowed,
+    InsufficientAuthentication,
+    InsufficientEncryption,
 };
+
+/// Unified BLE error set across all backends, composed of exact domain error sets.
+pub const BleError = HalError || AttError || SmpError;
 
 /// Configurable timeouts (in milliseconds) for all blocking BLE operations.
 /// Prevents any operation (Connect, Read, Write, Service Discovery, Pairing) from hanging indefinitely.
