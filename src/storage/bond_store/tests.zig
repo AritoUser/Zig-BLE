@@ -237,3 +237,4 @@ test "MemoryBondStore requires an explicit key for Linux files and creates 0600 
     _ = linux.chmod(key_path.ptr, 0o644);
     try std.testing.expectError(error.InsecureFilePermissions, loadOrCreateKeyFile(key_path));
 }
+

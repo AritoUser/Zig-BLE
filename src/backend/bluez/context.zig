@@ -85,3 +85,4 @@ pub const BluezDeviceContext = struct {
         self.subscribed_uuid = null;
     }
 };
+

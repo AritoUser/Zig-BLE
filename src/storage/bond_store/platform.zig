@@ -187,3 +187,4 @@ pub fn loadOrCreateKeyFile(path: [:0]const u8) BondStoreError![16]u8 {
         else => return error.IoError,
     }
 }
+

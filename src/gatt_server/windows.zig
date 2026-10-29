@@ -226,3 +226,4 @@ pub fn registerWindows(app: anytype) !void {
 
     app.is_registered = true;
 }
+

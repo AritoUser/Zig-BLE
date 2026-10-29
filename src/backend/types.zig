@@ -11,11 +11,10 @@ pub const AddressType = core.AddressType;
 pub const UUID = core.UUID;
 pub const WriteType = core.WriteType;
 pub const AttErrorCode = core.AttErrorCode;
-pub const AttError = core.AttError;
-pub const SmpError = @import("../crypto/smp.zig").SmpError;
 
-/// Core HAL and platform-specific error set.
-pub const HalError = error{
+/// Standardized BLE error set across all backends. Contains only errors a backend can return;
+/// protocol parser errors stay in `core.AttError` and `crypto.SmpError`.
+pub const BleError = error{
     NotSupported,
     NotPowered,
     AdapterNotFound,
@@ -49,9 +48,6 @@ pub const HalError = error{
     InsufficientAuthentication,
     InsufficientEncryption,
 };
-
-/// Unified BLE error set across all backends, composed of exact domain error sets.
-pub const BleError = HalError || AttError || SmpError;
 
 /// Configurable timeouts (in milliseconds) for all blocking BLE operations.
 /// Prevents any operation (Connect, Read, Write, Service Discovery, Pairing) from hanging indefinitely.

@@ -307,3 +307,4 @@ pub fn unpairDevice(backend: anytype, dev: anytype) BleError!void {
     }
     return BleError.PairingFailed;
 }
+

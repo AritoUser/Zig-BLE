@@ -136,3 +136,4 @@ test "BluezBackend NameOwnerChanged handles bluetoothd daemon restart" {
     bluez_back.processSignalWireMessage(&sig2);
     try std.testing.expect(!tracker.restarted);
 }
+

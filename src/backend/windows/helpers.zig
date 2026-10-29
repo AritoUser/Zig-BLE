@@ -181,3 +181,4 @@ pub fn createIBuffer(data: []const u8) BleError!*bindings.IBuffer {
     if (create_hr < 0 or buffer == null) return BleError.WriteFailed;
     return buffer.?;
 }
+

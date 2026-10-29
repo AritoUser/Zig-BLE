@@ -12,6 +12,7 @@ pub const bthprops = @import("bindings/bthprops.zig");
 
 // Re-exports from types
 pub const WINAPI = types.WINAPI;
+pub const winapi_cc = WINAPI;
 pub const HRESULT = types.HRESULT;
 pub const ULONG = types.ULONG;
 pub const HSTRING = types.HSTRING;

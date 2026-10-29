@@ -134,3 +134,4 @@ pub const BondStore = struct {
         return self.vtable.getBondCount(self.ptr);
     }
 };
+

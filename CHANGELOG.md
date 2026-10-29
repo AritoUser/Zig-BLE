@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+* **Split large modules into submodules** (no file above 1,000 lines). The original files remain as facades that re-export the same public declarations, so imports keep working:
+  * `src/backend/windows/bindings.zig` → `bindings/` (`types`, `iids`, `combase`, `events`, `bthprops`, `interfaces/`)
+  * `src/backend/windows/mod.zig` → `helpers`, `device`, `scan`, `pairing`, `gatt`, `tests`
+  * `src/backend/bluez/mod.zig` → `context`, `tests`
+  * `src/core/att.zig` → `att/` (`types`, `pdu`, `bearer`, `client`, `tests`)
+  * `src/crypto/smp.zig` → `smp/` (`types`, `pdu`, `ecdh`, `state_machine`, `tests`)
+  * `src/gatt_server.zig` → `gatt_server/` (`types`, `windows`, `bluez`, `app`, `tests`)
+  * `src/storage/bond_store.zig` → `bond_store/` (`types`, `crypto`, `platform`, `store`, `tests`)
+* **WinRT event handlers**: the six COM delegate implementations (`QueryInterface`, `AddRef`, `Release`, `Invoke`) share one generic implementation; IIDs and calling conventions are unchanged.
+* `BleError` is unchanged and contains only errors a backend can return.
+
 ## [1.3.1] - 2026-10-29
 
 ### Fixed

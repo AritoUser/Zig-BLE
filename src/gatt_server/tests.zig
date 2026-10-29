@@ -129,3 +129,4 @@ test "ServerCharacteristicFlags & ServerDescriptorFlags: security and permission
     try std.testing.expectEqualStrings("secure-write", dslice[2]);
     try std.testing.expectEqualStrings("authorize", dslice[3]);
 }
+

@@ -111,3 +111,4 @@ pub const GattApplication = struct {
         return bluez_mod.processMessage(self, msg);
     }
 };
+

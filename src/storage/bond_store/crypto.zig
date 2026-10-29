@@ -37,3 +37,4 @@ pub fn cryptKeyBlock(enc_key: [16]u8, nonce: [16]u8, record_idx: u32, slot_id: u
     std.crypto.secureZero(u8, &keystream);
     return out;
 }
+

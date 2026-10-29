@@ -151,3 +151,4 @@ test "WindowsBackend evaluatePairingCeremony supports Passkey and Numeric Compar
     try std.testing.expectEqual(WindowsBackend.PairingAction.accept_only, disp_act);
     try std.testing.expectEqual(@as(u32, 987654), tester.displayed_pin);
 }
+
