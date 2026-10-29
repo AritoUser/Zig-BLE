@@ -1,9 +1,9 @@
-# Zig-BLE v1.3.1
+# Zig-BLE v1.3.2
 
 A Bluetooth Low Energy (BLE) library written entirely in Zig (0.17.0+). It works through the native Bluetooth stacks of **Windows 11 (WinRT)** and **Linux (BlueZ)** and ships with a platform-independent toolkit of BLE protocol parsers and encoders, cryptographic functions and SIG profiles.
 
 [![CI](https://github.com/AritoUser/Zig-BLE/actions/workflows/ci.yml/badge.svg)](https://github.com/AritoUser/Zig-BLE/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/badge/Release-v1.3.1-brightgreen.svg)](https://github.com/AritoUser/Zig-BLE/releases)
+[![Release](https://img.shields.io/badge/Release-v1.3.2-brightgreen.svg)](https://github.com/AritoUser/Zig-BLE/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 ---
@@ -251,7 +251,7 @@ pub fn main() !void {
 
 Qualitativer Vergleich der Bauweise, keine Performance-Messung. Für die anderen Bibliotheken wurden keine Benchmarks mit denselben Daten durchgeführt, deshalb enthält diese Tabelle bewusst keine Durchsatzzahlen.
 
-| Kriterium | **Zig-BLE v1.3.1** | **Rust (`btleplug`)** | **C++ (`SimpleBLE`)** | **Embedded C (`NimBLE`)** | **Python (`bleak`)** |
+| Kriterium | **Zig-BLE v1.3.2** | **Rust (`btleplug`)** | **C++ (`SimpleBLE`)** | **Embedded C (`NimBLE`)** | **Python (`bleak`)** |
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | **Sprache** | Zig 0.17+ | Rust | C++17 | C99 | Python 3.8+ |
 | **`libc` nötig (Linux)** | Nein (eigener D-Bus-Wire-Client) | Ja (indirekt) | Ja | Teilweise | Ja (Python-Runtime) |
