@@ -31,12 +31,24 @@ pub const UnifiedDevice = struct {
         return self.backend.isDeviceConnected(self.handle);
     }
 
+    pub fn getConnectionState(self: *UnifiedDevice) types.ConnectionState {
+        return self.backend.getConnectionState(self.handle);
+    }
+
+    pub fn setAutoResubscribe(self: *UnifiedDevice, enabled: bool) void {
+        self.backend.setAutoResubscribe(self.handle, enabled);
+    }
+
     pub fn getRSSI(self: *UnifiedDevice) ?i16 {
         return self.backend.getDeviceRssi(self.handle);
     }
 
     pub fn discoverServices(self: *UnifiedDevice) BleError!void {
         return self.backend.discoverServices(self.handle);
+    }
+
+    pub fn discoverServicesFiltered(self: *UnifiedDevice, filter_uuids: []const UUID) BleError!void {
+        return self.backend.discoverServicesFiltered(self.handle, filter_uuids);
     }
 
     // `char` is a `UUID` (first characteristic with that UUID) or a `CharacteristicSelector`,
@@ -268,4 +280,66 @@ test "UnifiedDevice reads and writes descriptors" {
     try std.testing.expectEqualStrings("Kitchen", buf[0..m]);
 
     try std.testing.expectError(BleError.DescriptorNotFound, connected.readDescriptor(UUID.from16(0x2A6E), UUID.from16(0x2904), &buf));
+}
+
+test "UnifiedDevice tracks ConnectionState and supports auto-resubscribe" {
+    const mock_mod = @import("mock/mod.zig");
+    var mock = mock_mod.MockController.init();
+    var adapter = UnifiedAdapter.init(mock.asBackend());
+    try adapter.setPowered(true);
+
+    const addr = Address{ .bytes = [_]u8{ 0x11, 0x22, 0x33, 0x44, 0x55, 0x99 } };
+    var dev = mock_mod.MockDevice{ .address = addr };
+    const char_uuid = UUID.from16(0x2A37);
+    _ = dev.addCharacteristic(.{ .uuid = char_uuid });
+    _ = try mock.addDevice(dev);
+
+    var connected = try adapter.connect(addr, 1000);
+    try std.testing.expectEqual(types.ConnectionState.connected, connected.getConnectionState());
+    try std.testing.expect(connected.isConnected());
+
+    // Enable auto-resubscribe
+    connected.setAutoResubscribe(true);
+
+    const Counter = struct {
+        hits: usize = 0,
+        fn onNotify(_: UUID, _: []const u8, udata: ?*anyopaque) void {
+            const self: *@This() = @ptrCast(@alignCast(udata));
+            self.hits += 1;
+        }
+    };
+    var hits = Counter{};
+    try connected.subscribe(char_uuid, Counter.onNotify, &hits);
+
+    try mock.triggerNotification(addr, char_uuid, &.{ 0x00, 70 });
+    try std.testing.expectEqual(@as(usize, 1), hits.hits);
+
+    // Simulate disconnect: with auto_resubscribe=true, subscription callback is preserved
+    try connected.disconnect();
+    try std.testing.expectEqual(types.ConnectionState.disconnected, connected.getConnectionState());
+    try std.testing.expect(!connected.isConnected());
+
+    // Reconnect
+    var reconnected = try adapter.connect(addr, 1000);
+    try std.testing.expectEqual(types.ConnectionState.connected, reconnected.getConnectionState());
+
+    // Notification is still received after reconnect because subscription was preserved
+    try mock.triggerNotification(addr, char_uuid, &.{ 0x00, 72 });
+    try std.testing.expectEqual(@as(usize, 2), hits.hits);
+}
+
+test "UnifiedDevice discoverServicesFiltered" {
+    const mock_mod = @import("mock/mod.zig");
+    var mock = mock_mod.MockController.init();
+    var adapter = UnifiedAdapter.init(mock.asBackend());
+    try adapter.setPowered(true);
+
+    const addr = Address{ .bytes = [_]u8{ 0x11, 0x22, 0x33, 0x44, 0x55, 0x9A } };
+    var dev = mock_mod.MockDevice{ .address = addr };
+    _ = dev.addCharacteristic(.{ .uuid = UUID.from16(0x2A19), .service_uuid = UUID.from16(0x180F) });
+    _ = dev.addCharacteristic(.{ .uuid = UUID.from16(0x2A37), .service_uuid = UUID.from16(0x180D) });
+    _ = try mock.addDevice(dev);
+
+    var connected = try adapter.connect(addr, 1000);
+    try connected.discoverServicesFiltered(&.{UUID.from16(0x180D)});
 }

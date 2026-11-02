@@ -350,6 +350,7 @@ pub fn WindowsBackendWithConfig(comptime pool_config: PoolConfig) type {
             var dev_slot = try self.allocateDeviceSlot(addr);
             dev_slot.releaseAll();
             dev_slot.parent_backend = self;
+            dev_slot.connection_state.store(.connecting, .release);
 
             const class_hstr = try helpers.createHStringComptime("Windows.Devices.Bluetooth.BluetoothLEDevice");
             defer helpers.deleteHString(class_hstr);
@@ -385,6 +386,7 @@ pub fn WindowsBackendWithConfig(comptime pool_config: PoolConfig) type {
                 self.state_mutex.lock();
                 defer self.state_mutex.unlock();
                 dev_slot.is_connected.store(true, .release);
+                dev_slot.connection_state.store(.connected, .release);
                 dev_slot.was_connected_once = true;
             }
             dev_slot.bond_state = pairing_mod.queryWinRtBondState(ble_dev);
@@ -393,6 +395,7 @@ pub fn WindowsBackendWithConfig(comptime pool_config: PoolConfig) type {
             const disc_res = discoverServices(ctx, @ptrCast(dev_slot));
             self.mutex.lock();
             disc_res catch |err| {
+                dev_slot.connection_state.store(.disconnected, .release);
                 dev_slot.releaseAll();
                 return err;
             };
@@ -436,7 +439,34 @@ pub fn WindowsBackendWithConfig(comptime pool_config: PoolConfig) type {
             defer self.mutex.unlock();
 
             const dev: *DeviceContext = @ptrCast(@alignCast(dev_handle));
+            dev.connection_state.store(.disconnecting, .release);
             dev.releaseAll();
+            dev.connection_state.store(.disconnected, .release);
+        }
+
+        pub fn getConnectionState(ctx: *anyopaque, dev_handle: *anyopaque) types.ConnectionState {
+            if (builtin.os.tag != .windows) return .disconnected;
+            _ = ctx;
+            const dev: *DeviceContext = @ptrCast(@alignCast(dev_handle));
+            return dev.connection_state.load(.acquire);
+        }
+
+        pub fn setAutoResubscribe(ctx: *anyopaque, dev_handle: *anyopaque, enabled: bool) void {
+            if (builtin.os.tag != .windows) return;
+            _ = ctx;
+            const dev: *DeviceContext = @ptrCast(@alignCast(dev_handle));
+            dev.auto_resubscribe = enabled;
+        }
+
+        pub fn discoverServicesFiltered(ctx: *anyopaque, dev_handle: *anyopaque, filter_uuids: []const UUID) BleError!void {
+            if (builtin.os.tag != .windows) return BleError.NotSupported;
+            const self: *Self = @ptrCast(@alignCast(ctx));
+            self.mutex.lock();
+            defer self.mutex.unlock();
+
+            if (self.is_closed.load(.acquire)) return BleError.InvalidState;
+            const dev: *DeviceContext = @ptrCast(@alignCast(dev_handle));
+            return gatt_mod.discoverServicesFiltered(self, dev, filter_uuids);
         }
 
         pub fn isDeviceConnected(ctx: *anyopaque, dev_handle: *anyopaque) bool {
@@ -614,6 +644,9 @@ pub fn WindowsBackendWithConfig(comptime pool_config: PoolConfig) type {
             .processEvents = processEvents,
             .readDescriptor = readDescriptor,
             .writeDescriptor = writeDescriptor,
+            .getConnectionState = getConnectionState,
+            .setAutoResubscribe = setAutoResubscribe,
+            .discoverServicesFiltered = discoverServicesFiltered,
         };
 
         pub fn asBackend(self: *Self) Backend {

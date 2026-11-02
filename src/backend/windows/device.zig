@@ -53,6 +53,8 @@ pub fn DeviceContext(comptime pool_config: PoolConfig, comptime BackendType: typ
         rssi: ?i16 = null,
         /// Written by WinRT `ConnectionStatusChanged` threads, hence atomic.
         is_connected: std.atomic.Value(bool) = .init(false),
+        connection_state: std.atomic.Value(types.ConnectionState) = .init(.disconnected),
+        auto_resubscribe: bool = false,
         was_connected_once: bool = false,
         ble_device: ?*bindings.IBluetoothLEDevice = null,
         ble_device3: ?*bindings.IBluetoothLEDevice3 = null,
@@ -147,7 +149,8 @@ pub fn DeviceContext(comptime pool_config: PoolConfig, comptime BackendType: typ
         pub fn handleConnectionStatusTransition(self: *Self, connected: bool) void {
             const backend = self.parent_backend orelse {
                 self.is_connected.store(connected, .release);
-                if (!connected) self.dropNotificationCallbacks();
+                self.connection_state.store(if (connected) .connected else .disconnected, .release);
+                if (!connected and !self.auto_resubscribe) self.dropNotificationCallbacks();
                 return;
             };
             if (backend.is_closed.load(.acquire)) return;
@@ -162,8 +165,9 @@ pub fn DeviceContext(comptime pool_config: PoolConfig, comptime BackendType: typ
                 backend.state_mutex.lock();
                 defer backend.state_mutex.unlock();
                 const was_connected = self.is_connected.swap(connected, .acq_rel);
+                self.connection_state.store(if (connected) .connected else .disconnected, .release);
                 if (!connected) {
-                    self.dropNotificationCallbacks();
+                    if (!self.auto_resubscribe) self.dropNotificationCallbacks();
                     // WinRT does not report a disconnect reason.
                     if (was_connected) event = .{ .disconnected = .{ .address = self.address, .reason_code = null } };
                 } else if (!was_connected) {

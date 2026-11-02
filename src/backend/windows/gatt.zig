@@ -28,6 +28,10 @@ pub fn ensureServicesDiscovered(backend: anytype, dev: anytype) BleError!void {
 }
 
 pub fn discoverServices(backend: anytype, dev: anytype) BleError!void {
+    return discoverServicesFiltered(backend, dev, &.{});
+}
+
+pub fn discoverServicesFiltered(backend: anytype, dev: anytype, filter_uuids: []const UUID) BleError!void {
     if (builtin.os.tag != .windows) return BleError.NotSupported;
     if (backend.is_closed.load(.acquire)) return BleError.InvalidState;
     const d3 = dev.ble_device3 orelse return BleError.NotConnected;
@@ -68,6 +72,17 @@ pub fn discoverServices(backend: anytype, dev: anytype) BleError!void {
 
         var svc_guid: GUID = undefined;
         const svc_uuid = if (svc.lpVtbl.get_Uuid(svc, &svc_guid) >= 0) helpers.guidToUuid(svc_guid) else UUID.from16(0);
+
+        if (filter_uuids.len > 0) {
+            var matches = false;
+            for (filter_uuids) |fu| {
+                if (fu.eql(svc_uuid)) {
+                    matches = true;
+                    break;
+                }
+            }
+            if (!matches) continue;
+        }
 
         var svc3: ?*bindings.IGattDeviceService3 = null;
         if (svc.lpVtbl.QueryInterface(svc, &bindings.IID_IGattDeviceService3, @ptrCast(&svc3)) >= 0 and svc3 != null) {

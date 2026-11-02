@@ -29,6 +29,9 @@ const ReportData = struct {
     company_id: ?u16 = null,
     mfg_buf: [64]u8 = undefined,
     mfg_len: usize = 0,
+    service_data_uuid: ?types.UUID = null,
+    service_data_buf: [64]u8 = undefined,
+    service_data_len: usize = 0,
 };
 
 /// Runs on a WinRT thread. Reads the report without locks, merges it into the scan cache
@@ -57,6 +60,7 @@ pub fn handleWatcherReceived(backend: anytype, args: *bindings.IBluetoothLEAdver
 
         const dev = backend.scan_cache.get(report.address);
         dev.rssi = report.rssi;
+        if (report.tx_power) |tx| dev.tx_power = tx;
         if (report.address_type) |t| dev.address_type = t;
         if (report.name_len > 0) dev.setName(report.name_buf[0..report.name_len]);
         if (report.uuids_len > 0) {
@@ -64,6 +68,9 @@ pub fn handleWatcherReceived(backend: anytype, args: *bindings.IBluetoothLEAdver
             for (report.uuids[0..report.uuids_len]) |u| _ = dev.addServiceUuid(u);
         }
         if (report.company_id) |company| dev.setManufacturerData(company, report.mfg_buf[0..report.mfg_len]);
+        if (report.service_data_uuid) |s_uuid| {
+            dev.setServiceData(s_uuid, report.service_data_buf[0..report.service_data_len]);
+        }
 
         if (!backend.scan_filter.matches(dev)) return;
         break :blk .{ cb, backend.active_scan_user_data, dev.* };
@@ -155,6 +162,67 @@ fn readAdvertisement(args: *bindings.IBluetoothLEAdvertisementReceivedEventArgs,
         // Longer payloads are truncated to the size `DiscoveredDevice` keeps.
         report.mfg_len = helpers.readIBuffer(buf, &report.mfg_buf) catch return;
         report.company_id = company;
+    }
+
+    var sections_vec: ?*bindings.IVectorPtr = null;
+    if (adv.lpVtbl.get_DataSections(adv, &sections_vec) >= 0) {
+        if (sections_vec) |sv| {
+            defer _ = sv.lpVtbl.Release(sv);
+            var count: u32 = 0;
+            if (sv.lpVtbl.get_Size(sv, &count) >= 0) {
+                var i: u32 = 0;
+                while (i < count) : (i += 1) {
+                    var item: ?*anyopaque = null;
+                    if (sv.lpVtbl.GetAt(sv, i, &item) < 0) continue;
+                    const ds: *bindings.IBluetoothLEAdvertisementDataSection = @ptrCast(@alignCast(item orelse continue));
+                    defer _ = ds.lpVtbl.Release(ds);
+
+                    var data_type: u8 = 0;
+                    if (ds.lpVtbl.get_DataType(ds, &data_type) < 0) continue;
+
+                    var data_buf_ptr: ?*bindings.IBuffer = null;
+                    if (ds.lpVtbl.get_Data(ds, &data_buf_ptr) < 0) continue;
+                    const data_buf = data_buf_ptr orelse continue;
+                    defer _ = data_buf.lpVtbl.Release(data_buf);
+
+                    var temp_raw: [128]u8 = undefined;
+                    const raw_len = helpers.readIBuffer(data_buf, &temp_raw) catch continue;
+                    const raw = temp_raw[0..raw_len];
+
+                    // Check for TX Power Level (0x0A) if not already set from args2
+                    if (data_type == 0x0A and raw.len >= 1 and report.tx_power == null) {
+                        report.tx_power = @as(i8, @bitCast(raw[0]));
+                    }
+                    // Service Data 16-bit (0x16)
+                    else if (data_type == 0x16 and raw.len >= 2 and report.service_data_uuid == null) {
+                        const u16_val = std.mem.readInt(u16, raw[0..2], .little);
+                        report.service_data_uuid = types.UUID.from16(u16_val);
+                        const payload = raw[2..];
+                        const copy_len = @min(report.service_data_buf.len, payload.len);
+                        @memcpy(report.service_data_buf[0..copy_len], payload[0..copy_len]);
+                        report.service_data_len = copy_len;
+                    }
+                    // Service Data 32-bit (0x20)
+                    else if (data_type == 0x20 and raw.len >= 4 and report.service_data_uuid == null) {
+                        const u32_val = std.mem.readInt(u32, raw[0..4], .little);
+                        report.service_data_uuid = types.UUID.from32(u32_val);
+                        const payload = raw[4..];
+                        const copy_len = @min(report.service_data_buf.len, payload.len);
+                        @memcpy(report.service_data_buf[0..copy_len], payload[0..copy_len]);
+                        report.service_data_len = copy_len;
+                    }
+                    // Service Data 128-bit (0x21)
+                    else if (data_type == 0x21 and raw.len >= 16 and report.service_data_uuid == null) {
+                        const le_bytes: *const [16]u8 = raw[0..16];
+                        report.service_data_uuid = types.UUID.fromLittleEndian(le_bytes.*);
+                        const payload = raw[16..];
+                        const copy_len = @min(report.service_data_buf.len, payload.len);
+                        @memcpy(report.service_data_buf[0..copy_len], payload[0..copy_len]);
+                        report.service_data_len = copy_len;
+                    }
+                }
+            }
+        }
     }
 }
 

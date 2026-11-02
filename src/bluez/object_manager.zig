@@ -74,6 +74,9 @@ pub const DeviceInfo = struct {
     manufacturer_id: ?u16 = null,
     manufacturer_data_buf: [64]u8 = undefined,
     manufacturer_data_len: u8 = 0,
+    service_data_uuid: ?core.UUID = null,
+    service_data_buf: [64]u8 = undefined,
+    service_data_len: u8 = 0,
     service_uuids: [8]core.UUID = undefined,
     service_uuids_len: u8 = 0,
 
@@ -284,6 +287,29 @@ pub fn parseDeviceProps(obj_path: [:0]const u8, props_iter: anytype) DeviceInfo 
                                     }
                                 }
                                 _ = md.next();
+                                break; // Take first entry
+                            }
+                        }
+                    } else if (std.mem.eql(u8, key, BlueZ.Device1.Properties.ServiceData)) {
+                        // Dict of {string: variant<array of bytes>}
+                        if (v.recurse()) |*sd_dict| {
+                            var sd = sd_dict.*;
+                            while (sd.hasMore()) {
+                                if (sd.recurse()) |*sd_entry| {
+                                    var se = sd_entry.*;
+                                    if (se.getString()) |uuid_str| {
+                                        if (core.UUID.parse(uuid_str)) |parsed_u| {
+                                            info.service_data_uuid = parsed_u;
+                                            if (se.getVariant()) |*sv| {
+                                                var svar = sv.*;
+                                                if (svar.getFixedBytes()) |bytes| {
+                                                    info.service_data_len = copyBoundedBytes(&info.service_data_buf, bytes);
+                                                }
+                                            }
+                                        } else |_| {}
+                                    }
+                                }
+                                _ = sd.next();
                                 break; // Take first entry
                             }
                         }

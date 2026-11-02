@@ -181,7 +181,7 @@ pub const Socket = struct {
             .iov = &s_iov,
             .iovlen = 1,
             .control = &cmsg_buf,
-            .controllen = total_cmsg_len,
+            .controllen = @intCast(total_cmsg_len),
             .flags = 0,
         };
 
@@ -239,7 +239,7 @@ pub const Socket = struct {
             .iov = &r_iov,
             .iovlen = 1,
             .control = &r_cmsg_buf,
-            .controllen = r_cmsg_buf.len,
+            .controllen = @intCast(r_cmsg_buf.len),
             .flags = 0,
         };
 

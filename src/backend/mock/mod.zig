@@ -81,6 +81,8 @@ pub const MockDevice = struct {
     name_len: u8 = 0,
     rssi: i16 = -55,
     is_connected: bool = false,
+    connection_state: types.ConnectionState = .disconnected,
+    auto_resubscribe: bool = false,
 
     characteristics: [16]MockCharacteristic = undefined,
     characteristics_len: u8 = 0,
@@ -219,6 +221,7 @@ pub const MockController = struct {
         if (!self.powered) return BleError.NotPowered;
         const dev = self.findDeviceByAddress(addr) orelse return BleError.DeviceNotFound;
         dev.is_connected = true;
+        dev.connection_state = .connected;
         return @ptrCast(dev);
     }
 
@@ -226,7 +229,10 @@ pub const MockController = struct {
         _ = ctx;
         const dev: *MockDevice = @ptrCast(@alignCast(dev_handle));
         dev.is_connected = false;
-        dev.clearSubscriptions();
+        dev.connection_state = .disconnected;
+        if (!dev.auto_resubscribe) {
+            dev.clearSubscriptions();
+        }
     }
 
     pub fn isDeviceConnected(ctx: *anyopaque, dev_handle: *anyopaque) bool {
@@ -348,6 +354,25 @@ pub const MockController = struct {
         return dev.bond_state;
     }
 
+    pub fn getConnectionState(ctx: *anyopaque, dev_handle: *anyopaque) types.ConnectionState {
+        _ = ctx;
+        const dev: *MockDevice = @ptrCast(@alignCast(dev_handle));
+        return dev.connection_state;
+    }
+
+    pub fn setAutoResubscribe(ctx: *anyopaque, dev_handle: *anyopaque, enabled: bool) void {
+        _ = ctx;
+        const dev: *MockDevice = @ptrCast(@alignCast(dev_handle));
+        dev.auto_resubscribe = enabled;
+    }
+
+    pub fn discoverServicesFiltered(ctx: *anyopaque, dev_handle: *anyopaque, filter_uuids: []const UUID) BleError!void {
+        _ = ctx;
+        _ = filter_uuids;
+        const dev: *MockDevice = @ptrCast(@alignCast(dev_handle));
+        if (!dev.is_connected) return BleError.NotConnected;
+    }
+
     pub const vtable: BackendVTable = .{
         .name = "MockController",
         .openAdapter = openAdapter,
@@ -372,6 +397,9 @@ pub const MockController = struct {
         .getCharacteristics = getCharacteristics,
         .readDescriptor = readDescriptor,
         .writeDescriptor = writeDescriptor,
+        .getConnectionState = getConnectionState,
+        .setAutoResubscribe = setAutoResubscribe,
+        .discoverServicesFiltered = discoverServicesFiltered,
     };
 
     pub fn asBackend(self: *MockController) Backend {

@@ -63,6 +63,15 @@ pub const BackendVTable = struct {
     /// `timeout_ms` (v1.4.0). Backends whose callbacks arrive on their own threads (WinRT)
     /// only wait; backends without it (mock) return immediately.
     processEvents: ?*const fn (ctx: *anyopaque, timeout_ms: u32) BleError!void = null,
+
+    /// Returns the observable connection state (v1.4.0).
+    getConnectionState: ?*const fn (ctx: *anyopaque, dev_handle: *anyopaque) types.ConnectionState = null,
+
+    /// Configures automatic re-subscription of active notifications when the device reconnects (v1.4.0).
+    setAutoResubscribe: ?*const fn (ctx: *anyopaque, dev_handle: *anyopaque, enabled: bool) void = null,
+
+    /// Discovers services matching `filter_uuids`, or all services if empty (v1.4.0).
+    discoverServicesFiltered: ?*const fn (ctx: *anyopaque, dev_handle: *anyopaque, filter_uuids: []const UUID) BleError!void = null,
 };
 
 /// Type-erased, zero-allocation Backend handle
@@ -179,5 +188,19 @@ pub const Backend = struct {
     /// Delivers pending events, waiting up to `timeout_ms` for the first one.
     pub inline fn processEvents(self: Backend, timeout_ms: u32) BleError!void {
         if (self.vtable.processEvents) |f| return f(self.ptr, timeout_ms);
+    }
+
+    pub inline fn getConnectionState(self: Backend, dev_handle: *anyopaque) types.ConnectionState {
+        if (self.vtable.getConnectionState) |f| return f(self.ptr, dev_handle);
+        return if (self.isDeviceConnected(dev_handle)) .connected else .disconnected;
+    }
+
+    pub inline fn setAutoResubscribe(self: Backend, dev_handle: *anyopaque, enabled: bool) void {
+        if (self.vtable.setAutoResubscribe) |f| f(self.ptr, dev_handle, enabled);
+    }
+
+    pub inline fn discoverServicesFiltered(self: Backend, dev_handle: *anyopaque, filter_uuids: []const UUID) BleError!void {
+        if (self.vtable.discoverServicesFiltered) |f| return f(self.ptr, dev_handle, filter_uuids);
+        return self.vtable.discoverServices(self.ptr, dev_handle);
     }
 };
