@@ -1,6 +1,10 @@
-//! # Zig-BLE v1.0.0 Official Live Verification Test
+//! # Zig-BLE live demo
 //!
-//! Executes a full-stack live verification test:
+//! Runs the protocol toolkit once and scans with the Windows backend. It stops at the first
+//! error, but it is a demo, not a verification suite: `zig build test` and
+//! `zig build run-hardware-check` are what check the library.
+//!
+//! Steps:
 //! 1. Detects local physical Bluetooth Radio hardware.
 //! 2. Verifies Pure-Zig Host-Stack (H4 framer + L2CAP ACL reassembler).
 //! 3. Verifies GATT Long Transfers (LongWriteIterator & LongReadReassembler).
@@ -15,12 +19,10 @@ const ble = @import("Zig_BLE");
 pub fn main() !void {
     std.debug.print("\n", .{});
     std.debug.print("========================================================================\n", .{});
-    std.debug.print("         ZIG-BLE v1.0.0 PRODUCTION RELEASE VERIFICATION SUITE           \n", .{});
+    std.debug.print("                         ZIG-BLE LIVE DEMO                              \n", .{});
     std.debug.print("========================================================================\n", .{});
     std.debug.print("Zig Version:       {s}\n", .{@import("builtin").zig_version_string});
-    std.debug.print("Target Platform:   {s}-{s}\n", .{ @tagName(builtin.os.tag), @tagName(builtin.cpu.arch) });
-    std.debug.print("Spec Conformance:  Bluetooth Core Spec v5.4 / v6.0\n", .{});
-    std.debug.print("Zero-Allocation:   100% Verified on Protocol Hot-Paths\n\n", .{});
+    std.debug.print("Target Platform:   {s}-{s}\n\n", .{ @tagName(builtin.os.tag), @tagName(builtin.cpu.arch) });
 
     // =========================================================================
     // STEP 1: Radio & Hardware Inspection
@@ -191,24 +193,10 @@ pub fn main() !void {
     var disc = Discovery{};
     std.debug.print("  -> Listening for nearby active BLE devices (inquiry cycle)...\n", .{});
     try backend.startScan(.{}, Discovery.callback, &disc);
+    for (0..50) |_| try backend.processEvents(100); // scan for 5 s
     try backend.stopScan();
 
-    std.debug.print("  -> On-Air Scan Completed. Total devices found: {d}\n\n", .{disc.count});
+    std.debug.print("  -> On-Air Scan Completed. Advertisement reports: {d}\n\n", .{disc.count});
 
-    // =========================================================================
-    // FINAL PRODUCTION READINESS SUMMARY
-    // =========================================================================
-    std.debug.print("========================================================================\n", .{});
-    std.debug.print("   VERIFICATION RESULT: ALL 7 PILLARS OF ZIG-BLE v1.0.0 PASSED!         \n", .{});
-    std.debug.print("========================================================================\n", .{});
-    std.debug.print(" [x] Pfeiler 1: Pluggable Backend HAL & VTable Architecture\n", .{});
-    std.debug.print(" [x] Pfeiler 2: Tier-1 Native OS Support (Windows & Linux)\n", .{});
-    std.debug.print(" [x] Pfeiler 3: Pure-Zig Host-Stack for Bare-Metal & UART H4/H5\n", .{});
-    std.debug.print(" [x] Pfeiler 4: GATT Completeness, Long Transfers & Lifecycle\n", .{});
-    std.debug.print(" [x] Pfeiler 5: KeyStore, SMP Bonding & CCCD Persistence\n", .{});
-    std.debug.print(" [x] Pfeiler 6: Virtual Mock Controller & Headless CI Harness\n", .{});
-    std.debug.print(" [x] Pfeiler 7: Developer Tooling & Wireshark PCAP Exporter\n", .{});
-    std.debug.print("------------------------------------------------------------------------\n", .{});
-    std.debug.print(" Zig-BLE is officially ready for v1.0.0 PRODUCTION RELEASE.\n", .{});
-    std.debug.print("========================================================================\n\n", .{});
+    std.debug.print("Demo finished.\n", .{});
 }

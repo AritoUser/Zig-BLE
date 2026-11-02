@@ -252,6 +252,22 @@ pub const IGattReadResultVtbl = extern struct {
     get_Value: *const fn (self: *anyopaque, value: *?*IBuffer) callconv(WINAPI) HRESULT,
 };
 
+pub const IGattReadResult2 = extern struct {
+    lpVtbl: *const IGattReadResult2Vtbl,
+};
+
+pub const IGattReadResult2Vtbl = extern struct {
+    QueryInterface: *const fn (self: *anyopaque, riid: *const GUID, ppvObject: *?*anyopaque) callconv(WINAPI) HRESULT,
+    AddRef: *const fn (self: *anyopaque) callconv(WINAPI) ULONG,
+    Release: *const fn (self: *anyopaque) callconv(WINAPI) ULONG,
+    GetIids: *const anyopaque,
+    GetRuntimeClassName: *const anyopaque,
+    GetTrustLevel: *const anyopaque,
+
+    /// The ATT error code when the status is `ProtocolError`.
+    get_ProtocolError: *const fn (self: *anyopaque, value: *?*core_ifaces.IReferenceByte) callconv(WINAPI) HRESULT,
+};
+
 pub const IGattValueChangedEventArgs = extern struct {
     lpVtbl: *const IGattValueChangedEventArgsVtbl,
 };

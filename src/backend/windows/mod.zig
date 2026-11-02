@@ -163,6 +163,19 @@ pub fn WindowsBackendWithConfig(comptime pool_config: PoolConfig) type {
                     return d;
                 }
             }
+            // Slots of disconnected devices stay assigned so a reconnect finds its slot; reuse
+            // them when no slot is free. Devices with rotating addresses would exhaust the pool.
+            for (&self.devices) |*d| {
+                if (!d.is_connected.load(.acquire)) {
+                    d.releaseAll();
+                    d.* = .{
+                        .in_use = true,
+                        .address = addr,
+                        .parent_backend = self,
+                    };
+                    return d;
+                }
+            }
             return BleError.PoolExhausted;
         }
 

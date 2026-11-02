@@ -55,9 +55,18 @@ test "WindowsBackendWithConfig custom pool sizes and PoolExhausted error" {
     const a2 = try Address.parse("11:22:33:44:55:02");
     const a3 = try Address.parse("11:22:33:44:55:03");
 
-    _ = try win.allocateDeviceSlot(a1);
-    _ = try win.allocateDeviceSlot(a2);
+    const d1 = try win.allocateDeviceSlot(a1);
+    const d2 = try win.allocateDeviceSlot(a2);
+    d1.is_connected.store(true, .release);
+    d2.is_connected.store(true, .release);
     try std.testing.expectError(BleError.PoolExhausted, win.allocateDeviceSlot(a3));
+
+    // A disconnected device's slot is reused once no slot is free
+    d2.is_connected.store(false, .release);
+    const d3 = try win.allocateDeviceSlot(a3);
+    try std.testing.expectEqual(d2, d3);
+    try std.testing.expect(d3.address.eql(a3));
+    try std.testing.expect(win.findDeviceByAddress(a2) == null);
 }
 
 test "WindowsBackend ConnectionStatusChanged cleans up subscriptions and invokes reconnect callback" {

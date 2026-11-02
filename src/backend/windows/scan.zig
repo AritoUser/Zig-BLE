@@ -58,6 +58,7 @@ pub fn handleWatcherReceived(backend: anytype, args: *bindings.IBluetoothLEAdver
         const dev = backend.scan_cache.get(report.address);
         dev.rssi = report.rssi;
         if (report.address_type) |t| dev.address_type = t;
+        if (report.tx_power) |t| dev.tx_power = t;
         if (report.name_len > 0) dev.setName(report.name_buf[0..report.name_len]);
         if (report.uuids_len > 0) {
             dev.service_uuids_len = 0;

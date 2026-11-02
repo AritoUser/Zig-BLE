@@ -321,7 +321,7 @@ pub fn build(b: *std.Build) void {
 
         const run_v1_live_cmd = b.addRunArtifact(v1_live_exe);
         run_v1_live_cmd.addPassthruArgs();
-        const run_v1_live_step = b.step("run-v1-live", "Run the official Zig-BLE v1.0.0 Live Verification Suite");
+        const run_v1_live_step = b.step("run-v1-live", "Run the Zig-BLE live demo (protocol toolkit and scan)");
         run_v1_live_step.dependOn(&run_v1_live_cmd.step);
 
         const probe_ble_exe = b.addExecutable(.{

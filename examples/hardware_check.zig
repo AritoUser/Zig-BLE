@@ -83,12 +83,14 @@ fn scan(adapter: *ble.UnifiedAdapter) !void {
     var with_mfg: usize = 0;
     var with_uuids: usize = 0;
     var random: usize = 0;
+    var with_tx: usize = 0;
     print("\n{s: <17}  {s: <6}  {s: >4}  {s: >7}  {s: <6}  {s: <5}  name", .{ "address", "type", "rssi", "reports", "mfg", "uuids" });
     for (seen.devices[0..seen.len], seen.reports[0..seen.len]) |*d, reports| {
         if (d.getName() != null) named += 1;
         if (d.company_id != null) with_mfg += 1;
         if (d.service_uuids_len > 0) with_uuids += 1;
         if (d.address_type != .public) random += 1;
+        if (d.tx_power != null) with_tx += 1;
         const addr = d.address.toString();
         var mfg_buf: [6]u8 = undefined;
         const mfg = if (d.company_id) |c| std.fmt.bufPrint(&mfg_buf, "0x{X:0>4}", .{c}) catch "?" else "-";
@@ -102,8 +104,8 @@ fn scan(adapter: *ble.UnifiedAdapter) !void {
             d.getName() orelse "",
         });
     }
-    print("\nScan: {d} devices, {d} with name, {d} with manufacturer data, {d} with service UUIDs, {d} random addresses, {d} events dropped", .{
-        seen.len, named, with_mfg, with_uuids, random, queue.dropped,
+    print("\nScan: {d} devices, {d} with name, {d} with manufacturer data, {d} with service UUIDs, {d} with TX power, {d} random addresses, {d} events dropped", .{
+        seen.len, named, with_mfg, with_uuids, with_tx, random, queue.dropped,
     });
 }
 

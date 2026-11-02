@@ -647,6 +647,8 @@ fn mapDBusError(error_name: ?[]const u8) DBusError {
     if (std.mem.endsWith(u8, name, "PropertyReadOnly")) return DBusError.PropertyReadOnly;
     if (std.mem.endsWith(u8, name, "InvalidArgs")) return DBusError.InvalidArgs;
     if (std.mem.endsWith(u8, name, "AccessDenied")) return DBusError.AccessDenied;
+    // BlueZ: the characteristic does not allow this operation, or requires pairing
+    if (std.mem.endsWith(u8, name, "NotPermitted") or std.mem.endsWith(u8, name, "NotAuthorized")) return DBusError.AccessDenied;
     if (std.mem.endsWith(u8, name, "NoReply")) return DBusError.NoReply;
     if (std.mem.endsWith(u8, name, "Timeout")) return DBusError.Timeout;
     return DBusError.Failed;

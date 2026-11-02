@@ -165,7 +165,7 @@ pub fn readCharacteristic(backend: anytype, dev: anytype, char: CharacteristicSe
 
     var status: bindings.GattCommunicationStatus = .Unreachable;
     if (read_res.lpVtbl.get_Status(read_res, &status) < 0 or status != .Success) {
-        return if (status == .AccessDenied) BleError.PermissionDenied else BleError.ReadFailed;
+        return readFailure(read_res, status);
     }
 
     var ibuf: ?*bindings.IBuffer = null;
@@ -184,6 +184,27 @@ pub fn readCharacteristic(backend: anytype, dev: anytype, char: CharacteristicSe
         hook.emit(.controller_to_host, rsp_pdu[0 .. 1 + copy_len]);
     }
     return n;
+}
+
+/// Turns a failed read into the most specific error WinRT reports.
+fn readFailure(read_res: *bindings.IGattReadResult, status: bindings.GattCommunicationStatus) BleError {
+    if (status == .AccessDenied) return BleError.PermissionDenied;
+    if (status != .ProtocolError) return BleError.ReadFailed;
+
+    var res2: ?*bindings.IGattReadResult2 = null;
+    if (read_res.lpVtbl.QueryInterface(read_res, &bindings.IID_IGattReadResult2, @ptrCast(&res2)) < 0) return BleError.ReadFailed;
+    const r2 = res2 orelse return BleError.ReadFailed;
+    defer _ = r2.lpVtbl.Release(r2);
+
+    // The result already is an `IReference<BYTE>`; this object does not offer IPropertyValue.
+    var boxed: ?*bindings.IReferenceByte = null;
+    if (r2.lpVtbl.get_ProtocolError(r2, &boxed) < 0) return BleError.ReadFailed;
+    const reference = boxed orelse return BleError.ReadFailed;
+    defer _ = reference.lpVtbl.Release(reference);
+
+    var code: u8 = 0;
+    if (reference.lpVtbl.get_Value(reference, &code) < 0) return BleError.ReadFailed;
+    return types.bleErrorFromAtt(code, BleError.ReadFailed);
 }
 
 pub fn writeCharacteristic(backend: anytype, dev: anytype, char: CharacteristicSelector, data: []const u8, with_response: bool) BleError!void {
@@ -414,7 +435,7 @@ pub fn readDescriptor(backend: anytype, dev: anytype, char: CharacteristicSelect
 
     var status: bindings.GattCommunicationStatus = .Unreachable;
     if (read_res.lpVtbl.get_Status(read_res, &status) < 0 or status != .Success) {
-        return if (status == .AccessDenied) BleError.PermissionDenied else BleError.ReadFailed;
+        return readFailure(read_res, status);
     }
     var ibuf: ?*bindings.IBuffer = null;
     if (read_res.lpVtbl.get_Value(read_res, &ibuf) < 0) return BleError.ReadFailed;

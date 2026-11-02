@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * **Only one notification subscription per device** (Windows, BlueZ, mock). Subscribing to a second characteristic replaced the first one's callback, and unsubscribing any characteristic ended all of them. Callbacks are now stored per characteristic.
 * **Characteristics with the same UUID overwrote each other** (Windows, BlueZ). Only the last HID report (0x2A4D) or the last of two Battery services remained. Every characteristic now gets its own slot, stored in attribute-handle order with its service UUID.
 * **Windows dropped idle connections.** Connect now opens a `GattSession` with `MaintainConnection = true`, which is released on disconnect.
-* **Windows scan results lacked manufacturer data, TX power and address type**, and advertisement and scan response arrived as unrelated results (often one without the name). Both are now merged per device.
+* **Scan results lacked TX power (Windows, BlueZ), and on Windows manufacturer data and address type**, and advertisement and scan response arrived as unrelated results (often one without the name). Both are now merged per device.
 * **Windows connected random-address devices unreliably.** The address type seen while scanning is used with `FromBluetoothAddressWithBluetoothAddressTypeAsync`.
 * **Windows callbacks raced with backend calls.** WinRT threads now only touch state under a separate `state_mutex` that is never held across WinRT calls; `is_connected` is atomic.
 * **Windows discovery silently dropped services** whose characteristics could not be read (e.g. HID, which Windows reserves). They are now skipped with a warning naming the service and the error.
@@ -21,13 +21,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * **The backend mutex spun at 100 % CPU** while another thread held it, e.g. during a 10 s connect. `SyncMutex` (and the D-Bus connection's mutex) now sleep in the kernel: SRW lock on Windows, futex on Linux, `os_unfair_lock` on Darwin.
 * **Invented disconnect reasons.** Windows always reported 0x08 and BlueZ 0x08 or 0x13. BlueZ now reports the reason from `Device1.Disconnected` (BlueZ 5.71+); otherwise the reason is `null`.
 * **`Connection.initSystem`, `Connection.initSession` and the bond store's Linux file functions did not compile when the application links libc**, because integer literals were passed to the variadic `open`. Checked from now on with `-Dlink-libc=true`.
+* **All failed reads returned `ReadFailed`.** Windows and BlueZ now report `PermissionDenied`, `InsufficientAuthentication` or `InsufficientEncryption` where the device or BlueZ says so.
+* **Device slots were never freed** (Windows, BlueZ). After 8 different addresses `connect` failed with `PoolExhausted`, which devices with rotating addresses reach quickly. Slots of disconnected devices are now reused, so a `UnifiedDevice` handle must not be used after `disconnect`.
+* **The D-Bus bus address was ignored in large environments**: `getEnvVar` read only the first 4 KB of the process environment. It now reads up to 64 KB.
+* **`run-v1-live` printed "ALL 7 PILLARS PASSED" and "ready for production" without checking them**, and it and `run-windows-scanner` stopped scanning immediately. `run-v1-live` is now labeled a demo, and both scan for several seconds.
 * **Public functions that did not compile on first use**, because no test called them: `L2capSocket.setNonBlocking`, `getSecurityLevel` and `read`, `HciController.sendL2capPdu`, and the ATT PDU encoder for handle lists. `zig build check-api` now compiles every public function.
 
 ### Added
 * `CharacteristicSelector` (`uuid`, optional `service`, `instance`) to address characteristics that share a UUID, e.g. `dev.readCharacteristic(.{ .uuid = UUID.from16(0x2A4D), .instance = 1 }, &buf)`. Passing a plain `UUID` still selects the first match.
 * `UnifiedDevice.getCharacteristics` / `Backend.getCharacteristics` lists the discovered characteristics as `CharacteristicInfo` (service UUID, UUID, instance).
 * `UnifiedAdapter.processEvents(timeout_ms)` / `Backend.processEvents`. Required on BlueZ; on Windows it only waits, so one event loop works on both.
-* `ScanFilter.matches`, `MockCharacteristic.service_uuid`.
+* `ScanFilter.matches`, `MockCharacteristic.service_uuid`, `DiscoveredDevice.tx_power`.
 * `UnifiedDevice.readDescriptor` / `writeDescriptor` (Windows, BlueZ, mock), e.g. for the User Description (0x2901).
 * `EventQueue`: collects scan results, notifications (tagged with the device address) and connection events in a fixed ring buffer for a pull-style loop with `next()` / `wait()`.
 * `profiles.vendor_adv`: decoders for Microsoft Swift Pair and Google Fast Pair advertisements, and `decode()` to find iBeacon, Swift Pair or Fast Pair in raw advertising data.

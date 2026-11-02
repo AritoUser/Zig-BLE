@@ -23,6 +23,8 @@ pub const UnifiedDevice = struct {
     handle: *anyopaque,
     address: Address,
 
+    /// Ends the connection. The handle must not be used afterwards: its slot can be reused
+    /// by the next `connect`. Call `connect` again to get a new handle.
     pub fn disconnect(self: *UnifiedDevice) BleError!void {
         return self.backend.disconnectDevice(self.handle);
     }

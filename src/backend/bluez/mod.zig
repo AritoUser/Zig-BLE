@@ -165,6 +165,17 @@ pub const BluezBackend = struct {
                 return d;
             }
         }
+        // Slots of disconnected devices stay assigned so a reconnect finds its slot; reuse them
+        // when no slot is free. Devices with rotating addresses would exhaust the pool.
+        for (&self.devices) |*d| {
+            if (!d.is_connected) {
+                d.* = .{
+                    .in_use = true,
+                    .address = addr,
+                };
+                return d;
+            }
+        }
         return null;
     }
 
@@ -283,7 +294,7 @@ pub const BluezBackend = struct {
                 if (self.scanning and self.isDevicePathOnAdapter(path)) {
                     var props = dict;
                     const info = object_manager.parseDeviceProps(path, &props);
-                    const has_adv_data = info.rssi != null or info.name_len > 0 or
+                    const has_adv_data = info.rssi != null or info.tx_power != null or info.name_len > 0 or
                         info.manufacturer_id != null or info.service_uuids_len > 0;
                     if (has_adv_data) {
                         if (BlueZ.parseAddressFromDevicePath(path)) |addr| {
@@ -344,6 +355,7 @@ pub const BluezBackend = struct {
         const dev = self.scan_cache.get(address);
         if (full) dev.address_type = info.address_type;
         if (info.rssi) |rssi| dev.rssi = rssi;
+        if (info.tx_power) |tx| dev.tx_power = tx;
         if (info.getName()) |name| dev.setName(name);
         if (info.manufacturer_id) |company| dev.setManufacturerData(company, info.getManufacturerData().?);
         if (info.service_uuids_len > 0) {
@@ -840,7 +852,7 @@ pub const BluezBackend = struct {
 
         const found = try self.lookupDescriptor(ctx, dev_handle, char, descriptor);
         var d = gatt_client.GattDescriptor.init(found.conn, found.desc.getPath());
-        return d.readValue(buf) catch BleError.ReadFailed;
+        return d.readValue(buf) catch |err| if (err == error.AccessDenied) BleError.PermissionDenied else BleError.ReadFailed;
     }
 
     pub fn writeDescriptor(ctx: *anyopaque, dev_handle: *anyopaque, char: CharacteristicSelector, descriptor: UUID, data: []const u8) BleError!void {
@@ -918,7 +930,7 @@ pub const BluezBackend = struct {
             const req_pdu = [_]u8{ @intFromEnum(core.AttOpcode.read_req), 0x01, 0x00 };
             hook.emit(.host_to_controller, &req_pdu);
         }
-        const n = ch.readValue(buf) catch return BleError.ReadFailed;
+        const n = ch.readValue(buf) catch |err| return if (err == error.AccessDenied) BleError.PermissionDenied else BleError.ReadFailed;
         if (self.pcap_hook) |hook| {
             var rsp_pdu: [517]u8 = undefined;
             rsp_pdu[0] = @intFromEnum(core.AttOpcode.read_rsp);

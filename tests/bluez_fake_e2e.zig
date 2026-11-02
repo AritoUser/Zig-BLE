@@ -41,6 +41,7 @@ const report_ref_uuid = "00002908-0000-1000-8000-00805f9b34fb";
 /// Control bytes written to `report_a` to make the fake device act.
 const cmd_notify: u8 = 0x01;
 const cmd_remote_disconnect: u8 = 0x02;
+const cmd_deny_reads: u8 = 0x03;
 
 const FakeBluez = struct {
     conn: Connection,
@@ -49,6 +50,7 @@ const FakeBluez = struct {
     resolved: bool = false,
     /// Services resolve some time after `Connect` returned, as on real BlueZ.
     resolve_at_ms: ?i64 = null,
+    deny_reads: bool = false,
 
     fn run(self: *FakeBluez) void {
         while (!self.stop.load(.acquire)) {
@@ -105,6 +107,12 @@ const FakeBluez = struct {
             defer reply.deinit();
             return self.conn.send(&reply);
         }
+        if (eql(u8, member, "ReadValue") and self.deny_reads) {
+            self.deny_reads = false;
+            var reply = try Connection.createErrorReply(msg, "org.bluez.Error.NotPermitted", "Read not permitted");
+            defer reply.deinit();
+            return self.conn.send(&reply);
+        }
         if (eql(u8, member, "ReadValue")) {
             var reply = try Connection.createMethodReturn(msg);
             defer reply.deinit();
@@ -145,6 +153,8 @@ const FakeBluez = struct {
                 try self.emitValue(report_a, &.{0x11});
                 try self.emitValue(report_b, &.{0x22});
                 try self.emitValue(battery_level, &.{0x33});
+            } else if (data.len == 1 and data[0] == cmd_deny_reads) {
+                self.deny_reads = true;
             } else if (data.len == 1 and data[0] == cmd_remote_disconnect) {
                 try self.dropLink(BlueZ.Device1.Reasons.Remote);
             }
@@ -211,6 +221,7 @@ const FakeBluez = struct {
         try props.appendDictString(BlueZ.Device1.Properties.AddressType, "random");
         try props.appendDictString(BlueZ.Device1.Properties.Name, name);
         try props.appendDictInt16(BlueZ.Device1.Properties.RSSI, rssi);
+        try props.appendDictInt16(BlueZ.Device1.Properties.TxPower, -8);
         try props.appendDictStringArray(BlueZ.Device1.Properties.UUIDs, &.{"0000180d-0000-1000-8000-00805f9b34fb"});
         var entry = try props.openDictEntry();
         try entry.appendString(BlueZ.Device1.Properties.ManufacturerData);
@@ -388,6 +399,7 @@ pub fn main() !void {
         check(d.rssi == -48, "scan: RSSI update merged");
         check(d.address_type == .random, "scan: address type");
         check(d.company_id == 0x004C, "scan: manufacturer data");
+        check(d.tx_power == -8, "scan: TX power");
         check(d.getServiceUuids().len == 1 and d.getServiceUuids()[0].eql(UUID.from16(0x180D)), "scan: service UUIDs");
     } else check(false, "scan: device reported");
     if (scan.cached) |d| {
@@ -436,11 +448,31 @@ pub fn main() !void {
     check(buf[0] == 90, "read: selector with service");
     check(dev.readCharacteristic(ble.CharacteristicSelector.inService(UUID.from16(0x180F), report), &buf) == error.CharacteristicNotFound, "read: wrong service is not found");
 
+    try dev.writeCharacteristic(report, &.{cmd_deny_reads}, true);
+    check(dev.readCharacteristic(report, &buf) == error.PermissionDenied, "read: NotPermitted maps to PermissionDenied");
+
     const ref = UUID.from16(0x2908);
     const desc_len = try dev.readDescriptor(.{ .uuid = report, .instance = 1 }, ref, &buf);
     check(desc_len == 2 and buf[1] == 0x02, "descriptor: read from the right characteristic");
     check(dev.readDescriptor(report, ref, &buf) == error.DescriptorNotFound, "descriptor: other instance has none");
     check((try dev.exchangeMtu(247)) == 185, "mtu: negotiated value from BlueZ");
+
+    // Slots: more devices than slots, with disconnected ones being reused
+    var slots_ok = true;
+    for (0..bluez_backend.devices.len - 1) |i| {
+        const slot = bluez_backend.allocateDeviceSlot(.{ .bytes = .{ 0x02, 0, 0, 0, 0, @intCast(i) } }) orelse {
+            slots_ok = false;
+            break;
+        };
+        slot.is_connected = true;
+    }
+    check(slots_ok, "slots: every other slot can be used");
+    const new_addr = ble.Address{ .bytes = .{ 0x03, 0, 0, 0, 0, 0 } };
+    check(bluez_backend.allocateDeviceSlot(new_addr) == null, "slots: all connected means pool exhausted");
+    for (&bluez_backend.devices) |*d| {
+        if (!d.address.eql(addr)) d.is_connected = false;
+    }
+    check(bluez_backend.allocateDeviceSlot(new_addr) != null, "slots: a disconnected slot is reused");
 
     // F2: independent subscriptions
     var battery_log = NotifyLog{};

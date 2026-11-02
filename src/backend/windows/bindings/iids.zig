@@ -60,6 +60,7 @@ pub const IID_IGattCharacteristic = GUID.parse("59cb50c1-5934-4f68-a198-eb864fa4
 pub const IID_IGattCharacteristic3 = GUID.parse("3f3c663e-93d4-406b-b817-db81f8ed53b3");
 pub const IID_IGattDescriptorsResult = GUID.parse("9bc091f3-95e7-4489-8d25-ff81955a57b9");
 pub const IID_IGattDescriptor = GUID.parse("92055f2b-8084-4344-b4c2-284de19a8506");
+pub const IID_IGattReadResult2 = GUID.parse("a10f50a0-fb43-48af-baaa-638a5c6329fe");
 pub const IID_IGattReadResult = GUID.parse("63a66f08-1aea-4c4c-a50f-97bae474b348");
 pub const IID_IGattWriteResult = GUID.parse("4991ddb1-cb2b-44f7-99fc-d29a2871dc9b");
 pub const IID_IGattValueChangedEventArgs = GUID.parse("d21bdb54-06e3-4ed8-a263-acfac8ba7313");

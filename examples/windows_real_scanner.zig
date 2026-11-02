@@ -49,8 +49,10 @@ pub fn main() !void {
 
     var state = ScannerState{};
     try adapter.startScan(.{}, ScannerState.onDiscovered, &state);
+    for (0..100) |_| try adapter.processEvents(100); // scan for 10 s
+    try adapter.stopScan();
 
     std.debug.print("\n-----------------------------------------------------------------\n", .{});
-    std.debug.print("Scan complete! Discovered {d} real device(s) on your hardware.\n", .{state.count});
+    std.debug.print("Scan complete: {d} advertisement reports (a device can report many times).\n", .{state.count});
     std.debug.print("=================================================================\n", .{});
 }

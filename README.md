@@ -310,7 +310,7 @@ Qualitativer Vergleich der Bauweise, keine Performance-Messung. Für die anderen
 # Führt alle Unit-, E2E-Pipeline- und Edge-Case-Tests aus
 zig build test
 
-# Führt die offizielle Live-Hardware-Verifikation durch
+# Startet die Live-Demo (Protokoll-Toolkit und Scan)
 zig build run-v1-live
 
 # Startet den nativen Windows-Hardware-Scanner

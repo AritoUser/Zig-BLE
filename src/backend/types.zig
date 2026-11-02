@@ -49,6 +49,17 @@ pub const BleError = error{
     InsufficientEncryption,
 };
 
+/// Maps an ATT error code (Core Spec Vol 3, Part F, 3.4.1.1) to the matching `BleError`,
+/// or `fallback` for codes without a more specific error.
+pub fn bleErrorFromAtt(code: u8, fallback: BleError) BleError {
+    return switch (code) {
+        0x02, 0x03, 0x08 => BleError.PermissionDenied, // Read/Write Not Permitted, Insufficient Authorization
+        0x05 => BleError.InsufficientAuthentication,
+        0x0F => BleError.InsufficientEncryption,
+        else => fallback,
+    };
+}
+
 /// Configurable timeouts (in milliseconds) for all blocking BLE operations.
 /// Prevents any operation (Connect, Read, Write, Service Discovery, Pairing) from hanging indefinitely.
 pub const TimeoutConfig = struct {
@@ -128,6 +139,8 @@ pub const DiscoveredDevice = struct {
     address: Address,
     address_type: AddressType = .public,
     rssi: ?i16 = null,
+    /// Transmit power from the advertisement in dBm, if the device sends it.
+    tx_power: ?i16 = null,
 
     name_buffer: [64]u8 = undefined,
     name_len: u8 = 0,
@@ -416,4 +429,11 @@ test "ScanFilter.matches applies RSSI threshold and service UUIDs" {
     try std.testing.expect(!(ScanFilter{ .service_uuids = &.{UUID.from16(0x180F)} }).matches(&dev));
     dev.rssi = null;
     try std.testing.expect(!(ScanFilter{ .min_rssi = -60 }).matches(&dev));
+}
+
+test "bleErrorFromAtt maps permission errors and keeps the fallback" {
+    try std.testing.expectEqual(BleError.PermissionDenied, bleErrorFromAtt(0x02, BleError.ReadFailed));
+    try std.testing.expectEqual(BleError.InsufficientAuthentication, bleErrorFromAtt(0x05, BleError.ReadFailed));
+    try std.testing.expectEqual(BleError.InsufficientEncryption, bleErrorFromAtt(0x0F, BleError.ReadFailed));
+    try std.testing.expectEqual(BleError.ReadFailed, bleErrorFromAtt(0x0E, BleError.ReadFailed));
 }

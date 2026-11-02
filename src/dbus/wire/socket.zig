@@ -14,10 +14,15 @@ pub fn getEnvVar(name: []const u8, buf: []u8) ?[]const u8 {
     const fd: std.posix.fd_t = @intCast(rc);
     defer _ = std.posix.system.close(fd);
 
-    var env_buf: [4096]u8 = undefined;
-    const n_rc = std.posix.system.read(fd, &env_buf, env_buf.len);
-    if (n_rc <= 0) return null;
-    const bytes = env_buf[0..@intCast(n_rc)];
+    // Reads may return less than requested, and the variable can be anywhere in the environment.
+    var env_buf: [64 * 1024]u8 = undefined;
+    var total: usize = 0;
+    while (total < env_buf.len) {
+        const n_rc = std.posix.system.read(fd, env_buf[total..].ptr, env_buf.len - total);
+        if (std.posix.errno(n_rc) != .SUCCESS or n_rc == 0) break;
+        total += @intCast(n_rc);
+    }
+    const bytes = env_buf[0..total];
 
     var iter = std.mem.splitScalar(u8, bytes, 0);
     while (iter.next()) |entry| {
