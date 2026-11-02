@@ -106,6 +106,21 @@ pub const ScanFilter = struct {
     min_rssi: ?i16 = null,
     /// Active scan requests Scan Response packets
     active: bool = true,
+
+    /// Applies `min_rssi` and `service_uuids` (any listed UUID matches) to a device.
+    pub fn matches(self: ScanFilter, device: *const DiscoveredDevice) bool {
+        if (self.min_rssi) |min| {
+            const rssi = device.rssi orelse return false;
+            if (rssi < min) return false;
+        }
+        if (self.service_uuids.len == 0) return true;
+        for (self.service_uuids) |wanted| {
+            for (device.getServiceUuids()) |advertised| {
+                if (wanted.eql(advertised)) return true;
+            }
+        }
+        return false;
+    }
 };
 
 /// Zero-allocation Discovered BLE Device descriptor
@@ -161,6 +176,119 @@ pub const DiscoveredDevice = struct {
     }
 };
 
+/// Selects one GATT characteristic of a connected device.
+///
+/// A device can contain the same characteristic UUID more than once, e.g. every HID report
+/// is 0x2A4D and a device may expose two Battery services. `service` restricts the match to
+/// one service UUID (`null` matches any service); `instance` picks the n-th match in
+/// attribute-handle order (0 = first).
+pub const CharacteristicSelector = struct {
+    uuid: UUID,
+    service: ?UUID = null,
+    instance: u8 = 0,
+
+    pub fn of(uuid: UUID) CharacteristicSelector {
+        return .{ .uuid = uuid };
+    }
+
+    pub fn inService(service: UUID, uuid: UUID) CharacteristicSelector {
+        return .{ .uuid = uuid, .service = service };
+    }
+
+    /// Converts a `UUID` or a `CharacteristicSelector` (including an anonymous struct
+    /// literal such as `.{ .uuid = u, .instance = 1 }`) into a selector.
+    pub fn from(char: anytype) CharacteristicSelector {
+        const T = @TypeOf(char);
+        if (T == UUID) return .of(char);
+        if (T == CharacteristicSelector) return char;
+        var sel: CharacteristicSelector = .{ .uuid = char.uuid };
+        if (@hasField(T, "service")) sel.service = char.service;
+        if (@hasField(T, "instance")) sel.instance = char.instance;
+        return sel;
+    }
+
+    /// Returns the index of the selected characteristic in `slots`, which must be in
+    /// attribute-handle order and have `uuid` and `service_uuid` fields.
+    pub fn find(self: CharacteristicSelector, slots: anytype) ?usize {
+        var seen: u8 = 0;
+        for (slots, 0..) |*slot, i| {
+            if (!slot.uuid.eql(self.uuid)) continue;
+            if (self.service) |s| {
+                if (!slot.service_uuid.eql(s)) continue;
+            }
+            if (seen == self.instance) return i;
+            seen += 1;
+        }
+        return null;
+    }
+};
+
+/// One discovered characteristic, as listed by `getCharacteristics`. Passing
+/// `selector()` back to read, write or subscribe addresses exactly this characteristic.
+pub const CharacteristicInfo = struct {
+    service_uuid: UUID,
+    uuid: UUID,
+    /// Index among the characteristics with the same service and characteristic UUID.
+    instance: u8 = 0,
+
+    pub fn selector(self: CharacteristicInfo) CharacteristicSelector {
+        return .{ .uuid = self.uuid, .service = self.service_uuid, .instance = self.instance };
+    }
+
+    /// Fills `out` from `slots` (handle order, with `uuid` and `service_uuid` fields)
+    /// and returns the number of entries written.
+    pub fn list(slots: anytype, out: []CharacteristicInfo) usize {
+        const n = @min(slots.len, out.len);
+        for (slots[0..n], 0..) |*slot, i| {
+            var instance: u8 = 0;
+            for (slots[0..i]) |*prev| {
+                if (prev.uuid.eql(slot.uuid) and prev.service_uuid.eql(slot.service_uuid)) instance += 1;
+            }
+            out[i] = .{ .service_uuid = slot.service_uuid, .uuid = slot.uuid, .instance = instance };
+        }
+        return n;
+    }
+};
+
+/// Advertisement data merged per device while scanning. BlueZ reports only changed
+/// properties (often just `RSSI`) and WinRT reports advertisement and scan response
+/// separately, so each scan result is assembled from everything seen so far for that address. Holds the 32 most recently updated devices.
+pub const ScanCache = struct {
+    entries: [32]DiscoveredDevice = undefined,
+    /// Last update per entry; 0 marks a free entry.
+    stamps: [32]u64 = @splat(0),
+    clock: u64 = 0,
+
+    pub fn reset(self: *ScanCache) void {
+        self.stamps = @splat(0);
+        self.clock = 0;
+    }
+
+    /// Returns the cached data for `address` without inserting it.
+    pub fn find(self: *const ScanCache, address: Address) ?*const DiscoveredDevice {
+        for (self.stamps, 0..) |stamp, i| {
+            if (stamp != 0 and self.entries[i].address.eql(address)) return &self.entries[i];
+        }
+        return null;
+    }
+
+    /// Returns the entry for `address`, reusing the least recently updated one when full.
+    pub fn get(self: *ScanCache, address: Address) *DiscoveredDevice {
+        self.clock += 1;
+        var oldest: usize = 0;
+        for (self.stamps, 0..) |stamp, i| {
+            if (stamp != 0 and self.entries[i].address.eql(address)) {
+                self.stamps[i] = self.clock;
+                return &self.entries[i];
+            }
+            if (stamp < self.stamps[oldest]) oldest = i;
+        }
+        self.entries[oldest] = .{ .address = address };
+        self.stamps[oldest] = self.clock;
+        return &self.entries[oldest];
+    }
+};
+
 /// Callback invoked on advertisement detection
 pub const ScanCallback = *const fn (device: *const DiscoveredDevice, user_data: ?*anyopaque) void;
 
@@ -184,7 +312,9 @@ pub const ConnectionEvent = union(enum) {
     },
     disconnected: struct {
         address: Address,
-        reason_code: u8,
+        /// HCI disconnect reason (e.g. 0x08 timeout, 0x13 remote user, 0x16 local host),
+        /// or null when the platform does not report it (WinRT, older BlueZ).
+        reason_code: ?u8,
     },
     parameters_updated: ConnectionParameters,
 };
@@ -210,20 +340,8 @@ pub const PcapHook = struct {
     }
 };
 
-/// Cross-platform atomic mutex for thread-safe backend state synchronization.
-pub const SyncMutex = struct {
-    locked: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
-
-    pub fn lock(self: *SyncMutex) void {
-        while (self.locked.cmpxchgWeak(false, true, .acquire, .monotonic) != null) {
-            std.atomic.spinLoopHint();
-        }
-    }
-
-    pub fn unlock(self: *SyncMutex) void {
-        self.locked.store(false, .release);
-    }
-};
+/// Blocking mutex for backend state; waiting threads sleep instead of spinning (see `src/sync.zig`).
+pub const SyncMutex = @import("../sync.zig").Mutex;
 
 test "DiscoveredDevice zero-alloc helper tests" {
     var dev: DiscoveredDevice = .{
@@ -243,4 +361,59 @@ test "DiscoveredDevice zero-alloc helper tests" {
     try std.testing.expect(dev.addServiceUuid(test_uuid));
     try std.testing.expectEqual(@as(usize, 1), dev.getServiceUuids().len);
     try std.testing.expect(dev.getServiceUuids()[0].eql(test_uuid));
+}
+
+test "CharacteristicSelector picks by UUID, service and instance" {
+    const Slot = struct { uuid: UUID, service_uuid: UUID };
+    const hid = UUID.from16(0x1812);
+    const report = UUID.from16(0x2A4D);
+    const slots = [_]Slot{
+        .{ .uuid = report, .service_uuid = hid },
+        .{ .uuid = UUID.from16(0x2A19), .service_uuid = UUID.from16(0x180F) },
+        .{ .uuid = report, .service_uuid = hid },
+        .{ .uuid = report, .service_uuid = UUID.from16(0xFFF0) },
+    };
+
+    try std.testing.expectEqual(@as(?usize, 0), CharacteristicSelector.from(report).find(&slots));
+    try std.testing.expectEqual(@as(?usize, 2), CharacteristicSelector.from(.{ .uuid = report, .instance = 1 }).find(&slots));
+    try std.testing.expectEqual(@as(?usize, 3), CharacteristicSelector.from(.{ .uuid = report, .instance = 2 }).find(&slots));
+    try std.testing.expectEqual(@as(?usize, 3), CharacteristicSelector.inService(UUID.from16(0xFFF0), report).find(&slots));
+    try std.testing.expectEqual(@as(?usize, null), CharacteristicSelector.from(.{ .uuid = report, .service = hid, .instance = 2 }).find(&slots));
+
+    var infos: [4]CharacteristicInfo = undefined;
+    try std.testing.expectEqual(@as(usize, 4), CharacteristicInfo.list(&slots, &infos));
+    try std.testing.expectEqual(@as(u8, 1), infos[2].instance);
+    try std.testing.expectEqual(@as(u8, 0), infos[3].instance);
+    for (infos, 0..) |info, i| {
+        try std.testing.expectEqual(@as(?usize, i), info.selector().find(&slots));
+    }
+}
+
+test "ScanCache merges per address and evicts the least recently updated entry" {
+    var cache: ScanCache = .{};
+    const a = Address{ .bytes = .{ 1, 0, 0, 0, 0, 0 } };
+    cache.get(a).setName("first");
+    cache.get(a).rssi = -50;
+    try std.testing.expectEqualStrings("first", cache.find(a).?.getName().?);
+    try std.testing.expectEqual(@as(?i16, -50), cache.find(a).?.rssi);
+
+    // Fill the cache; `a` is the oldest entry and gets evicted
+    for (1..cache.entries.len + 1) |i| {
+        _ = cache.get(.{ .bytes = .{ 2, @intCast(i), 0, 0, 0, 0 } });
+    }
+    try std.testing.expect(cache.find(a) == null);
+
+    cache.reset();
+    try std.testing.expect(cache.find(.{ .bytes = .{ 2, 1, 0, 0, 0, 0 } }) == null);
+}
+
+test "ScanFilter.matches applies RSSI threshold and service UUIDs" {
+    var dev = DiscoveredDevice{ .address = .{ .bytes = @splat(0) }, .rssi = -70 };
+    _ = dev.addServiceUuid(UUID.from16(0x180D));
+    try std.testing.expect((ScanFilter{}).matches(&dev));
+    try std.testing.expect(!(ScanFilter{ .min_rssi = -60 }).matches(&dev));
+    try std.testing.expect((ScanFilter{ .service_uuids = &.{ UUID.from16(0x180F), UUID.from16(0x180D) } }).matches(&dev));
+    try std.testing.expect(!(ScanFilter{ .service_uuids = &.{UUID.from16(0x180F)} }).matches(&dev));
+    dev.rssi = null;
+    try std.testing.expect(!(ScanFilter{ .min_rssi = -60 }).matches(&dev));
 }

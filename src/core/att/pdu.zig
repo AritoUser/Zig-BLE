@@ -700,7 +700,7 @@ pub const ReadMultipleRequest = struct {
         dest[0] = @intFromEnum(opcode);
         var off: usize = 1;
         for (handles) |h| {
-            std.mem.writeInt(u16, dest[off .. off + 2], h, .little);
+            std.mem.writeInt(u16, dest[off..][0..2], h, .little);
             off += 2;
         }
         return total;

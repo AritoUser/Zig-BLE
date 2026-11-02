@@ -12,6 +12,7 @@
 //! - Environmental Sensing Service (ESS)
 //! - Nordic Semiconductor UART Service (NUS)
 //! - Apple iBeacon & Google Eddystone
+//! - Microsoft Swift Pair & Google Fast Pair advertisement decoders
 
 pub const heart_rate = @import("heart_rate.zig");
 pub const HeartRateMeasurement = heart_rate.HeartRateMeasurement;
@@ -51,6 +52,10 @@ pub const EddystoneUrl = beacon.EddystoneUrl;
 pub const EddystoneUid = beacon.EddystoneUid;
 pub const EddystoneTlm = beacon.EddystoneTlm;
 
+pub const vendor_adv = @import("vendor_adv.zig");
+pub const SwiftPair = vendor_adv.SwiftPair;
+pub const FastPair = vendor_adv.FastPair;
+
 pub const pulse_oximeter = @import("pulse_oximeter.zig");
 pub const PlxFeatures = pulse_oximeter.PlxFeatures;
 pub const PlxMeasurementStatus = pulse_oximeter.PlxMeasurementStatus;
@@ -80,6 +85,7 @@ test {
     const std = @import("std");
     std.testing.refAllDecls(@This());
     _ = heart_rate;
+    _ = vendor_adv;
     _ = battery;
     _ = device_information;
     _ = current_time;

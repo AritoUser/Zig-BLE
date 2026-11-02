@@ -34,6 +34,19 @@ jobs:
       - name: Run Mock End-to-End Smoke Test (no radio)
         run: zig build run-mock-e2e
 
+      - name: Compile every public function, used or not
+        run: zig build check-api
+
+      - name: Run Unit & Integration Test Suite with libc linked
+        if: runner.os == 'Linux'
+        run: zig build test -Dlink-libc=true
+
+      - name: Run BlueZ backend test against a simulated org.bluez (private D-Bus, no radio)
+        if: runner.os == 'Linux'
+        run: |
+          zig build bluez-fake-e2e
+          sh scripts/run_bluez_fake_e2e.sh zig-out/bin/ble-bluez-fake-e2e
+
       - name: Run Advertising Fuzzing Suite (50,000 iterations)
         run: zig build fuzz -- 50000
 
@@ -75,3 +88,6 @@ jobs:
 
       - name: Cross-Compile Library & CLI Executables
         run: zig build -Dtarget=${{ matrix.target }}
+
+      - name: Compile every public function for the target
+        run: zig build check-api -Dtarget=${{ matrix.target }}

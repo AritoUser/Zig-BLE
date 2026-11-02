@@ -66,9 +66,13 @@ test "WindowsBackend ConnectionStatusChanged cleans up subscriptions and invokes
 
     const addr = try Address.parse("AA:BB:CC:DD:EE:01");
     var dev = try win.allocateDeviceSlot(addr);
-    dev.is_connected = true;
+    dev.is_connected.store(true, .release);
     dev.was_connected_once = true;
-    dev.subscribed_uuid = UUID.from16(0x2A37);
+    const Noop = struct {
+        fn onNotify(_: UUID, _: []const u8, _: ?*anyopaque) void {}
+    };
+    dev.characteristics[0] = .{ .uuid = UUID.from16(0x2A37), .notify_cb = Noop.onNotify };
+    dev.characteristics_len = 1;
 
     const Tracker = struct {
         disconnected_count: usize = 0,
@@ -88,13 +92,13 @@ test "WindowsBackend ConnectionStatusChanged cleans up subscriptions and invokes
 
     // 1. Simulate sudden radio disconnect
     WindowsBackend.simulateConnectionStatusTransition(dev, false);
-    try std.testing.expect(!dev.is_connected);
-    try std.testing.expect(dev.subscribed_uuid == null);
+    try std.testing.expect(!dev.is_connected.load(.acquire));
+    try std.testing.expect(dev.characteristics[0].notify_cb == null);
     try std.testing.expectEqual(@as(usize, 1), tracker.disconnected_count);
 
     // 2. Simulate radio reconnect
     WindowsBackend.simulateConnectionStatusTransition(dev, true);
-    try std.testing.expect(dev.is_connected);
+    try std.testing.expect(dev.is_connected.load(.acquire));
     try std.testing.expectEqual(@as(usize, 1), tracker.reconnected_count);
 
     // 3. After deinit(), no callbacks fire
@@ -152,3 +156,41 @@ test "WindowsBackend evaluatePairingCeremony supports Passkey and Numeric Compar
     try std.testing.expectEqual(@as(u32, 987654), tester.displayed_pin);
 }
 
+test "WinRT device context keeps duplicate characteristic UUIDs apart" {
+    var win = WindowsBackend.init();
+    defer win.deinit();
+
+    const hid = UUID.from16(0x1812);
+    const report = UUID.from16(0x2A4D);
+    var dev = try win.allocateDeviceSlot(try Address.parse("AA:BB:CC:DD:EE:02"));
+    dev.characteristics[0] = .{ .uuid = report, .service_uuid = hid };
+    dev.characteristics[1] = .{ .uuid = UUID.from16(0x2A19), .service_uuid = UUID.from16(0x180F) };
+    dev.characteristics[2] = .{ .uuid = report, .service_uuid = hid };
+    dev.characteristics_len = 3;
+
+    try std.testing.expectEqual(&dev.characteristics[0], dev.findCharacteristic(.of(report)).?);
+    try std.testing.expectEqual(&dev.characteristics[2], dev.findCharacteristic(.{ .uuid = report, .instance = 1 }).?);
+    try std.testing.expectEqual(&dev.characteristics[2], dev.findCharacteristic(.{ .uuid = report, .service = hid, .instance = 1 }).?);
+    try std.testing.expect(dev.findCharacteristic(.{ .uuid = report, .instance = 2 }) == null);
+    try std.testing.expect(dev.findCharacteristic(.inService(UUID.from16(0x180F), report)) == null);
+}
+
+test "WinRT connection status callbacks report no disconnect reason" {
+    var win = WindowsBackend.init();
+    defer win.deinit();
+
+    var dev = try win.allocateDeviceSlot(try Address.parse("AA:BB:CC:DD:EE:03"));
+    dev.is_connected.store(true, .release);
+
+    const Tracker = struct {
+        reason: ?u8 = 0xFF,
+        fn onEvent(ev: ConnectionEvent, udata: ?*anyopaque) void {
+            const self: *@This() = @ptrCast(@alignCast(udata));
+            if (ev == .disconnected) self.reason = ev.disconnected.reason_code;
+        }
+    };
+    var tracker = Tracker{};
+    win.setConnectionEventCallback(Tracker.onEvent, &tracker);
+    WindowsBackend.simulateConnectionStatusTransition(dev, false);
+    try std.testing.expectEqual(@as(?u8, null), tracker.reason);
+}

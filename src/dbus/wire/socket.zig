@@ -8,7 +8,7 @@ const builtin = @import("builtin");
 /// Reads an environment variable directly from /proc/self/environ without libc or heap allocations.
 pub fn getEnvVar(name: []const u8, buf: []u8) ?[]const u8 {
     if (builtin.os.tag != .linux) return null;
-    const rc = std.posix.system.open("/proc/self/environ", @as(std.posix.O, @bitCast(@as(u32, 0))), 0);
+    const rc = std.posix.system.open("/proc/self/environ", @as(std.posix.O, @bitCast(@as(u32, 0))), @as(std.posix.mode_t, 0));
     const err = std.posix.errno(rc);
     if (err != .SUCCESS) return null;
     const fd: std.posix.fd_t = @intCast(rc);

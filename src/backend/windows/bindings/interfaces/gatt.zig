@@ -176,6 +176,65 @@ pub const IGattCharacteristicVtbl = extern struct {
     remove_ValueChanged: *const fn (self: *anyopaque, token: EventRegistrationToken) callconv(WINAPI) HRESULT,
 };
 
+pub const IGattCharacteristic3 = extern struct {
+    lpVtbl: *const IGattCharacteristic3Vtbl,
+};
+
+pub const IGattCharacteristic3Vtbl = extern struct {
+    QueryInterface: *const fn (self: *anyopaque, riid: *const GUID, ppvObject: *?*anyopaque) callconv(WINAPI) HRESULT,
+    AddRef: *const fn (self: *anyopaque) callconv(WINAPI) ULONG,
+    Release: *const fn (self: *anyopaque) callconv(WINAPI) ULONG,
+    GetIids: *const anyopaque,
+    GetRuntimeClassName: *const anyopaque,
+    GetTrustLevel: *const anyopaque,
+
+    GetDescriptorsAsync: *const anyopaque,
+    GetDescriptorsWithCacheModeAsync: *const anyopaque,
+    GetDescriptorsForUuidAsync: *const anyopaque,
+    GetDescriptorsForUuidWithCacheModeAsync: *const fn (self: *anyopaque, descriptorUuid: GUID, cacheMode: BluetoothCacheMode, operation: *?*IAsyncOperationGeneric) callconv(WINAPI) HRESULT,
+    WriteValueWithResultAsync: *const anyopaque,
+    WriteValueWithResultAndOptionAsync: *const anyopaque,
+    WriteClientCharacteristicConfigurationDescriptorWithResultAsync: *const anyopaque,
+};
+
+pub const IGattDescriptorsResult = extern struct {
+    lpVtbl: *const IGattDescriptorsResultVtbl,
+};
+
+pub const IGattDescriptorsResultVtbl = extern struct {
+    QueryInterface: *const fn (self: *anyopaque, riid: *const GUID, ppvObject: *?*anyopaque) callconv(WINAPI) HRESULT,
+    AddRef: *const fn (self: *anyopaque) callconv(WINAPI) ULONG,
+    Release: *const fn (self: *anyopaque) callconv(WINAPI) ULONG,
+    GetIids: *const anyopaque,
+    GetRuntimeClassName: *const anyopaque,
+    GetTrustLevel: *const anyopaque,
+
+    get_Status: *const fn (self: *anyopaque, value: *GattCommunicationStatus) callconv(WINAPI) HRESULT,
+    get_ProtocolError: *const anyopaque,
+    get_Descriptors: *const fn (self: *anyopaque, value: *?*IVectorViewGeneric) callconv(WINAPI) HRESULT,
+};
+
+pub const IGattDescriptor = extern struct {
+    lpVtbl: *const IGattDescriptorVtbl,
+};
+
+pub const IGattDescriptorVtbl = extern struct {
+    QueryInterface: *const fn (self: *anyopaque, riid: *const GUID, ppvObject: *?*anyopaque) callconv(WINAPI) HRESULT,
+    AddRef: *const fn (self: *anyopaque) callconv(WINAPI) ULONG,
+    Release: *const fn (self: *anyopaque) callconv(WINAPI) ULONG,
+    GetIids: *const anyopaque,
+    GetRuntimeClassName: *const anyopaque,
+    GetTrustLevel: *const anyopaque,
+
+    get_ProtectionLevel: *const anyopaque,
+    put_ProtectionLevel: *const anyopaque,
+    get_Uuid: *const fn (self: *anyopaque, value: *GUID) callconv(WINAPI) HRESULT,
+    get_AttributeHandle: *const fn (self: *anyopaque, value: *u16) callconv(WINAPI) HRESULT,
+    ReadValueAsync: *const anyopaque,
+    ReadValueWithCacheModeAsync: *const fn (self: *anyopaque, cacheMode: BluetoothCacheMode, operation: *?*IAsyncOperationGeneric) callconv(WINAPI) HRESULT,
+    WriteValueAsync: *const fn (self: *anyopaque, value: *IBuffer, operation: *?*IAsyncOperationGeneric) callconv(WINAPI) HRESULT,
+};
+
 pub const IGattReadResult = extern struct {
     lpVtbl: *const IGattReadResultVtbl,
 };

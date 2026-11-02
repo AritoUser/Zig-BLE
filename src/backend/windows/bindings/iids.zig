@@ -17,6 +17,8 @@ pub const IID_IBluetoothAdapter = GUID.parse("7974f04c-5f7a-4a34-9225-a855f84b1a
 pub const IID_IBluetoothLEAdvertisementWatcher = GUID.parse("a6ac336f-f3d3-4297-8d6c-c81ea6623f40");
 pub const IID_IBluetoothLEAdvertisementReceivedEventArgs = GUID.parse("27987ddf-e596-41be-8d43-9e6731d4a913");
 pub const IID_IBluetoothLEAdvertisement = GUID.parse("066fb2b7-33d1-4e7d-8367-cf81d0f79653");
+pub const IID_IBluetoothLEAdvertisementReceivedEventArgs2 = GUID.parse("12d9c87b-0399-5f0e-a348-53b02b6b162e");
+pub const IID_IPropertyValue = GUID.parse("4bd682dd-7554-40e9-9a9b-82654ede7e62");
 pub const IID_IBluetoothLEManufacturerData = GUID.parse("912dba18-6963-4533-b061-4694dafb34e5");
 pub const IID_IBluetoothLEManufacturerDataFactory = GUID.parse("c09b39f8-319a-441e-8de5-66a81e877a6c");
 pub const IID_IBluetoothLEAdvertisementDataSection = GUID.parse("d7213314-3a43-40f9-b6f0-92bfefc34ae3");
@@ -27,6 +29,7 @@ pub const IID_ITypedEventHandler_Watcher_Received = GUID.parse("90eb4eca-d465-5e
 
 // BluetoothLEDevice & GattSession
 pub const IID_IBluetoothLEDeviceStatics = GUID.parse("c8cf1a19-f0b6-4bf0-8689-41303de2d9f4");
+pub const IID_IBluetoothLEDeviceStatics2 = GUID.parse("5f12c06b-3bac-43e8-ad16-563271bd41c2");
 pub const IID_IBluetoothLEDevice = GUID.parse("b5ee2f7b-4ad8-4642-ac48-80a0b500e887");
 pub const IID_IBluetoothLEDevice2 = GUID.parse("26f062b3-7aee-4d31-baba-b1b9775f5916");
 pub const IID_IBluetoothLEDevice3 = GUID.parse("aee9e493-44ac-40dc-af33-b2c13c01ca46");
@@ -54,6 +57,9 @@ pub const IID_IGattDeviceService = GUID.parse("ac7b7c05-b33c-47cf-b70f-f88f55775
 pub const IID_IGattDeviceService3 = GUID.parse("b293a950-0c53-437c-a9b3-5c3210c6e569");
 pub const IID_IGattCharacteristicsResult = GUID.parse("e20a3371-33c7-4f08-a698-d58c17184f06");
 pub const IID_IGattCharacteristic = GUID.parse("59cb50c1-5934-4f68-a198-eb864fa44e6b");
+pub const IID_IGattCharacteristic3 = GUID.parse("3f3c663e-93d4-406b-b817-db81f8ed53b3");
+pub const IID_IGattDescriptorsResult = GUID.parse("9bc091f3-95e7-4489-8d25-ff81955a57b9");
+pub const IID_IGattDescriptor = GUID.parse("92055f2b-8084-4344-b4c2-284de19a8506");
 pub const IID_IGattReadResult = GUID.parse("63a66f08-17a6-4c4e-8999-a97f3126b508");
 pub const IID_IGattWriteResult = GUID.parse("4907627f-283c-48c0-9d98-9811b69c6533");
 pub const IID_IGattValueChangedEventArgs = GUID.parse("d21b60f2-6d3b-4016-b11a-b88f93179359");

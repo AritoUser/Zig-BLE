@@ -87,9 +87,9 @@ pub fn hstringToUtf8(hstr: HSTRING, out_buf: []u8) usize {
 }
 
 pub const Kernel32 = if (builtin.os.tag == .windows) struct {
-    extern "kernel32" fn Sleep(dwMilliseconds: u32) callconv(bindings.WINAPI) void;
+    pub extern "kernel32" fn Sleep(dwMilliseconds: u32) callconv(bindings.WINAPI) void;
 } else struct {
-    fn Sleep(dwMilliseconds: u32) void {
+    pub fn Sleep(dwMilliseconds: u32) void {
         _ = dwMilliseconds;
     }
 };

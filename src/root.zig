@@ -117,8 +117,13 @@ pub const UnifiedDevice = backend.UnifiedDevice;
 pub const MockController = backend.MockController;
 pub const MockDevice = backend.MockDevice;
 pub const MockCharacteristic = backend.MockCharacteristic;
+pub const MockDescriptor = backend.MockDescriptor;
 pub const ScanFilter = backend.ScanFilter;
 pub const DiscoveredDevice = backend.DiscoveredDevice;
+pub const CharacteristicSelector = backend.CharacteristicSelector;
+pub const CharacteristicInfo = backend.CharacteristicInfo;
+pub const EventQueue = backend.EventQueue;
+pub const EventQueueConfig = backend.EventQueueConfig;
 pub const BleError = backend.BleError;
 pub const TimeoutConfig = backend.TimeoutConfig;
 pub const BondState = backend.BondState;
@@ -564,6 +569,7 @@ test {
     _ = gatt_server;
     _ = peripheral_mod;
     _ = fuzz;
+    _ = @import("sync.zig");
     if (builtin.os.tag == .linux) {
         _ = dbus;
         _ = gatt_client;

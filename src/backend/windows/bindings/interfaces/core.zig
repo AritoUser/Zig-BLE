@@ -196,6 +196,25 @@ pub const IVectorGuidVtbl = extern struct {
 };
 
 /// Generic layout for `IVector<T*>` (mutable vector of COM pointers, e.g. `ManufacturerData` / `DataSections`)
+/// `Windows.Foundation.IPropertyValue`, implemented by boxed values such as `IReference<INT16>`.
+pub const IPropertyValue = extern struct {
+    lpVtbl: *const IPropertyValueVtbl,
+};
+
+pub const IPropertyValueVtbl = extern struct {
+    QueryInterface: *const fn (self: *anyopaque, riid: *const GUID, ppvObject: *?*anyopaque) callconv(WINAPI) HRESULT,
+    AddRef: *const fn (self: *anyopaque) callconv(WINAPI) ULONG,
+    Release: *const fn (self: *anyopaque) callconv(WINAPI) ULONG,
+    GetIids: *const anyopaque,
+    GetRuntimeClassName: *const anyopaque,
+    GetTrustLevel: *const anyopaque,
+
+    get_Type: *const anyopaque,
+    get_IsNumericScalar: *const anyopaque,
+    GetUInt8: *const anyopaque,
+    GetInt16: *const fn (self: *anyopaque, value: *i16) callconv(WINAPI) HRESULT,
+};
+
 pub const IVectorPtr = extern struct {
     lpVtbl: *const IVectorPtrVtbl,
 };

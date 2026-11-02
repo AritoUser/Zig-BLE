@@ -25,9 +25,9 @@ A Bluetooth Low Energy (BLE) library written entirely in Zig (0.17.0+). It works
 
 | Feature | Windows 11 (WinRT) | Linux (BlueZ) | Linux Raw HCI (`HciBackend`) | Bare-Metal (`UartBackend` H4 / H5) | macOS |
 | :--- | :---: | :---: | :---: | :---: | :---: |
-| Scanning / advertising reports | ✅ | ✅ | ✅ | 🚧 | ❌ |
+| Scanning / advertising reports | ✅ | 🧪 | ✅ | 🚧 | ❌ |
 | Connect, service discovery | ✅ | ✅ | 🚧 | 🚧 | ❌ |
-| GATT read / write / notifications | ✅ | ✅ | 🚧 | 🚧 | ❌ |
+| GATT read / write / notifications | ✅ | 🧪 | 🚧 | 🚧 | ❌ |
 | Pairing and bonding | 🧪 (`DeviceInformationCustomPairing`) | ✅ (via BlueZ + pairing agent) | 🚧 | 🚧 | ❌ |
 | Negotiated MTU query | 🧪 (`GattSession.MaxPduSize`) | 🧪 (`GattCharacteristic1.MTU`) | 🚧 | 🚧 | ❌ |
 | Peripheral: GATT server, advertising | 🧪 (`GattServiceProvider` / `Publisher`) | ✅ (BlueZ GATT + Adv) | ❌ | ❌ | ❌ |
@@ -35,6 +35,8 @@ A Bluetooth Low Energy (BLE) library written entirely in Zig (0.17.0+). It works
 ✅ implemented and verified on hardware · 🧪 implemented, not yet verified on hardware · 🚧 experimental, not usable on real hardware yet · ❌ not available
 
 **Raw HCI and UART (`HciBackend`, `UartBackend`) are experimental.** They implement the backend interface and drive the ATT and SMP state machines in tests, but against a real controller they do not work yet: connections do not wait for the controller's connection-complete event, GATT calls return without waiting for the response, and pairing neither asks the user to confirm numeric comparison nor starts link encryption. Use the Windows or BlueZ backend for real devices.
+
+**BlueZ through `BluezBackend` / `UnifiedAdapter`:** before this release the backend never read D-Bus signals, so scan results, notifications and disconnects did not reach the callbacks. That is fixed (call `processEvents` regularly) and tested over a real D-Bus connection against a simulated `org.bluez`, but not yet against real BlueZ or on hardware. The lower-level BlueZ API (`Adapter`, `Device`, `GattCharacteristic`) is unaffected.
 
 The in-memory **mock backend** (`src/backend/mock/`) implements the full backend interface for tests without hardware. On macOS, the protocol toolkit, crypto functions and parsers build and run, while `MacosBackend` returns `BleError.NotSupported`.
 
@@ -67,7 +69,7 @@ graph TD
 **Backends** (`src/backend/`)
 - `BackendVTable` / `UnifiedAdapter`: one unified, typed-error (`BleError`) API for scanning, connecting, GATT, pairing, timeouts and PCAP capture, independent of the platform.
 - Windows (`src/backend/windows/`): WinRT `Windows.Devices.Bluetooth`, configurable static pools (`WindowsBackendWithConfig`), real MTU query (`IGattSession.get_MaxPduSize`), custom pairing (`IDeviceInformationCustomPairing`), disconnect detection (`ConnectionStatusChanged`) and peripheral support (`GattServiceProvider` + `BluetoothLEAdvertisementPublisher`).
-- Linux (`src/backend/bluez/`, `src/dbus/wire/`): BlueZ over a pure-Zig D-Bus wire client with real MTU query, `Disconnected` & `bluetoothd` `NameOwnerChanged` recovery; optional `-Dlink-dbus` to use the system `libdbus-1` instead.
+- Linux (`src/backend/bluez/`, `src/dbus/wire/`): BlueZ over a pure-Zig D-Bus wire client; scan results, notifications and connection events are delivered by `processEvents`. Real MTU query, `Disconnected` & `bluetoothd` `NameOwnerChanged` recovery; optional `-Dlink-dbus` to use the system `libdbus-1` instead.
 - Linux pairing agent (`src/agent.zig`): hardened `org.bluez.Agent1` with strict input validation, callbacks for passkey, PIN and authorization; unhandled requests are always rejected (`org.bluez.Error.Rejected`).
 - Peripheral (`src/peripheral.zig`, `src/gatt_server.zig`, `src/advertising.zig`): GATT server (with `encrypt_read/write`, `encrypt_authenticated_*`, `secure_*`, `authorize` flags) and advertising through BlueZ on Linux and WinRT on Windows.
 - Raw HCI & UART (`src/backend/hci.zig`, `src/backend/uart.zig`), **experimental**: `HciBackend` and `UartBackend` (H4 & 3-Wire H5 SLIP) drive the built-in `AttBearer` and `SmpStateMachine` over ACL and L2CAP. Not usable with a real controller yet (see Platform Status).
@@ -82,7 +84,7 @@ graph TD
 - SIG profiles: Heart Rate, Battery, Device Information, Current Time, Health Thermometer, Blood Pressure, HID over GATT, Environmental Sensing, Pulse Oximeter, Fitness Machine, Cycling Power, Running Speed & Cadence, Nordic UART, iBeacon and Eddystone (`src/profiles/`).
 - Wireshark PCAP writer (`DLT_BLUETOOTH_HCI_H4`) (`src/tooling/pcap.zig`) with live `PcapHook` integration across backends.
 
-**Testing:** unit, end-to-end and edge-case/stress tests against the mock backend (`zig build test`), a mock end-to-end smoke test (`zig build run-mock-e2e`), coverage-guided fuzz targets (`src/fuzz.zig`) as well as standalone fuzz runners (`zig build fuzz`, `zig build fuzz-dbus`), CI on Linux, Windows and macOS. There is no hardware-in-the-loop testing yet.
+**Testing:** unit, end-to-end and edge-case/stress tests against the mock backend (`zig build test`), a mock end-to-end smoke test (`zig build run-mock-e2e`), the BlueZ backend over real D-Bus against a simulated `org.bluez` (`zig build bluez-fake-e2e`, `scripts/run_bluez_fake_e2e.sh`), a compile check of every public function (`zig build check-api`), coverage-guided fuzz targets (`src/fuzz.zig`) as well as standalone fuzz runners (`zig build fuzz`, `zig build fuzz-dbus`), CI on Linux, Windows and macOS. There is no hardware-in-the-loop testing yet.
 
 ---
 
@@ -91,6 +93,8 @@ graph TD
 - [Technical White Paper](docs/WHITEPAPER.md): design of the D-Bus wire client and the protocol engine.
 - [Architecture & Protocol Manual](docs/ARCHITECTURE_AND_PROTOCOL_MANUAL.md): memory layout, state machines and packet formats.
 - [Roadmap & Extensions](docs/BLE_ROADMAP_AND_EXTENSIONS.md): planned features.
+- [Troubleshooting & Platform Notes](docs/TROUBLESHOOTING.md): platform behavior and fixes for common problems.
+- [Comparison with other BLE libraries](docs/COMPARISON.md): what Zig-BLE learned from btleplug, bleak, SimpleBLE and others.
 - [Production Readiness Checklist](docs/PRODUCTION_READINESS.md): known gaps and priorities.
 - [Changelog](CHANGELOG.md) · [Contributing](CONTRIBUTING.md)
 - API reference: `zig build docs` generates HTML documentation in `zig-out/docs/`.
@@ -194,6 +198,11 @@ pub fn main() !void {
 
     std.debug.print("Scanning for BLE devices...\n", .{});
     try adapter.startScan(.{}, Scanner.onDevice, null);
+    defer adapter.stopScan() catch {};
+
+    // Scan for 5 seconds. BlueZ delivers results only from processEvents;
+    // on Windows callbacks arrive on WinRT threads and processEvents just waits.
+    for (0..50) |_| try adapter.processEvents(100);
 }
 ```
 

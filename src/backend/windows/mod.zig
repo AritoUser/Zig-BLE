@@ -28,6 +28,8 @@ pub const UUID = types.UUID;
 pub const ScanFilter = types.ScanFilter;
 pub const ScanCallback = types.ScanCallback;
 pub const NotificationCallback = types.NotificationCallback;
+pub const CharacteristicSelector = types.CharacteristicSelector;
+pub const CharacteristicInfo = types.CharacteristicInfo;
 pub const ConnectionEvent = types.ConnectionEvent;
 pub const ConnectionEventCallback = types.ConnectionEventCallback;
 pub const PairingCallbacks = types.PairingCallbacks;
@@ -68,6 +70,7 @@ pub fn WindowsBackendWithConfig(comptime pool_config: PoolConfig) type {
     return struct {
         const Self = @This();
         pub const DeviceContext = device_mod.DeviceContext(pool_config, Self);
+        pub const ReconnectCallbackFn = ReconnectCallback;
         pub const PairingAction = pairing_mod.PairingAction;
         pub const evaluatePairingCeremony = pairing_mod.evaluatePairingCeremony;
 
@@ -93,7 +96,17 @@ pub fn WindowsBackendWithConfig(comptime pool_config: PoolConfig) type {
         pairing_callbacks: PairingCallbacks = .{},
         timeouts: TimeoutConfig = .{},
         pcap_hook: ?PcapHook = null,
+        /// Serializes backend calls; may be held while waiting for WinRT operations.
         mutex: types.SyncMutex = .{},
+        /// Guards the state WinRT callback threads touch (callbacks, `scan_filter`,
+        /// `scan_cache`, per-characteristic notification callbacks). Never held across a
+        /// WinRT call, so callbacks cannot deadlock against `mutex`. Lock order: `mutex`, then this.
+        state_mutex: types.SyncMutex = .{},
+        /// Merged advertisement + scan response data, also used to pick the address type on connect.
+        scan_cache: types.ScanCache = .{},
+        /// Use Windows' GATT cache for service discovery instead of reading services over the
+        /// air on every connect. Faster, but can return stale services after a firmware update.
+        use_cached_services: bool = false,
         is_closed: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
 
         devices: [pool_config.max_devices]DeviceContext = @splat(.{}),
@@ -117,15 +130,15 @@ pub fn WindowsBackendWithConfig(comptime pool_config: PoolConfig) type {
         }
 
         pub fn setConnectionEventCallback(self: *Self, cb: ?ConnectionEventCallback, user_data: ?*anyopaque) void {
-            self.mutex.lock();
-            defer self.mutex.unlock();
+            self.state_mutex.lock();
+            defer self.state_mutex.unlock();
             self.connection_event_cb = cb;
             self.connection_event_user_data = user_data;
         }
 
         pub fn setReconnectCallback(self: *Self, cb: ?ReconnectCallback, user_data: ?*anyopaque) void {
-            self.mutex.lock();
-            defer self.mutex.unlock();
+            self.state_mutex.lock();
+            defer self.state_mutex.unlock();
             self.reconnect_cb = cb;
             self.reconnect_user_data = user_data;
         }
@@ -246,9 +259,13 @@ pub fn WindowsBackendWithConfig(comptime pool_config: PoolConfig) type {
                 self.radio = null;
             }
 
-            self.active_scan_cb = null;
-            self.connection_event_cb = null;
-            self.reconnect_cb = null;
+            {
+                self.state_mutex.lock();
+                defer self.state_mutex.unlock();
+                self.active_scan_cb = null;
+                self.connection_event_cb = null;
+                self.reconnect_cb = null;
+            }
             self.powered = false;
         }
 
@@ -343,20 +360,18 @@ pub fn WindowsBackendWithConfig(comptime pool_config: PoolConfig) type {
             const st = statics.?;
             defer _ = st.lpVtbl.Release(st);
 
-            var async_op: ?*bindings.IAsyncOperationGeneric = null;
-            const addr64 = helpers.addressToU64(addr);
-            if (st.lpVtbl.FromBluetoothAddressAsync(st, addr64, &async_op) < 0 or async_op == null) {
-                return BleError.ConnectionFailed;
-            }
-
-            const dev_raw = (try helpers.awaitAsync(async_op.?, eff_timeout)) orelse return BleError.DeviceNotFound;
-            const ble_dev: *bindings.IBluetoothLEDevice = @ptrCast(@alignCast(dev_raw));
+            const ble_dev = try fromBluetoothAddress(st, addr, self.knownAddressType(addr), eff_timeout);
             dev_slot.ble_device = ble_dev;
 
             var dev3: ?*bindings.IBluetoothLEDevice3 = null;
             if (ble_dev.lpVtbl.QueryInterface(ble_dev, &bindings.IID_IBluetoothLEDevice3, @ptrCast(&dev3)) >= 0) {
                 dev_slot.ble_device3 = dev3;
             }
+
+            dev_slot.gatt_session = gatt_mod.openGattSession(ble_dev, eff_timeout) catch |err| blk: {
+                log.warn("WinRT GattSession for {f} unavailable ({s}); Windows may drop an idle connection", .{ addr, @errorName(err) });
+                break :blk null;
+            };
 
             dev_slot.conn_status_handler = .{
                 .dev_ctx = @ptrCast(dev_slot),
@@ -366,8 +381,12 @@ pub fn WindowsBackendWithConfig(comptime pool_config: PoolConfig) type {
                 dev_slot.conn_status_registered = true;
             }
 
-            dev_slot.is_connected = true;
-            dev_slot.was_connected_once = true;
+            {
+                self.state_mutex.lock();
+                defer self.state_mutex.unlock();
+                dev_slot.is_connected.store(true, .release);
+                dev_slot.was_connected_once = true;
+            }
             dev_slot.bond_state = pairing_mod.queryWinRtBondState(ble_dev);
 
             self.mutex.unlock();
@@ -379,6 +398,35 @@ pub fn WindowsBackendWithConfig(comptime pool_config: PoolConfig) type {
             };
 
             return @ptrCast(dev_slot);
+        }
+
+        /// Address type seen while scanning, if any. Random addresses need it to resolve reliably.
+        fn knownAddressType(self: *Self, addr: Address) ?types.AddressType {
+            self.state_mutex.lock();
+            defer self.state_mutex.unlock();
+            const dev = self.scan_cache.find(addr) orelse return null;
+            return dev.address_type;
+        }
+
+        fn fromBluetoothAddress(st: *bindings.IBluetoothLEDeviceStatics, addr: Address, addr_type: ?types.AddressType, timeout_ms: u32) BleError!*bindings.IBluetoothLEDevice {
+            const addr64 = helpers.addressToU64(addr);
+            var async_op: ?*bindings.IAsyncOperationGeneric = null;
+
+            const is_random = if (addr_type) |t| t != .public else false;
+            var statics2: ?*bindings.IBluetoothLEDeviceStatics2 = null;
+            if (is_random and st.lpVtbl.QueryInterface(st, &bindings.IID_IBluetoothLEDeviceStatics2, @ptrCast(&statics2)) >= 0 and statics2 != null) {
+                const st2 = statics2.?;
+                defer _ = st2.lpVtbl.Release(st2);
+                if (st2.lpVtbl.FromBluetoothAddressWithBluetoothAddressTypeAsync(st2, addr64, .Random, &async_op) < 0) async_op = null;
+            }
+            if (async_op == null) {
+                if (st.lpVtbl.FromBluetoothAddressAsync(st, addr64, &async_op) < 0 or async_op == null) {
+                    return BleError.ConnectionFailed;
+                }
+            }
+
+            const dev_raw = (try helpers.awaitAsync(async_op.?, timeout_ms)) orelse return BleError.DeviceNotFound;
+            return @ptrCast(@alignCast(dev_raw));
         }
 
         pub fn disconnectDevice(ctx: *anyopaque, dev_handle: *anyopaque) BleError!void {
@@ -399,19 +447,19 @@ pub fn WindowsBackendWithConfig(comptime pool_config: PoolConfig) type {
 
             if (self.is_closed.load(.acquire)) return false;
             const dev: *DeviceContext = @ptrCast(@alignCast(dev_handle));
-            if (!dev.is_connected) return false;
+            if (!dev.is_connected.load(.acquire)) return false;
             if (dev.ble_device) |ble_dev| {
                 var status: bindings.BluetoothConnectionStatus = .Disconnected;
                 if (ble_dev.lpVtbl.get_ConnectionStatus(ble_dev, &status) >= 0) {
                     if (status == .Disconnected) {
                         dev.clearSubscriptions();
-                        dev.is_connected = false;
+                        dev.is_connected.store(false, .release);
                         return false;
                     }
                     return true;
                 }
             }
-            return dev.is_connected;
+            return dev.is_connected.load(.acquire);
         }
 
         pub fn getDeviceRssi(ctx: *anyopaque, dev_handle: *anyopaque) ?i16 {
@@ -431,20 +479,20 @@ pub fn WindowsBackendWithConfig(comptime pool_config: PoolConfig) type {
             return gatt_mod.discoverServices(self, dev);
         }
 
-        pub fn readCharacteristic(ctx: *anyopaque, dev_handle: *anyopaque, char_uuid: UUID, buf: []u8) BleError!usize {
+        pub fn readCharacteristic(ctx: *anyopaque, dev_handle: *anyopaque, char: CharacteristicSelector, buf: []u8) BleError!usize {
             const self: *Self = @ptrCast(@alignCast(ctx));
             self.mutex.lock();
             defer self.mutex.unlock();
             const dev: *DeviceContext = @ptrCast(@alignCast(dev_handle));
-            return gatt_mod.readCharacteristic(self, dev, char_uuid, buf);
+            return gatt_mod.readCharacteristic(self, dev, char, buf);
         }
 
-        pub fn writeCharacteristic(ctx: *anyopaque, dev_handle: *anyopaque, char_uuid: UUID, data: []const u8, with_response: bool) BleError!void {
+        pub fn writeCharacteristic(ctx: *anyopaque, dev_handle: *anyopaque, char: CharacteristicSelector, data: []const u8, with_response: bool) BleError!void {
             const self: *Self = @ptrCast(@alignCast(ctx));
             self.mutex.lock();
             defer self.mutex.unlock();
             const dev: *DeviceContext = @ptrCast(@alignCast(dev_handle));
-            return gatt_mod.writeCharacteristic(self, dev, char_uuid, data, with_response);
+            return gatt_mod.writeCharacteristic(self, dev, char, data, with_response);
         }
 
         fn onCharacteristicValueChanged(char_ctx: *anyopaque, args: *bindings.IGattValueChangedEventArgs) callconv(.c) void {
@@ -454,20 +502,53 @@ pub fn WindowsBackendWithConfig(comptime pool_config: PoolConfig) type {
             gatt_mod.handleCharacteristicValueChanged(slot, dev, args);
         }
 
-        pub fn subscribeNotifications(ctx: *anyopaque, dev_handle: *anyopaque, char_uuid: UUID, cb: NotificationCallback, user_data: ?*anyopaque) BleError!void {
+        pub fn subscribeNotifications(ctx: *anyopaque, dev_handle: *anyopaque, char: CharacteristicSelector, cb: NotificationCallback, user_data: ?*anyopaque) BleError!void {
             const self: *Self = @ptrCast(@alignCast(ctx));
             self.mutex.lock();
             defer self.mutex.unlock();
             const dev: *DeviceContext = @ptrCast(@alignCast(dev_handle));
-            return gatt_mod.subscribeNotifications(self, dev, char_uuid, cb, user_data, onCharacteristicValueChanged);
+            return gatt_mod.subscribeNotifications(self, dev, char, cb, user_data, onCharacteristicValueChanged);
         }
 
-        pub fn unsubscribeNotifications(ctx: *anyopaque, dev_handle: *anyopaque, char_uuid: UUID) BleError!void {
+        pub fn unsubscribeNotifications(ctx: *anyopaque, dev_handle: *anyopaque, char: CharacteristicSelector) BleError!void {
             const self: *Self = @ptrCast(@alignCast(ctx));
             self.mutex.lock();
             defer self.mutex.unlock();
             const dev: *DeviceContext = @ptrCast(@alignCast(dev_handle));
-            return gatt_mod.unsubscribeNotifications(self, dev, char_uuid);
+            return gatt_mod.unsubscribeNotifications(self, dev, char);
+        }
+
+        /// WinRT delivers callbacks on its own threads, so there is nothing to pump; this only
+        /// waits, which lets one `processEvents` loop work on every backend.
+        pub fn processEvents(ctx: *anyopaque, timeout_ms: u32) BleError!void {
+            if (builtin.os.tag != .windows) return BleError.NotSupported;
+            const self: *Self = @ptrCast(@alignCast(ctx));
+            if (self.is_closed.load(.acquire)) return BleError.InvalidState;
+            helpers.Kernel32.Sleep(timeout_ms);
+        }
+
+        pub fn readDescriptor(ctx: *anyopaque, dev_handle: *anyopaque, char: CharacteristicSelector, descriptor: UUID, buf: []u8) BleError!usize {
+            const self: *Self = @ptrCast(@alignCast(ctx));
+            self.mutex.lock();
+            defer self.mutex.unlock();
+            const dev: *DeviceContext = @ptrCast(@alignCast(dev_handle));
+            return gatt_mod.readDescriptor(self, dev, char, descriptor, buf);
+        }
+
+        pub fn writeDescriptor(ctx: *anyopaque, dev_handle: *anyopaque, char: CharacteristicSelector, descriptor: UUID, data: []const u8) BleError!void {
+            const self: *Self = @ptrCast(@alignCast(ctx));
+            self.mutex.lock();
+            defer self.mutex.unlock();
+            const dev: *DeviceContext = @ptrCast(@alignCast(dev_handle));
+            return gatt_mod.writeDescriptor(self, dev, char, descriptor, data);
+        }
+
+        pub fn getCharacteristics(ctx: *anyopaque, dev_handle: *anyopaque, out: []CharacteristicInfo) BleError!usize {
+            const self: *Self = @ptrCast(@alignCast(ctx));
+            self.mutex.lock();
+            defer self.mutex.unlock();
+            const dev: *DeviceContext = @ptrCast(@alignCast(dev_handle));
+            return gatt_mod.getCharacteristics(self, dev, out);
         }
 
         pub fn exchangeMtu(ctx: *anyopaque, dev_handle: *anyopaque, target_mtu: u16) BleError!u16 {
@@ -529,6 +610,10 @@ pub fn WindowsBackendWithConfig(comptime pool_config: PoolConfig) type {
             .pairDevice = pairDevice,
             .unpairDevice = unpairDevice,
             .getBondState = getBondState,
+            .getCharacteristics = getCharacteristics,
+            .processEvents = processEvents,
+            .readDescriptor = readDescriptor,
+            .writeDescriptor = writeDescriptor,
         };
 
         pub fn asBackend(self: *Self) Backend {

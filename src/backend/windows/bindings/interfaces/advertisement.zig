@@ -127,6 +127,29 @@ pub const IBluetoothLEAdvertisementReceivedEventArgsVtbl = extern struct {
     get_Advertisement: *const fn (self: *anyopaque, value: *?*IBluetoothLEAdvertisement) callconv(WINAPI) HRESULT,
 };
 
+/// Windows 10 1803+: address type, TX power and advertisement flags of a received report.
+pub const IBluetoothLEAdvertisementReceivedEventArgs2 = extern struct {
+    lpVtbl: *const IBluetoothLEAdvertisementReceivedEventArgs2Vtbl,
+};
+
+pub const IBluetoothLEAdvertisementReceivedEventArgs2Vtbl = extern struct {
+    QueryInterface: *const fn (self: *anyopaque, riid: *const GUID, ppvObject: *?*anyopaque) callconv(WINAPI) HRESULT,
+    AddRef: *const fn (self: *anyopaque) callconv(WINAPI) ULONG,
+    Release: *const fn (self: *anyopaque) callconv(WINAPI) ULONG,
+    GetIids: *const anyopaque,
+    GetRuntimeClassName: *const anyopaque,
+    GetTrustLevel: *const anyopaque,
+
+    get_BluetoothAddressType: *const fn (self: *anyopaque, value: *i32) callconv(WINAPI) HRESULT,
+    /// `IReference<INT16>`; null when the advertisement carries no TX power.
+    get_TransmitPowerLevelInDBm: *const fn (self: *anyopaque, value: *?*anyopaque) callconv(WINAPI) HRESULT,
+    get_IsAnonymous: *const fn (self: *anyopaque, value: *u8) callconv(WINAPI) HRESULT,
+    get_IsConnectable: *const fn (self: *anyopaque, value: *u8) callconv(WINAPI) HRESULT,
+    get_IsScannable: *const fn (self: *anyopaque, value: *u8) callconv(WINAPI) HRESULT,
+    get_IsDirected: *const fn (self: *anyopaque, value: *u8) callconv(WINAPI) HRESULT,
+    get_IsScanResponse: *const fn (self: *anyopaque, value: *u8) callconv(WINAPI) HRESULT,
+};
+
 pub const IBluetoothLEAdvertisement = extern struct {
     lpVtbl: *const IBluetoothLEAdvertisementVtbl,
 };

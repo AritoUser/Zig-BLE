@@ -8,6 +8,7 @@ const Address = types.Address;
 const UUID = types.UUID;
 const BleError = types.BleError;
 const NotificationCallback = types.NotificationCallback;
+const CharacteristicSelector = types.CharacteristicSelector;
 
 /// Configurable static pool dimensions for zero-allocation Windows BLE device, service, and characteristic slots.
 pub const PoolConfig = struct {
@@ -18,11 +19,14 @@ pub const PoolConfig = struct {
 
 pub const WinCharacteristicSlot = struct {
     uuid: UUID = UUID.from16(0),
+    service_uuid: UUID = UUID.from16(0),
     char_ptr: ?*bindings.IGattCharacteristic = null,
     value_changed_token: bindings.EventRegistrationToken = 0,
     is_subscribed: bool = false,
     value_changed_handler: bindings.GattValueChangedHandler = undefined,
     parent_device: ?*anyopaque = null,
+    notify_cb: ?NotificationCallback = null,
+    notify_user_data: ?*anyopaque = null,
 
     pub fn release(self: *WinCharacteristicSlot) void {
         if (builtin.os.tag == .windows) {
@@ -47,10 +51,13 @@ pub fn DeviceContext(comptime pool_config: PoolConfig, comptime BackendType: typ
         in_use: bool = false,
         address: Address = Address{ .bytes = @splat(0) },
         rssi: ?i16 = null,
-        is_connected: bool = false,
+        /// Written by WinRT `ConnectionStatusChanged` threads, hence atomic.
+        is_connected: std.atomic.Value(bool) = .init(false),
         was_connected_once: bool = false,
         ble_device: ?*bindings.IBluetoothLEDevice = null,
         ble_device3: ?*bindings.IBluetoothLEDevice3 = null,
+        /// GATT session with `MaintainConnection = true`; keeps Windows from dropping an idle link.
+        gatt_session: ?*bindings.IGattSession = null,
 
         conn_status_token: bindings.EventRegistrationToken = 0,
         conn_status_registered: bool = false,
@@ -63,28 +70,18 @@ pub fn DeviceContext(comptime pool_config: PoolConfig, comptime BackendType: typ
         characteristics: [pool_config.max_characteristics_per_device]WinCharacteristicSlot = @splat(.{}),
         characteristics_len: u8 = 0,
 
-        notify_cb: ?NotificationCallback = null,
-        notify_user_data: ?*anyopaque = null,
-        subscribed_uuid: ?UUID = null,
-
         mtu: u16 = 23,
         bond_state: types.BondState = .not_bonded,
 
-        pub fn findCharacteristic(self: *Self, uuid: UUID) ?*WinCharacteristicSlot {
-            for (self.characteristics[0..self.characteristics_len]) |*ch| {
-                if (ch.uuid.eql(uuid)) return ch;
-            }
-            return null;
+        pub fn findCharacteristic(self: *Self, char: CharacteristicSelector) ?*WinCharacteristicSlot {
+            const chars = self.characteristics[0..self.characteristics_len];
+            const idx = char.find(chars) orelse return null;
+            return &chars[idx];
         }
 
-        pub fn addCharacteristic(self: *Self, uuid: UUID, ptr: *bindings.IGattCharacteristic) BleError!void {
-            if (self.findCharacteristic(uuid)) |existing| {
-                if (existing.char_ptr != ptr) {
-                    existing.release();
-                    existing.char_ptr = ptr;
-                }
-                return;
-            }
+        /// Appends a characteristic in discovery (attribute-handle) order. Characteristics with
+        /// the same UUID, e.g. several HID reports, each get their own slot.
+        pub fn addCharacteristic(self: *Self, service_uuid: UUID, uuid: UUID, ptr: *bindings.IGattCharacteristic) BleError!void {
             if (self.characteristics_len >= self.characteristics.len) {
                 if (builtin.os.tag == .windows) {
                     _ = ptr.lpVtbl.Release(ptr);
@@ -93,6 +90,7 @@ pub fn DeviceContext(comptime pool_config: PoolConfig, comptime BackendType: typ
             }
             self.characteristics[self.characteristics_len] = .{
                 .uuid = uuid,
+                .service_uuid = service_uuid,
                 .char_ptr = ptr,
                 .parent_device = @ptrCast(self),
             };
@@ -110,8 +108,25 @@ pub fn DeviceContext(comptime pool_config: PoolConfig, comptime BackendType: typ
             self.services_len += 1;
         }
 
-        /// Cleans up all active notification subscriptions when a connection drops.
+        /// Stops delivering notifications without touching the WinRT registrations, so it is
+        /// safe on WinRT callback threads. The caller holds the backend's `state_mutex`.
+        pub fn dropNotificationCallbacks(self: *Self) void {
+            for (self.characteristics[0..self.characteristics_len]) |*ch| {
+                ch.notify_cb = null;
+                ch.notify_user_data = null;
+            }
+        }
+
+        /// Ends all notification subscriptions and removes their WinRT registrations.
+        /// Must not be called with `state_mutex` held (it calls into WinRT).
         pub fn clearSubscriptions(self: *Self) void {
+            if (self.parent_backend) |backend| {
+                backend.state_mutex.lock();
+                defer backend.state_mutex.unlock();
+                self.dropNotificationCallbacks();
+            } else {
+                self.dropNotificationCallbacks();
+            }
             for (self.characteristics[0..self.characteristics_len]) |*ch| {
                 ch.value_changed_handler.deactivate();
                 if (builtin.os.tag == .windows) {
@@ -124,42 +139,50 @@ pub fn DeviceContext(comptime pool_config: PoolConfig, comptime BackendType: typ
                 ch.is_subscribed = false;
                 ch.value_changed_token = 0;
             }
-            self.notify_cb = null;
-            self.notify_user_data = null;
-            self.subscribed_uuid = null;
         }
 
+        /// Runs on WinRT threads. Only touches state guarded by `state_mutex` and calls the
+        /// application's callbacks after releasing it; WinRT registrations are left for the
+        /// next backend call to clean up.
         pub fn handleConnectionStatusTransition(self: *Self, connected: bool) void {
             const backend = self.parent_backend orelse {
-                self.is_connected = connected;
-                if (!connected) self.clearSubscriptions();
+                self.is_connected.store(connected, .release);
+                if (!connected) self.dropNotificationCallbacks();
                 return;
             };
             if (backend.is_closed.load(.acquire)) return;
 
-            if (!connected) {
-                const was_conn = self.is_connected;
-                self.is_connected = false;
-                self.clearSubscriptions();
-                if (was_conn and !backend.is_closed.load(.acquire)) {
-                    if (backend.connection_event_cb) |cb| {
-                        cb(.{ .disconnected = .{ .address = self.address, .reason_code = 0x08 } }, backend.connection_event_user_data);
-                    }
-                }
-            } else {
-                const was_conn = self.is_connected;
-                self.is_connected = true;
-                if (!was_conn and !backend.is_closed.load(.acquire)) {
-                    if (backend.connection_event_cb) |cb| {
-                        cb(.{ .connected = .{ .address = self.address } }, backend.connection_event_user_data);
-                    }
-                    if (self.was_connected_once) {
-                        if (backend.reconnect_cb) |rcb| {
-                            rcb(self.address, backend.reconnect_user_data);
-                        }
-                    }
+            var event: ?types.ConnectionEvent = null;
+            var reconnected = false;
+            var conn_cb: ?types.ConnectionEventCallback = null;
+            var conn_ud: ?*anyopaque = null;
+            var reconnect_cb: ?BackendType.ReconnectCallbackFn = null;
+            var reconnect_ud: ?*anyopaque = null;
+            {
+                backend.state_mutex.lock();
+                defer backend.state_mutex.unlock();
+                const was_connected = self.is_connected.swap(connected, .acq_rel);
+                if (!connected) {
+                    self.dropNotificationCallbacks();
+                    // WinRT does not report a disconnect reason.
+                    if (was_connected) event = .{ .disconnected = .{ .address = self.address, .reason_code = null } };
+                } else if (!was_connected) {
+                    event = .{ .connected = .{ .address = self.address } };
+                    reconnected = self.was_connected_once;
                     self.was_connected_once = true;
                 }
+                conn_cb = backend.connection_event_cb;
+                conn_ud = backend.connection_event_user_data;
+                reconnect_cb = backend.reconnect_cb;
+                reconnect_ud = backend.reconnect_user_data;
+            }
+
+            if (backend.is_closed.load(.acquire)) return;
+            if (event) |ev| {
+                if (conn_cb) |cb| cb(ev, conn_ud);
+            }
+            if (reconnected) {
+                if (reconnect_cb) |cb| cb(self.address, reconnect_ud);
             }
         }
 
@@ -185,6 +208,19 @@ pub fn DeviceContext(comptime pool_config: PoolConfig, comptime BackendType: typ
                 }
                 self.services_len = 0;
 
+                if (self.gatt_session) |sess| {
+                    _ = sess.lpVtbl.put_MaintainConnection(sess, 0);
+                    var closable: ?*bindings.IClosable = null;
+                    if (sess.lpVtbl.QueryInterface(sess, &bindings.IID_IClosable, @ptrCast(&closable)) >= 0) {
+                        if (closable) |cl| {
+                            _ = cl.lpVtbl.Close(cl);
+                            _ = cl.lpVtbl.Release(cl);
+                        }
+                    }
+                    _ = sess.lpVtbl.Release(sess);
+                    self.gatt_session = null;
+                }
+
                 if (self.ble_device3) |d3| {
                     _ = d3.lpVtbl.Release(d3);
                     self.ble_device3 = null;
@@ -206,9 +242,7 @@ pub fn DeviceContext(comptime pool_config: PoolConfig, comptime BackendType: typ
                     self.ble_device = null;
                 }
             }
-            self.is_connected = false;
-            self.notify_cb = null;
-            self.subscribed_uuid = null;
+            self.is_connected.store(false, .release);
         }
     };
 }

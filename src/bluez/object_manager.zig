@@ -74,6 +74,8 @@ pub const DeviceInfo = struct {
     manufacturer_id: ?u16 = null,
     manufacturer_data_buf: [64]u8 = undefined,
     manufacturer_data_len: u8 = 0,
+    service_uuids: [8]core.UUID = undefined,
+    service_uuids_len: u8 = 0,
 
     pub fn getObjectPath(self: *const DeviceInfo) [:0]const u8 {
         return self.object_path[0..self.object_path_len :0];
@@ -95,6 +97,10 @@ pub const DeviceInfo = struct {
     pub fn getManufacturerData(self: *const DeviceInfo) ?[]const u8 {
         if (self.manufacturer_id == null) return null;
         return self.manufacturer_data_buf[0..self.manufacturer_data_len];
+    }
+
+    pub fn getServiceUuids(self: *const DeviceInfo) []const core.UUID {
+        return self.service_uuids[0..self.service_uuids_len];
     }
 };
 
@@ -252,6 +258,16 @@ pub fn parseDeviceProps(obj_path: [:0]const u8, props_iter: anytype) DeviceInfo 
                         if (v.getInt16()) |n| info.tx_power = n;
                     } else if (std.mem.eql(u8, key, BlueZ.Device1.Properties.Appearance)) {
                         if (v.getUInt16()) |u| info.appearance = u;
+                    } else if (std.mem.eql(u8, key, BlueZ.Device1.Properties.UUIDs)) {
+                        if (v.recurse()) |uuid_arr| {
+                            var arr = uuid_arr;
+                            while (arr.getString()) |s| {
+                                if (info.service_uuids_len >= info.service_uuids.len) break;
+                                const uuid = core.UUID.parse(s) catch continue;
+                                info.service_uuids[info.service_uuids_len] = uuid;
+                                info.service_uuids_len += 1;
+                            }
+                        }
                     } else if (std.mem.eql(u8, key, BlueZ.Device1.Properties.ManufacturerData)) {
                         // Dict of {uint16: variant<array of bytes>}
                         if (v.recurse()) |*mfg_dict| {

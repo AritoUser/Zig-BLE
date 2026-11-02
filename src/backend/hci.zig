@@ -22,6 +22,7 @@ const BleError = types.BleError;
 const ScanFilter = types.ScanFilter;
 const ScanCallback = types.ScanCallback;
 const NotificationCallback = types.NotificationCallback;
+const CharacteristicSelector = types.CharacteristicSelector;
 const BondState = types.BondState;
 const IoCapability = types.IoCapability;
 const Backend = vtable_mod.Backend;
@@ -29,6 +30,9 @@ const BackendVTable = vtable_mod.BackendVTable;
 
 pub const DiscoveredCharacteristic = struct {
     uuid: UUID = UUID.from16(0),
+    /// Not tracked yet (discovery reads characteristic declarations only); selectors with
+    /// a `service` therefore do not match on this backend.
+    service_uuid: UUID = UUID.from16(0),
     decl_handle: u16 = 0,
     value_handle: u16 = 0,
     cccd_handle: u16 = 0,
@@ -403,21 +407,22 @@ pub const HciBackend = struct {
         }
     }
 
-    fn findChar(dev: *HciDeviceContext, char_uuid: UUID) ?*DiscoveredCharacteristic {
-        for (&dev.characteristics) |*ch| {
-            if (ch.active and ch.uuid.eql(char_uuid)) return ch;
-        }
-        return null;
+    fn findChar(dev: *HciDeviceContext, char: CharacteristicSelector) ?*DiscoveredCharacteristic {
+        // Discovery fills slots front to back, so the active ones form a prefix.
+        var n: usize = 0;
+        while (n < dev.characteristics.len and dev.characteristics[n].active) n += 1;
+        const idx = char.find(dev.characteristics[0..n]) orelse return null;
+        return &dev.characteristics[idx];
     }
 
-    fn readCharacteristicImpl(ctx: *anyopaque, dev_handle: *anyopaque, char_uuid: UUID, buf: []u8) BleError!usize {
+    fn readCharacteristicImpl(ctx: *anyopaque, dev_handle: *anyopaque, char: CharacteristicSelector, buf: []u8) BleError!usize {
         const self: *HciBackend = @ptrCast(@alignCast(ctx));
         const dev: *HciDeviceContext = @ptrCast(@alignCast(dev_handle));
         self.mutex.lock();
         defer self.mutex.unlock();
         if (!dev.connected) return BleError.NotConnected;
 
-        const ch = findChar(dev, char_uuid) orelse return BleError.CharacteristicNotFound;
+        const ch = findChar(dev, char) orelse return BleError.CharacteristicNotFound;
         var pdu_buf: [16]u8 = undefined;
         const len = dev.att_bearer.beginRequest(.{ .read_req = .{ .handle = ch.value_handle } }, 0, &pdu_buf) catch return BleError.GattError;
         try self.sendL2capOverAcl(dev.conn_handle, att.ATT_CID, pdu_buf[0..len]);
@@ -427,14 +432,14 @@ pub const HciBackend = struct {
         return copy_len;
     }
 
-    fn writeCharacteristicImpl(ctx: *anyopaque, dev_handle: *anyopaque, char_uuid: UUID, data: []const u8, with_response: bool) BleError!void {
+    fn writeCharacteristicImpl(ctx: *anyopaque, dev_handle: *anyopaque, char: CharacteristicSelector, data: []const u8, with_response: bool) BleError!void {
         const self: *HciBackend = @ptrCast(@alignCast(ctx));
         const dev: *HciDeviceContext = @ptrCast(@alignCast(dev_handle));
         self.mutex.lock();
         defer self.mutex.unlock();
         if (!dev.connected) return BleError.NotConnected;
 
-        const ch = findChar(dev, char_uuid) orelse return BleError.CharacteristicNotFound;
+        const ch = findChar(dev, char) orelse return BleError.CharacteristicNotFound;
         var pdu_buf: [517]u8 = undefined;
         if (with_response) {
             const len = dev.att_bearer.beginRequest(.{ .write_req = .{ .handle = ch.value_handle, .value = data } }, 0, &pdu_buf) catch return BleError.GattError;
@@ -445,14 +450,14 @@ pub const HciBackend = struct {
         }
     }
 
-    fn subscribeNotificationsImpl(ctx: *anyopaque, dev_handle: *anyopaque, char_uuid: UUID, cb: NotificationCallback, user_data: ?*anyopaque) BleError!void {
+    fn subscribeNotificationsImpl(ctx: *anyopaque, dev_handle: *anyopaque, char: CharacteristicSelector, cb: NotificationCallback, user_data: ?*anyopaque) BleError!void {
         const self: *HciBackend = @ptrCast(@alignCast(ctx));
         const dev: *HciDeviceContext = @ptrCast(@alignCast(dev_handle));
         self.mutex.lock();
         defer self.mutex.unlock();
         if (!dev.connected) return BleError.NotConnected;
 
-        const ch = findChar(dev, char_uuid) orelse return BleError.CharacteristicNotFound;
+        const ch = findChar(dev, char) orelse return BleError.CharacteristicNotFound;
         ch.notify_cb = cb;
         ch.notify_user_data = user_data;
         var pdu_buf: [16]u8 = undefined;
@@ -461,14 +466,14 @@ pub const HciBackend = struct {
         try self.sendL2capOverAcl(dev.conn_handle, att.ATT_CID, pdu_buf[0..len]);
     }
 
-    fn unsubscribeNotificationsImpl(ctx: *anyopaque, dev_handle: *anyopaque, char_uuid: UUID) BleError!void {
+    fn unsubscribeNotificationsImpl(ctx: *anyopaque, dev_handle: *anyopaque, char: CharacteristicSelector) BleError!void {
         const self: *HciBackend = @ptrCast(@alignCast(ctx));
         const dev: *HciDeviceContext = @ptrCast(@alignCast(dev_handle));
         self.mutex.lock();
         defer self.mutex.unlock();
         if (!dev.connected) return BleError.NotConnected;
 
-        const ch = findChar(dev, char_uuid) orelse return BleError.CharacteristicNotFound;
+        const ch = findChar(dev, char) orelse return BleError.CharacteristicNotFound;
         ch.notify_cb = null;
         ch.notify_user_data = null;
         var pdu_buf: [16]u8 = undefined;

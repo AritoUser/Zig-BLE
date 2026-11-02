@@ -14,7 +14,7 @@ produktionsreifen BLE-Bibliothek machen. Sortiert nach Priorität:
 - **Erledigt:** P0 weitgehend, Windows-/BlueZ-Punkte aus P1, die meisten Diagnose- und Release-Punkte.
 - **Implementiert, aber nicht auf Hardware verifiziert:** Windows-Pairing, -Peripheral-Rolle, -MTU-Abfrage und -Verbindungsabbruch (Punkte 6, 9–11). Erst nach einem Test mit echtem Gerät als verifiziert betrachten.
 - **Offen:** Raw-HCI/UART-Backend, ATT/SMP über Raw-L2CAP, EATT-Anbindung (15, 16, 18, 19, 21), Hardware- und vHCI-Tests (26, 27), Langzeittests (30), README-Beispieltests (36).
-- Tests: `zig build test` läuft unter Windows (238 Tests); die Test-Binaries für Linux (gnu, musl) und macOS kompilieren, ausgeführt werden sie erst in der CI.
+- Tests: `zig build test` läuft unter Windows (261 Tests); die Test-Binaries für Linux (musl, glibc, mit libc) liefen zusätzlich in einem Debian-13-Container grün (266 Tests), dazu `tests/bluez_fake_e2e.zig` gegen ein simuliertes `org.bluez`. Die macOS-Binaries kompilieren, ausgeführt werden sie erst in der CI.
 
 ---
 
@@ -86,6 +86,7 @@ produktionsreifen BLE-Bibliothek machen. Sortiert nach Priorität:
   - [x] Mutex oder Message-Queue in `src/event_loop.zig` und `src/backend/windows/bindings.zig`
 - [x] **24. Konfigurierbare Timeouts** für alle blockierenden Operationen (Connect, Read, Write, Discovery); nichts darf endlos hängen — *Windows/BlueZ; das experimentelle HCI-Backend ignoriert `timeout_ms`*
 - [x] **25. Lifecycle**: sicheres `deinit` in jedem Zustand; nach `deinit` feuert kein Callback mehr
+- [x] **38. Fehler aus dem Vergleich mit anderen Bibliotheken** ([`COMPARISON.md`](COMPARISON.md)) — *F1–F12 behoben (Details in `COMPARISON.md` und im CHANGELOG), dazu Descriptors, `EventQueue`, Swift-Pair-/Fast-Pair-Decoder und `TROUBLESHOOTING.md`. Nicht auf Hardware verifiziert. Offen aus der Prioritätenliste: Bumble-CI, automatisches Neu-Abonnieren, HCI-Backend, C-API, Company-ID-Tabelle, macOS-Backend.*
 
 ---
 
@@ -94,7 +95,7 @@ produktionsreifen BLE-Bibliothek machen. Sortiert nach Priorität:
 ### Tests
 
 - [ ] **26. Hardware-in-the-Loop-Tests** (z. B. nRF52 oder ESP32 als Gegenstelle, Self-hosted CI-Runner) — *Offen. `scripts/hil_runner.zig` testet nur gegen das Mock-Backend und läuft jetzt als `zig build run-mock-e2e`.*
-- [ ] **27. Linux-CI gegen virtuelles HCI** (`btvirt` / `hci_vhci`), ohne Hardware — *Offen. Der bisherige CI-Job führte nur die Unit-Tests erneut aus und wurde entfernt.*
+- [ ] **27. Linux-CI gegen virtuelles HCI** (`btvirt` / `hci_vhci`), ohne Hardware — *Offen. Der bisherige CI-Job führte nur die Unit-Tests erneut aus und wurde entfernt. Teilweise ersetzt durch `tests/bluez_fake_e2e.zig` (echtes D-Bus, simuliertes `org.bluez`); das prüft das Backend, aber nicht BlueZ selbst oder einen Controller.*
 - [x] **28. Coverage-fähiges Fuzzing** (`zig build --fuzz`) für die Parser von ATT, SMP, L2CAP-Signaling, HCI-Events und H4
 - [x] **29. Tests der Zustandsmaschinen**: Verbindungsabbruch mitten in einer Transaktion, doppelte Responses, unerwartete Opcodes
 - [ ] **30. Langzeit-Stresstests** über viele Stunden (Scannen, Verbinden, Notifications) mit Prüfung auf Speicherlecks (`GeneralPurposeAllocator`) und Handle-Lecks unter Windows — *Teilweise: 1.050 Zyklen gegen das Mock-Backend mit Leck- und Handle-Prüfung (Sekunden, keine Hardware). Offen: Langzeittest mit echten Geräten.*
