@@ -24,27 +24,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * **Invented disconnect reasons.** Windows always reported 0x08 and BlueZ 0x08 or 0x13. BlueZ now reports the reason from `Device1.Disconnected` (BlueZ 5.71+); otherwise the reason is `null`.
 * **`Connection.initSystem`, `Connection.initSession` and the bond store's Linux file functions did not compile when the application links libc**, because integer literals were passed to the variadic `open`. Checked from now on with `-Dlink-libc=true`.
 * **All failed reads returned `ReadFailed`.** Windows and BlueZ now report `PermissionDenied`, `InsufficientAuthentication` or `InsufficientEncryption` where the device or BlueZ says so.
+* **Windows `connect` failed sporadically with `ConnectionFailed`** while the link was still coming up (`Unreachable`). It now retries within the timeout.
+* **BlueZ `connect` failed with `Disconnected` right after a disconnect**, because the old connection's `Connected = false` signal counted against the new one. Such signals now only prompt a look at the current state.
+* **128-bit service UUIDs in `ReadByGroupTypeResponse` were not byte-swapped.**
 * **Device slots were never freed** (Windows, BlueZ). After 8 different addresses `connect` failed with `PoolExhausted`, which devices with rotating addresses reach quickly. Slots of disconnected devices are now reused, so a `UnifiedDevice` handle must not be used after `disconnect`.
 * **The D-Bus bus address was ignored in large environments**: `getEnvVar` read only the first 4 KB of the process environment. It now reads up to 64 KB.
 * **`run-v1-live` printed "ALL 7 PILLARS PASSED" and "ready for production" without checking them**, and it and `run-windows-scanner` stopped scanning immediately. `run-v1-live` is now labeled a demo, and both scan for several seconds.
 * **Public functions that did not compile on first use**, because no test called them: `L2capSocket.setNonBlocking`, `getSecurityLevel` and `read`, `HciController.sendL2capPdu`, and the ATT PDU encoder for handle lists. `zig build check-api` now compiles every public function.
 
 ### Added
-* **HCI & UART Low-Level Stack (`HciBackend`, `UartBackend`)**:
-  * TrouBLE-style event runner / packet pump (`pumpEvents` / `processEvents`) supporting both Linux raw HCI sockets (`ctrl.sock.poll` + `readPacket`) and custom transport hooks.
-  * Synchronous GATT operations (`connectDevice`, `readCharacteristic`, `writeCharacteristic`, `discoverServicesFiltered`, `exchangeMtu`, `readDescriptor`, `writeDescriptor`) with timeout deadlines.
-  * Real HCI connection lifecycle integration: `le_connection_complete`, `le_enhanced_connection_complete`, `disconnection_complete`, `number_of_completed_packets` credit replenishment via `AclFlowController`, and `le_advertising_report` AD payload parsing.
-  * Full `BackendVTable` parity: implemented `processEvents`, `getConnectionState`, `setAutoResubscribe`, `discoverServicesFiltered`, `getCharacteristics`, `readDescriptor`, and `writeDescriptor`.
-  * `UartBackend` serial event runner binding via `bindSerialPoller(poller)`.
-* **SMP (Security Manager Protocol) State Machine Phase 2 & 3 Enhancements**:
-  * Numeric Comparison user confirmation handling with MITM protection via `confirmNumericComparison(accept, out_buf)`.
-  * LE Secure Connections 20-round bitwise Passkey Entry (`f4` per bit with `0x80 | bit_i` across 20 rounds).
-  * Phase 3 Key Distribution for Identity Information (IRK & identity address) and Encryption Information (LTK).
-* `ConnectionState` enum (`disconnected`, `connecting`, `connected`, `disconnecting`) accessible via `UnifiedDevice.getConnectionState()` and `Backend.getConnectionState()`.
-* `UnifiedDevice.setAutoResubscribe(bool)` / `Backend.setAutoResubscribe` (Windows, BlueZ, mock) to automatically re-subscribe active notifications upon device reconnection without losing callbacks.
-* `UnifiedDevice.discoverServicesFiltered(filter_uuids)` / `Backend.discoverServicesFiltered` (Windows, BlueZ, mock) to restrict GATT discovery to specified service UUIDs.
-* `DiscoveredDevice.tx_power` and zero-allocation `service_data` storage with `getServiceData()` and `setServiceData()` helpers.
-* `tests/test_readme_examples.zig` regression test suite verifying that all code snippets in `README.md` compile and run in test builds.
+* **`HciBackend` / `UartBackend` host logic**, still experimental: not run against a real controller yet, only against a simulated one in `src/backend/hci_tests.zig` that answers HCI commands, pages its ATT responses and pairs through a real `SmpStateMachine`.
+  * `connect` uses the address type from the scan and waits for the connection event. A transport without `poll_packet` gets `NotSupported` instead of a pretended connection.
+  * Discovery walks all paged responses for services, characteristics and descriptors. CCCDs are found, not assumed at the next handle, and written with Write Requests.
+  * Pairing as initiator: asks through `PairingCallbacks` (refused without one), starts link encryption, takes the peer's keys, and reports `bonded` only on an encrypted link.
+  * ACL fragmentation to the controller's buffer size, and the real controller address for key derivation (`setLocalAddress` for other transports).
+  * Known gaps: no ACL credit flow control, central role only, no Security Request handling, and events must be pumped on one thread.
+* **SMP state machine**: LE Secure Connections Passkey Entry (20 rounds), `providePasskey` / `generatePasskey` / `rejectPasskey`, Numeric Comparison confirmation in either order, and key distribution that follows what was negotiated and needs an encrypted link (`onLinkEncrypted`, `finishLocalKeyDistribution`).
+* `ConnectionState` (`disconnected`, `connecting`, `connected`, `disconnecting`) from `UnifiedDevice.getConnectionState()`.
+* `UnifiedDevice.setAutoResubscribe(bool)`: subscriptions survive a disconnect and are written to the peer again on the next `connect` and when the OS restores the link. Verified on hardware on Windows, against the simulated BlueZ on Linux.
+* `UnifiedDevice.discoverServicesFiltered(filter_uuids)` limits the known characteristics to the given services, and `WindowsBackend.service_filter` saves the round trips during `connect`.
+* `DiscoveredDevice.service_data` with `getServiceData()` (first service data section).
 * `CharacteristicSelector` (`uuid`, optional `service`, `instance`) to address characteristics that share a UUID, e.g. `dev.readCharacteristic(.{ .uuid = UUID.from16(0x2A4D), .instance = 1 }, &buf)`. Passing a plain `UUID` still selects the first match.
 * `UnifiedDevice.getCharacteristics` / `Backend.getCharacteristics` lists the discovered characteristics as `CharacteristicInfo` (service UUID, UUID, instance).
 * `UnifiedAdapter.processEvents(timeout_ms)` / `Backend.processEvents`. Required on BlueZ; on Windows it only waits, so one event loop works on both.
@@ -64,6 +63,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * **Breaking for custom backends:** the `BackendVTable` entries `readCharacteristic`, `writeCharacteristic`, `subscribeNotifications`, `unsubscribeNotifications` and `acquireNotifyFd` take a `CharacteristicSelector` instead of a `UUID`. The new entries `getCharacteristics`, `processEvents`, `readDescriptor` and `writeDescriptor` are optional. Code that calls `UnifiedDevice`, `Backend` or `MockController.triggerNotification` with a `UUID` compiles unchanged.
 * BlueZ callbacks run after the backend mutex is released, so they may call back into the backend.
 * **Breaking:** `ConnectionEvent.disconnected.reason_code` is `?u8` (null when the platform does not report a reason).
+* **Security, `SmpStateMachine`:** `require_user_confirmation` now defaults to `true`, so Numeric Comparison no longer accepts itself. `setPasskey` validates the range and returns an error. Passkey Entry waits for a passkey (`wait_passkey`) instead of running with `0`, and a peer public key equal to the local one is rejected (CVE-2020-26558).
 
 ## [1.3.2] - 2026-10-29
 

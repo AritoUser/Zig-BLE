@@ -1,67 +1,67 @@
 # Production Readiness Checklist
 
-Stand: 2026-10-28 (Basis: v1.2.0 + nicht committete Änderungen, nach Code-Review)
+Stand: 2026-10-28 (Basis: v1.2.0 + nicht committete Ã„nderungen, nach Code-Review)
 
 Diese Liste sammelt alle Punkte, die Zig-BLE von einem Protokoll-Toolkit zu einer
-produktionsreifen BLE-Bibliothek machen. Sortiert nach Priorität:
+produktionsreifen BLE-Bibliothek machen. Sortiert nach PrioritÃ¤t:
 
-- **P0** – Blocker vor jedem produktiven Einsatz
-- **P1** – fehlende Kernfunktionen
-- **P2** – Qualität und Absicherung
+- **P0** â€“ Blocker vor jedem produktiven Einsatz
+- **P1** â€“ fehlende Kernfunktionen
+- **P2** â€“ QualitÃ¤t und Absicherung
 
 ## Status-Zusammenfassung
 
-- **Erledigt:** P0 weitgehend, Windows-/BlueZ-Punkte aus P1, HCI/UART/SMP-Low-Level-Stack (15, 16, 17, 18, 19), die meisten Diagnose- und Release-Punkte.
-- **Windows-Korrektur (nach v1.3.2):** Wegen falscher WinRT-IIDs und einer verschobenen Vtable konnte `WindowsBackend` seit v1.3.0 weder scannen noch GATT nutzen. Behoben und am 2026-11-02 mit `zig build run-hardware-check` gegen ein Fitnessband und einen Tracker-Tag gepr�ft: Scannen, Verbinden, Discovery, Lesen, Descriptors, Notifications, MTU, 30 s Halten einer Verbindung mit aktiven Abos. Nicht gepr�ft: Schreiben, Pairing, Peripheral-Rolle.
-- **Implementiert, aber nicht auf Hardware verifiziert:** Windows-Pairing, -Peripheral-Rolle, -MTU-Abfrage und -Verbindungsabbruch (Punkte 6, 9�11). Erst nach einem Test mit echtem Ger�t als verifiziert betrachten.
-- **Offen:** EATT-Anbindung (21), Hardware- und vHCI-Tests (26, 27), Langzeittests (30), README-Beispieltests (36).
-- Tests: `zig build test` l�uft unter Windows (261 Tests); die Test-Binaries f�r Linux (musl, glibc, mit libc) liefen zus�tzlich in einem Debian-13-Container gr�n (266 Tests), dazu `tests/bluez_fake_e2e.zig` gegen ein simuliertes `org.bluez`. Die macOS-Binaries kompilieren, ausgef�hrt werden sie erst in der CI.
+- **Erledigt:** P0 weitgehend, Windows-/BlueZ-Punkte aus P1, die meisten Diagnose- und Release-Punkte.
+- **Windows-Korrektur (nach v1.3.2):** Wegen falscher WinRT-IIDs und einer verschobenen Vtable konnte `WindowsBackend` seit v1.3.0 weder scannen noch GATT nutzen. Behoben und am 2026-11-02 mit `zig build run-hardware-check` gegen ein Fitnessband und einen Tracker-Tag geprüft: Scannen, Verbinden, Discovery, Lesen, Descriptors, Notifications, MTU, 30 s Halten einer Verbindung mit aktiven Abos. Ebenso am Gerät geprüft: Auto-Resubscribe, gefilterte Discovery, Service-Daten. Nicht geprüft: Schreiben, Pairing, Peripheral-Rolle.
+- **Implementiert, aber nicht auf Hardware verifiziert:** Windows-Pairing, -Peripheral-Rolle, -MTU-Abfrage und -Verbindungsabbruch (Punkte 6, 9–11). Erst nach einem Test mit echtem Gerät als verifiziert betrachten.
+- **Offen:** Raw-HCI/UART und SMP gegen einen echten Controller (15, 16, 18, 19), EATT-Anbindung (21), Hardware- und vHCI-Tests (26, 27), Langzeittests (30), README-Beispieltests (36).
+- Tests: `zig build test` läuft unter Windows (293 Tests); die Test-Binaries für Linux (musl, glibc, mit libc) liefen zusätzlich in einem Debian-13-Container grün (266 Tests), dazu `tests/bluez_fake_e2e.zig` gegen ein simuliertes `org.bluez`. Die macOS-Binaries kompilieren, ausgeführt werden sie erst in der CI.
 
 ---
 
-## P0 – Blocker
+## P0 â€“ Blocker
 
 ### Sicherheit
 
 - [x] **1. RNG-Fallback reparieren** ([`src/crypto/toolbox.zig`](../src/crypto/toolbox.zig), `getRandom3Bytes`)
-  - [x] Rückgabewerte von `getrandom` und `SystemFunction036` prüfen
-  - [x] PRNG mit festem Seed entfernen, stattdessen `std.crypto.random` oder einen Fehler zurückgeben
-  - [x] Prüfen, dass `prand` nicht nur aus Nullen bzw. Einsen besteht (Core Spec, Vol 6, Part B, 1.3.2.2)
-- [x] **2. Krypto gegen offizielle Testvektoren prüfen**: `f4`, `f5`, `f6`, `g2`, `h6`, `h7`, `ah`, `c1`, `s1` gegen Core Spec, Vol 3, Part H, Appendix D
-- [x] **3. Bond-Speicher härten** ([`src/storage/bond_store.zig`](../src/storage/bond_store.zig))
-  - [x] LTK und IRK nicht im Klartext speichern (DPAPI unter Windows, Dateirechte 0600 unter Linux, optional Verschlüsselung) — *Windows: DPAPI. Linux: `saveToFile`/`loadFromFile` verlangen einen eigenen Schlüssel (`initWithKey` oder `initWithKeyFile`, Schlüsseldatei mit zufälligem Inhalt und Rechten 0600); der Standard-Schlüssel wird für Dateien unter Linux nicht mehr verwendet. Dateien aus v1.2.x werden mit `error.LegacyFormat` erkannt und lassen sich einmalig mit `deserializeLegacy` importieren. Der Schutz unter Linux beruht weiter auf den Dateirechten (Schlüssel und Daten liegen beim selben Benutzer); TPM oder Secret Service sind nicht angebunden.*
-  - [x] Integritätsprüfung per MAC statt nur über das Magic `ZBGR`
+  - [x] RÃ¼ckgabewerte von `getrandom` und `SystemFunction036` prÃ¼fen
+  - [x] PRNG mit festem Seed entfernen, stattdessen `std.crypto.random` oder einen Fehler zurÃ¼ckgeben
+  - [x] PrÃ¼fen, dass `prand` nicht nur aus Nullen bzw. Einsen besteht (Core Spec, Vol 6, Part B, 1.3.2.2)
+- [x] **2. Krypto gegen offizielle Testvektoren prÃ¼fen**: `f4`, `f5`, `f6`, `g2`, `h6`, `h7`, `ah`, `c1`, `s1` gegen Core Spec, Vol 3, Part H, Appendix D
+- [x] **3. Bond-Speicher hÃ¤rten** ([`src/storage/bond_store.zig`](../src/storage/bond_store.zig))
+  - [x] LTK und IRK nicht im Klartext speichern (DPAPI unter Windows, Dateirechte 0600 unter Linux, optional VerschlÃ¼sselung) â€” *Windows: DPAPI. Linux: `saveToFile`/`loadFromFile` verlangen einen eigenen SchlÃ¼ssel (`initWithKey` oder `initWithKeyFile`, SchlÃ¼sseldatei mit zufÃ¤lligem Inhalt und Rechten 0600); der Standard-SchlÃ¼ssel wird fÃ¼r Dateien unter Linux nicht mehr verwendet. Dateien aus v1.2.x werden mit `error.LegacyFormat` erkannt und lassen sich einmalig mit `deserializeLegacy` importieren. Der Schutz unter Linux beruht weiter auf den Dateirechten (SchlÃ¼ssel und Daten liegen beim selben Benutzer); TPM oder Secret Service sind nicht angebunden.*
+  - [x] IntegritÃ¤tsprÃ¼fung per MAC statt nur Ã¼ber das Magic `ZBGR`
   - [x] Atomares Speichern (Temp-Datei schreiben, dann umbenennen)
-- [x] **4. Pairing-Agent** ([`src/agent.zig`](../src/agent.zig)): Security-Review, Tests, dass nicht behandelte Anfragen immer abgelehnt werden, Tests mit böswilligen D-Bus-Nachrichten
+- [x] **4. Pairing-Agent** ([`src/agent.zig`](../src/agent.zig)): Security-Review, Tests, dass nicht behandelte Anfragen immer abgelehnt werden, Tests mit bÃ¶swilligen D-Bus-Nachrichten
 
 ### Korrektheit
 
 - [x] **5. Verschluckte Fehler beseitigen**: alle `catch {}` in den Backends durch Weiterreichen des Fehlers oder mindestens Logging ersetzen
   - [x] `src/backend/bluez/mod.zig` (Discovery, `addCharacteristic`)
   - [x] `src/backend/windows/mod.zig` (`addService`, CCCD-Write)
-- [x] **6. Falsche Rückgabewerte korrigieren**
-  - [x] `exchangeMtu` muss auf beiden Backends die tatsächlich ausgehandelte MTU liefern (WinRT `GattSession.MaxPduSize`, BlueZ `MTU`-Property), nicht den gewünschten Wert — *nicht auf Hardware verifiziert*
+- [x] **6. Falsche RÃ¼ckgabewerte korrigieren**
+  - [x] `exchangeMtu` muss auf beiden Backends die tatsÃ¤chlich ausgehandelte MTU liefern (WinRT `GattSession.MaxPduSize`, BlueZ `MTU`-Property), nicht den gewÃ¼nschten Wert â€” *nicht auf Hardware verifiziert*
   - [x] `getBondState` auf Windows echt abfragen (`DeviceInformation.Pairing.IsPaired`) statt immer `.not_bonded`
-- [x] **7. Ehrliche Fehler**: Funktionen, die nichts tun, liefern `NotSupported` statt vorgetäuschten Erfolg
+- [x] **7. Ehrliche Fehler**: Funktionen, die nichts tun, liefern `NotSupported` statt vorgetÃ¤uschten Erfolg
 
 ### Ehrlichkeit und Doku
 
-- [x] **8. README überarbeiten**
-  - [x] Feature-Matrix pro Plattform mit den Stufen „implementiert“, „nur Parser“, „geplant“
-  - [x] EATT und SMP ehrlich dokumentieren (README: experimentelle Zustandsmaschinen, Einschränkungen benannt)
+- [x] **8. README Ã¼berarbeiten**
+  - [x] Feature-Matrix pro Plattform mit den Stufen â€žimplementiertâ€œ, â€žnur Parserâ€œ, â€žgeplantâ€œ
+  - [x] EATT und SMP ehrlich dokumentieren (README: experimentelle Zustandsmaschinen, EinschrÃ¤nkungen benannt)
   - [x] Testzahl und Version vereinheitlichen (v1.2.0)
-  - [x] Marketing-Zahlen („1.7 Billion Ops/s“, „100% zero heap“) entfernen oder mit reproduzierbarem Benchmark belegen
+  - [x] Marketing-Zahlen (â€ž1.7 Billion Ops/sâ€œ, â€ž100% zero heapâ€œ) entfernen oder mit reproduzierbarem Benchmark belegen
 
 ---
 
-## P1 – Fehlende Kernfunktionen
+## P1 â€“ Fehlende Kernfunktionen
 
 ### Windows-Backend
 
-- [x] **9. Pairing/Unpairing** über `DeviceInformationCustomPairing` mit Callbacks für Passkey und Numeric Comparison — *nicht auf Hardware verifiziert*
-- [x] **10. Peripheral-Rolle**: GATT-Server per `GattServiceProvider`, Advertising per `BluetoothLEAdvertisementPublisher` — *nicht auf Hardware verifiziert*
-- [x] **11. Verbindungsabbrüche erkennen** (`ConnectionStatusChanged`), Reconnect-Callback, Aufräumen der Abonnements — *nicht auf Hardware verifiziert*
-- [x] **12. Pool-Größen konfigurierbar** (`[8]` Geräte, `[64]` Characteristics, `[16]` Services); bei vollem Pool ein klarer Fehler
+- [x] **9. Pairing/Unpairing** Ã¼ber `DeviceInformationCustomPairing` mit Callbacks fÃ¼r Passkey und Numeric Comparison â€” *nicht auf Hardware verifiziert*
+- [x] **10. Peripheral-Rolle**: GATT-Server per `GattServiceProvider`, Advertising per `BluetoothLEAdvertisementPublisher` â€” *nicht auf Hardware verifiziert*
+- [x] **11. VerbindungsabbrÃ¼che erkennen** (`ConnectionStatusChanged`), Reconnect-Callback, AufrÃ¤umen der Abonnements â€” *nicht auf Hardware verifiziert*
+- [x] **12. Pool-GrÃ¶ÃŸen konfigurierbar** (`[8]` GerÃ¤te, `[64]` Characteristics, `[16]` Services); bei vollem Pool ein klarer Fehler
 
 ### BlueZ-Backend
 
@@ -70,46 +70,46 @@ produktionsreifen BLE-Bibliothek machen. Sortiert nach Priorität:
 
 ### Raw-HCI / Bare-Metal (fertigbauen oder als experimentell kennzeichnen)
 
-- [x] **15. HCI-Backend und UART-Backend** in der HAL ([`src/backend/`](../src/backend/)) — *TrouBLE-artiger Event-Runner (`pumpEvents` / `processEvents`) implementiert; synchrones Warten auf Antworten mit Fristen; `connectDevice`, `readCharacteristic`, `writeCharacteristic`, `discoverServicesFiltered`, `readDescriptor`, `writeDescriptor` vollständig in `BackendVTable` angebunden; `UartBackend` mit Serial-Writer- und Poller-Anbindung.*
-- [x] **16. Verbindungsmanagement**: LE (Extended) Create Connection, Disconnect, Connection Update, Data Length — *HCI-Befehle und -Events vorhanden; `le_connection_complete`, `le_enhanced_connection_complete`, `disconnection_complete`, `number_of_completed_packets` und `le_advertising_report` im `HciBackend` integriert.*
-- [x] **17. ACL-Flusskontrolle** über `Number of Completed Packets` und die Puffergröße des Controllers — *als Baustein (`AclFlowController`), nicht mit Hardware getestet*
-- [x] **18. ATT-Client und -Server über L2CAP CID 0x0004** als Zustandsmaschine mit 30-s-Transaktions-Timeout — *`AttBearer` im `HciBackend` integriert; synchrones Warten auf ATT-Antworten mit Timeout; Dispatch von Read/Write/MTU/Notifications/Indications über ACL.*
-- [x] **19. SMP-Zustandsmaschine**: Legacy Pairing und LE Secure Connections (ECDH P-256), Schlüsselverteilung, Start der Verschlüsselung — *Just Works, Numeric Comparison mit Nutzerbestätigung (`confirmNumericComparison`), SC Passkey Entry (20 Runden bitweise Bestätigung) und Phase 3 Schlüsselverteilung (Identity Information & IRK, Encryption Information & LTK) implementiert und getestet.*
-- [x] **20. H5-Transport** (3-Wire UART) implementieren oder aus der Doku streichen — *Framing und Link-Aufbau implementiert, nicht mit Hardware getestet*
-- [ ] **21. EATT auf L2CAP-CoC aufsetzen**: Credits, Segmentierung über MPS, Fehlerbehandlung pro Bearer ([`src/core/eatt.zig`](../src/core/eatt.zig)) — *Credits und Segmentierung im Bearer vorhanden; noch an kein Backend angebunden.*
+- [ ] **15. HCI-Backend und UART-Backend** in der HAL ([`src/backend/`](../src/backend/)) — *Gegen einen simulierten Controller getestet (`src/backend/hci_tests.zig`): Connect mit Adresstyp aus dem Scan, vollständige Discovery, Notifications, Pairing. Offen: nie gegen einen echten Controller gelaufen.*
+- [ ] **16. Verbindungsmanagement**: LE (Extended) Create Connection, Disconnect, Connection Update, Data Length — *Create Connection und Disconnect im Backend genutzt und simuliert getestet; Extended Create, Connection Update und Data Length nur als Befehle vorhanden. ACL-Credits werden nicht durchgesetzt. Offen: nie gegen einen echten Controller gelaufen.*
+- [x] **17. ACL-Flusskontrolle** Ã¼ber `Number of Completed Packets` und die PuffergrÃ¶ÃŸe des Controllers â€” *als Baustein (`AclFlowController`), nicht mit Hardware getestet*
+- [ ] **18. ATT-Client und -Server über L2CAP CID 0x0004** als Zustandsmaschine mit 30-s-Transaktions-Timeout — *Client im `HciBackend` mit Warten auf Antworten und ATT-Fehlercodes, simuliert getestet. Der Server ist nicht angebunden. Offen: nie gegen einen echten Controller gelaufen.*
+- [ ] **19. SMP-Zustandsmaschine**: Legacy Pairing und LE Secure Connections (ECDH P-256), Schlüsselverteilung, Start der Verschlüsselung — *Zustandsmaschine mit Numeric Comparison, Passkey Entry und Schlüsselverteilung; `HciBackend` paart als Initiator und startet die Verschlüsselung, simuliert gegen eine zweite Zustandsmaschine getestet. Offen: Responder-Rolle im Backend, Security Request. Offen: nie gegen einen echten Controller gelaufen.*
+- [x] **20. H5-Transport** (3-Wire UART) implementieren oder aus der Doku streichen â€” *Framing und Link-Aufbau implementiert, nicht mit Hardware getestet*
+- [ ] **21. EATT auf L2CAP-CoC aufsetzen**: Credits, Segmentierung Ã¼ber MPS, Fehlerbehandlung pro Bearer ([`src/core/eatt.zig`](../src/core/eatt.zig)) â€” *Credits und Segmentierung im Bearer vorhanden; noch an kein Backend angebunden.*
 
 ### API
 
 - [x] **22. Konkrete Fehlermengen** pro Funktion statt `anyerror` (derzeit 86 Stellen, u. a. die gesamte `BackendVTable`)
-- [x] **23. Nebenläufigkeitsmodell** dokumentieren und durchsetzen
+- [x] **23. NebenlÃ¤ufigkeitsmodell** dokumentieren und durchsetzen
   - [x] Welche Callbacks laufen in welchem Thread?
   - [x] Ist die API thread-sicher?
   - [x] Mutex oder Message-Queue in `src/event_loop.zig` und `src/backend/windows/bindings.zig`
-- [x] **24. Konfigurierbare Timeouts** für alle blockierenden Operationen (Connect, Read, Write, Discovery); nichts darf endlos hängen — *Windows/BlueZ; das experimentelle HCI-Backend ignoriert `timeout_ms`*
+- [x] **24. Konfigurierbare Timeouts** fÃ¼r alle blockierenden Operationen (Connect, Read, Write, Discovery); nichts darf endlos hÃ¤ngen â€” *Windows/BlueZ; das experimentelle HCI-Backend ignoriert `timeout_ms`*
 - [x] **25. Lifecycle**: sicheres `deinit` in jedem Zustand; nach `deinit` feuert kein Callback mehr
-- [x] **38. Fehler aus dem Vergleich mit anderen Bibliotheken** ([`COMPARISON.md`](COMPARISON.md)) — *F1–F12 behoben (Details in `COMPARISON.md` und im CHANGELOG), dazu Descriptors, `EventQueue`, Swift-Pair-/Fast-Pair-Decoder und `TROUBLESHOOTING.md`. Nicht auf Hardware verifiziert. Offen aus der Prioritätenliste: Bumble-CI, automatisches Neu-Abonnieren, HCI-Backend, C-API, Company-ID-Tabelle, macOS-Backend.*
+- [x] **38. Fehler aus dem Vergleich mit anderen Bibliotheken** ([`COMPARISON.md`](COMPARISON.md)) â€” *F1â€“F12 behoben (Details in `COMPARISON.md` und im CHANGELOG), dazu Descriptors, `EventQueue`, Swift-Pair-/Fast-Pair-Decoder und `TROUBLESHOOTING.md`. Nicht auf Hardware verifiziert. Offen aus der PrioritÃ¤tenliste: Bumble-CI, automatisches Neu-Abonnieren, HCI-Backend, C-API, Company-ID-Tabelle, macOS-Backend.*
 
 ---
 
-## P2 – Qualität und Absicherung
+## P2 â€“ QualitÃ¤t und Absicherung
 
 ### Tests
 
-- [ ] **26. Hardware-in-the-Loop-Tests** (z. B. nRF52 oder ESP32 als Gegenstelle, Self-hosted CI-Runner) — *Offen. `scripts/hil_runner.zig` testet nur gegen das Mock-Backend und läuft jetzt als `zig build run-mock-e2e`.*
-- [ ] **27. Linux-CI gegen virtuelles HCI** (`btvirt` / `hci_vhci`), ohne Hardware — *Offen. Der bisherige CI-Job führte nur die Unit-Tests erneut aus und wurde entfernt. Teilweise ersetzt durch `tests/bluez_fake_e2e.zig` (echtes D-Bus, simuliertes `org.bluez`); das prüft das Backend, aber nicht BlueZ selbst oder einen Controller.*
-- [x] **28. Coverage-fähiges Fuzzing** (`zig build --fuzz`) für die Parser von ATT, SMP, L2CAP-Signaling, HCI-Events und H4
+- [ ] **26. Hardware-in-the-Loop-Tests** (z. B. nRF52 oder ESP32 als Gegenstelle, Self-hosted CI-Runner) â€” *Offen. `scripts/hil_runner.zig` testet nur gegen das Mock-Backend und lÃ¤uft jetzt als `zig build run-mock-e2e`.*
+- [ ] **27. Linux-CI gegen virtuelles HCI** (`btvirt` / `hci_vhci`), ohne Hardware â€” *Offen. Der bisherige CI-Job fÃ¼hrte nur die Unit-Tests erneut aus und wurde entfernt. Teilweise ersetzt durch `tests/bluez_fake_e2e.zig` (echtes D-Bus, simuliertes `org.bluez`); das prÃ¼ft das Backend, aber nicht BlueZ selbst oder einen Controller.*
+- [x] **28. Coverage-fÃ¤higes Fuzzing** (`zig build --fuzz`) fÃ¼r die Parser von ATT, SMP, L2CAP-Signaling, HCI-Events und H4
 - [x] **29. Tests der Zustandsmaschinen**: Verbindungsabbruch mitten in einer Transaktion, doppelte Responses, unerwartete Opcodes
-- [ ] **30. Langzeit-Stresstests** über viele Stunden (Scannen, Verbinden, Notifications) mit Prüfung auf Speicherlecks (`GeneralPurposeAllocator`) und Handle-Lecks unter Windows — *Teilweise: 1.050 Zyklen gegen das Mock-Backend mit Leck- und Handle-Prüfung (Sekunden, keine Hardware). Offen: Langzeittest mit echten Geräten.*
+- [ ] **30. Langzeit-Stresstests** Ã¼ber viele Stunden (Scannen, Verbinden, Notifications) mit PrÃ¼fung auf Speicherlecks (`GeneralPurposeAllocator`) und Handle-Lecks unter Windows â€” *Teilweise: 1.050 Zyklen gegen das Mock-Backend mit Leck- und Handle-PrÃ¼fung (Sekunden, keine Hardware). Offen: Langzeittest mit echten GerÃ¤ten.*
 
 ### Diagnose
 
-- [x] **31. Einheitliches Logging** über `std.log` mit eigenem Scope statt `std.debug.print` (`src/gatt_server.zig`, `src/main.zig`)
-- [x] **32. PCAP-Export** an die Windows- und BlueZ-Backends anbinden, soweit möglich
+- [x] **31. Einheitliches Logging** Ã¼ber `std.log` mit eigenem Scope statt `std.debug.print` (`src/gatt_server.zig`, `src/main.zig`)
+- [x] **32. PCAP-Export** an die Windows- und BlueZ-Backends anbinden, soweit mÃ¶glich
 
 ### Release-Prozess
 
-- [x] **33. Semver mit festgelegter öffentlicher API**; interne Module nicht über `src/root.zig` nach außen sichtbar machen
-- [x] **34. Releases über Git-Tags**, CHANGELOG passend zu den Tags, Kompatibilität mit `zig fetch`
-- [x] **35. `SECURITY.md`** mit einem Meldeweg für Sicherheitslücken
-- [ ] **36. README-Beispiele in der CI kompilieren**, damit sie nicht veralten — *`tests/test_readme_examples.zig` enthält eigenen Mock-Code, nicht die Beispiele aus dem README. Offen: die README-Beispiele selbst kompilieren.*
-- [x] **37. macOS**: CoreBluetooth-Backend bauen oder ausdrücklich „nicht unterstützt“ dokumentieren (derzeit wird nur der Kern getestet) — *„nicht unterstützt“ dokumentiert; Tests laufen in der CI auch unter macOS*
+- [x] **33. Semver mit festgelegter Ã¶ffentlicher API**; interne Module nicht Ã¼ber `src/root.zig` nach auÃŸen sichtbar machen
+- [x] **34. Releases Ã¼ber Git-Tags**, CHANGELOG passend zu den Tags, KompatibilitÃ¤t mit `zig fetch`
+- [x] **35. `SECURITY.md`** mit einem Meldeweg fÃ¼r SicherheitslÃ¼cken
+- [ ] **36. README-Beispiele in der CI kompilieren**, damit sie nicht veralten â€” *`tests/test_readme_examples.zig` enthÃ¤lt eigenen Mock-Code, nicht die Beispiele aus dem README. Offen: die README-Beispiele selbst kompilieren.*
+- [x] **37. macOS**: CoreBluetooth-Backend bauen oder ausdrÃ¼cklich â€žnicht unterstÃ¼tztâ€œ dokumentieren (derzeit wird nur der Kern getestet) â€” *â€žnicht unterstÃ¼tztâ€œ dokumentiert; Tests laufen in der CI auch unter macOS*

@@ -478,7 +478,7 @@ pub const ReadByGroupTypeResponse = struct {
             const uuid: UUID = if (uuid_bytes.len == 2)
                 UUID.from16(std.mem.readInt(u16, uuid_bytes[0..2], .little))
             else if (uuid_bytes.len == 16)
-                UUID{ .bytes = uuid_bytes[0..16].* }
+                UUID.fromLittleEndian(uuid_bytes[0..16].*)
             else
                 return null;
 

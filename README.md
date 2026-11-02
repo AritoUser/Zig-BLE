@@ -35,7 +35,7 @@ A Bluetooth Low Energy (BLE) library written entirely in Zig (0.17.0+). It works
 
 ✅ implemented and verified on hardware · 🧪 implemented, not yet verified on hardware · 🚧 experimental, not usable on real hardware yet · ❌ not available
 
-**Raw HCI and UART (`HciBackend`, `UartBackend`) are experimental.** They implement the backend interface and drive the ATT and SMP state machines in tests, but against a real controller they do not work yet: connections do not wait for the controller's connection-complete event, GATT calls return without waiting for the response, and pairing neither asks the user to confirm numeric comparison nor starts link encryption. Use the Windows or BlueZ backend for real devices.
+**Raw HCI and UART (`HciBackend`, `UartBackend`) are experimental.** Connecting, full GATT discovery, notifications and pairing with link encryption work against a simulated controller in the tests, but have never run against a real one. Known gaps: no ACL credit flow control, central role only, and events must be pumped on one thread. Use the Windows or BlueZ backend for real devices.
 
 **Windows:** v1.3.0 to v1.3.2 could not scan or use GATT through `WindowsBackend` because of wrong WinRT IIDs and a wrong vtable. That is fixed and verified with `zig build run-hardware-check -- <address>` against a fitness band and a tracker tag: scanning, connecting, discovery, reading characteristics and descriptors, notifications, and holding an idle connection with active subscriptions for 30 s.
 

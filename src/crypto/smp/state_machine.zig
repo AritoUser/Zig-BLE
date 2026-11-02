@@ -83,14 +83,28 @@ pub const SmpStateMachine = struct {
     peer_confirm: [16]u8 = @splat(0),
     passkey_r: [16]u8 = @splat(0),
 
-    passkey: u32 = 0,
+    /// Null until the application provides it; Passkey Entry never runs with a default value.
+    passkey: ?u32 = null,
     passkey_round: u5 = 0,
-    require_user_confirmation: bool = false,
+    /// Numeric Comparison waits for `confirmNumericComparison`. Turning this off accepts the
+    /// comparison unseen, which gives up its protection against a man in the middle.
+    require_user_confirmation: bool = true,
     user_confirmed: bool = false,
+    /// A DHKey check from the initiator that arrived before the local user confirmed.
+    early_peer_check: ?[16]u8 = null,
+    /// Stay in `key_distribution` after pairing until the negotiated keys are exchanged.
+    /// Otherwise pairing completes right away and keys the peer sends are ignored.
     key_distribution_enabled: bool = false,
+    /// Keys are only accepted over an encrypted link; see `onLinkEncrypted`.
+    link_encrypted: bool = false,
+    expected_peer_keys: KeyDistribution = .{},
+    pending_local_keys: KeyDistribution = .{},
 
     peer_ltk: [16]u8 = @splat(0),
+    peer_ediv: u16 = 0,
+    peer_ltk_rand: [8]u8 = @splat(0),
     peer_irk: [16]u8 = @splat(0),
+    peer_csrk: [16]u8 = @splat(0),
     peer_identity_addr: ?Address = null,
     peer_identity_addr_type: ?AddressType = null,
 
@@ -105,10 +119,56 @@ pub const SmpStateMachine = struct {
     last_failure_reason: ?PairingFailedReason = null,
     timer_started_ms: u64 = 0,
 
-    pub fn setPasskey(self: *SmpStateMachine, passkey: u32) void {
+    /// Sets the 6-digit passkey ahead of time (required for legacy Passkey Entry).
+    pub fn setPasskey(self: *SmpStateMachine, passkey: u32) SmpError!void {
+        if (passkey > 999_999) return SmpError.InvalidParameter;
         self.passkey = passkey;
         std.mem.writeInt(u32, self.passkey_r[0..4], passkey, .little);
         @memset(self.passkey_r[4..16], 0);
+    }
+
+    /// Generates a random passkey for the device that displays it, and returns it for display.
+    pub fn generatePasskey(self: *SmpStateMachine) SmpError!u32 {
+        // Rejection sampling keeps the distribution uniform over 000000..999999.
+        const limit: u32 = std.math.maxInt(u32) - (std.math.maxInt(u32) % 1_000_000);
+        while (true) {
+            var bytes: [4]u8 = undefined;
+            toolbox.getRandomBytes(&bytes) catch return SmpError.EntropyUnavailable;
+            const value = std.mem.readInt(u32, &bytes, .little);
+            if (value >= limit) continue;
+            const passkey = value % 1_000_000;
+            try self.setPasskey(passkey);
+            return passkey;
+        }
+    }
+
+    /// Continues Passkey Entry from `wait_passkey` with the passkey the user entered.
+    pub fn providePasskey(self: *SmpStateMachine, passkey: u32, out_buf: []u8) SmpError!usize {
+        if (self.state != .wait_passkey) return SmpError.InvalidParameter;
+        try self.setPasskey(passkey);
+        return self.sendPasskeyConfirm(out_buf);
+    }
+
+    /// Ends pairing from `wait_passkey` because the user cancelled the entry.
+    pub fn rejectPasskey(self: *SmpStateMachine, out_buf: []u8) SmpError!usize {
+        if (self.state != .wait_passkey) return SmpError.InvalidParameter;
+        return self.failWithReason(.passkey_entry_failed, out_buf);
+    }
+
+    /// Sends this round's confirm value: Ca as initiator, Cb (with a fresh Nb) as responder.
+    fn sendPasskeyConfirm(self: *SmpStateMachine, out_buf: []u8) SmpError!usize {
+        if (self.role == .responder) {
+            toolbox.getRandomBytes(&self.local_rand) catch return SmpError.EntropyUnavailable;
+        }
+        const bit_i: u8 = @intCast((self.passkey.? >> self.passkey_round) & 1);
+        self.local_confirm = toolbox.f4(
+            self.local_ecdh.?.pub_x_le,
+            self.peer_pub_x_le,
+            self.local_rand,
+            0x80 | bit_i,
+        );
+        self.state = if (self.role == .responder) .wait_random else .wait_confirm;
+        return (PairingConfirm{ .confirm_value = self.local_confirm }).serialize(out_buf);
     }
 
     pub fn confirmNumericComparison(self: *SmpStateMachine, accept: bool, out_buf: []u8) SmpError!usize {
@@ -118,24 +178,72 @@ pub const SmpStateMachine = struct {
         }
         self.user_confirmed = true;
         self.deriveScKeysAndSendCheck();
+        self.state = .wait_dhkey_check;
         if (self.role == .initiator) {
             const ea = self.computeLocalDhKeyCheck();
-            self.state = .wait_dhkey_check;
             return (PairingDhKeyCheck{ .check_value = ea }).serialize(out_buf);
-        } else {
-            self.state = .wait_dhkey_check;
-            return 0;
+        }
+        // The initiator's user may have confirmed first.
+        if (self.early_peer_check) |check| {
+            self.early_peer_check = null;
+            return self.finishDhKeyCheck(check, out_buf);
+        }
+        return 0;
+    }
+
+    /// Verifies the peer's DHKey check; as responder also answers with Eb.
+    fn finishDhKeyCheck(self: *SmpStateMachine, check_value: [16]u8, out_buf: []u8) SmpError!usize {
+        const expected_peer_check = self.computePeerDhKeyCheck();
+        if (!std.crypto.timing_safe.eql([16]u8, expected_peer_check, check_value)) {
+            return self.failWithReason(.dhkey_check_failed, out_buf);
+        }
+        self.enterKeyDistribution();
+        if (self.role == .responder) {
+            const eb = self.computeLocalDhKeyCheck();
+            return (PairingDhKeyCheck{ .check_value = eb }).serialize(out_buf);
+        }
+        return 0;
+    }
+
+    /// Works out which keys the negotiated features still require after authentication.
+    fn enterKeyDistribution(self: *SmpStateMachine) void {
+        self.state = .completed;
+        if (!self.key_distribution_enabled) return;
+
+        var initiator_keys = KeyDistribution.fromByte(self.pres_bytes[5]);
+        var responder_keys = KeyDistribution.fromByte(self.pres_bytes[6]);
+        if (self.use_sc) {
+            // LE Secure Connections derives the LTK on both sides; EncKey is not distributed.
+            initiator_keys.enc_key = false;
+            responder_keys.enc_key = false;
+        }
+        self.expected_peer_keys = if (self.role == .initiator) responder_keys else initiator_keys;
+        self.pending_local_keys = if (self.role == .initiator) initiator_keys else responder_keys;
+        self.state = .key_distribution;
+        self.completeIfKeysExchanged();
+    }
+
+    fn hasKeys(keys: KeyDistribution) bool {
+        return keys.enc_key or keys.id_key or keys.sign_key;
+    }
+
+    fn completeIfKeysExchanged(self: *SmpStateMachine) void {
+        if (!hasKeys(self.expected_peer_keys) and !hasKeys(self.pending_local_keys)) {
+            self.state = .completed;
         }
     }
 
-    pub fn hasKeysToDistribute(self: *const SmpStateMachine) bool {
-        const i_dist = self.local_features.initiator_key_distribution;
-        const r_dist = self.local_features.responder_key_distribution;
-        return (i_dist.enc_key or i_dist.id_key or i_dist.sign_key or
-            r_dist.enc_key or r_dist.id_key or r_dist.sign_key);
+    /// Reports that the link is now encrypted. Keys may only be exchanged after this.
+    pub fn onLinkEncrypted(self: *SmpStateMachine) void {
+        self.link_encrypted = true;
     }
 
+    /// Sends the local IRK and identity address, if they were negotiated. Requires an encrypted
+    /// link. The responder distributes first; the initiator sends after receiving its keys.
     pub fn distributeIdentityKeys(self: *SmpStateMachine, irk: [16]u8, out_buf: []u8) SmpError!usize {
+        if (self.state != .key_distribution or !self.link_encrypted or !self.pending_local_keys.id_key) {
+            return SmpError.InvalidParameter;
+        }
         var len: usize = 0;
         const id_info = IdentityInformation{ .irk = irk };
         len += try id_info.serialize(out_buf[len..]);
@@ -144,7 +252,17 @@ pub const SmpStateMachine = struct {
             .address = self.local_addr,
         };
         len += try id_addr.serialize(out_buf[len..]);
+        self.pending_local_keys.id_key = false;
+        self.completeIfKeysExchanged();
         return len;
+    }
+
+    /// Declares the remaining local keys handled, e.g. after sending them directly or because
+    /// the application has none to send.
+    pub fn finishLocalKeyDistribution(self: *SmpStateMachine) void {
+        if (self.state != .key_distribution) return;
+        self.pending_local_keys = .{};
+        self.completeIfKeysExchanged();
     }
 
     pub fn init(
@@ -248,8 +366,8 @@ pub const SmpStateMachine = struct {
                         .oob_data_flag = self.local_features.oob_data_flag,
                         .auth_req = self.local_features.auth_req,
                         .max_encryption_key_size = @min(req.max_encryption_key_size, self.local_features.max_encryption_key_size),
-                        .initiator_key_distribution = req.initiator_key_distribution,
-                        .responder_key_distribution = req.responder_key_distribution,
+                        .initiator_key_distribution = .fromByte(req.initiator_key_distribution.toByte() & self.local_features.initiator_key_distribution.toByte()),
+                        .responder_key_distribution = .fromByte(req.responder_key_distribution.toByte() & self.local_features.responder_key_distribution.toByte()),
                     };
                     const len = try rsp.serialize(out_buf);
                     @memcpy(&self.pres_bytes, out_buf[0..7]);
@@ -297,6 +415,9 @@ pub const SmpStateMachine = struct {
                             .y = self.local_ecdh.?.pub_y_le,
                         }).serialize(out_buf);
                     } else {
+                        if (self.method == .passkey_entry and self.passkey == null) {
+                            return self.failWithReason(.passkey_entry_failed, out_buf);
+                        }
                         try self.prepareLegacyConfirm();
                         self.state = .wait_confirm;
                         return (PairingConfirm{ .confirm_value = self.local_confirm }).serialize(out_buf);
@@ -314,6 +435,10 @@ pub const SmpStateMachine = struct {
 
                 if (self.local_ecdh == null) {
                     self.local_ecdh = try generateEcdhKeyPair(null);
+                }
+                // A peer reflecting our own key could impersonate us (CVE-2020-26558).
+                if (std.mem.eql(u8, &self.peer_pub_x_le, &self.local_ecdh.?.pub_x_le)) {
+                    return self.failWithReason(.unspecified_reason, out_buf);
                 }
                 self.dhkey_le = computeDhKey(
                     self.local_ecdh.?.secret_be,
@@ -351,16 +476,11 @@ pub const SmpStateMachine = struct {
                     if (self.method == .passkey_entry) {
                         // Initiator starts round 0 of Passkey Entry
                         self.passkey_round = 0;
-                        const bit_0: u8 = @intCast((self.passkey >> self.passkey_round) & 1);
-                        const r_val: u8 = 0x80 | bit_0;
-                        self.local_confirm = toolbox.f4(
-                            self.local_ecdh.?.pub_x_le,
-                            self.peer_pub_x_le,
-                            self.local_rand,
-                            r_val,
-                        );
-                        self.state = .wait_confirm;
-                        return (PairingConfirm{ .confirm_value = self.local_confirm }).serialize(out_buf);
+                        if (self.passkey == null) {
+                            self.state = .wait_passkey;
+                            return 0;
+                        }
+                        return self.sendPasskeyConfirm(out_buf);
                     }
                     self.state = .wait_confirm;
                     return 0;
@@ -377,17 +497,11 @@ pub const SmpStateMachine = struct {
                     if (self.method == .passkey_entry) {
                         if (self.role == .responder) {
                             // Responder received Cai -> compute and send Cbi
-                            toolbox.getRandomBytes(&self.local_rand) catch return SmpError.EntropyUnavailable;
-                            const bit_i: u8 = @intCast((self.passkey >> self.passkey_round) & 1);
-                            const r_val: u8 = 0x80 | bit_i;
-                            self.local_confirm = toolbox.f4(
-                                self.local_ecdh.?.pub_x_le,
-                                self.peer_pub_x_le,
-                                self.local_rand,
-                                r_val,
-                            );
-                            self.state = .wait_random;
-                            return (PairingConfirm{ .confirm_value = self.local_confirm }).serialize(out_buf);
+                            if (self.passkey == null) {
+                                self.state = .wait_passkey;
+                                return 0;
+                            }
+                            return self.sendPasskeyConfirm(out_buf);
                         } else {
                             // Initiator received Cbi -> send Nai
                             self.state = .wait_random;
@@ -400,6 +514,9 @@ pub const SmpStateMachine = struct {
                     }
                 } else {
                     if (self.role == .responder) {
+                        if (self.method == .passkey_entry and self.passkey == null) {
+                            return self.failWithReason(.passkey_entry_failed, out_buf);
+                        }
                         try self.prepareLegacyConfirm();
                         self.state = .wait_random;
                         return (PairingConfirm{ .confirm_value = self.local_confirm }).serialize(out_buf);
@@ -418,7 +535,7 @@ pub const SmpStateMachine = struct {
 
                 if (self.use_sc) {
                     if (self.method == .passkey_entry) {
-                        const bit_i: u8 = @intCast((self.passkey >> self.passkey_round) & 1);
+                        const bit_i: u8 = @intCast((self.passkey.? >> self.passkey_round) & 1);
                         const r_val: u8 = 0x80 | bit_i;
                         const expected_peer_confirm = toolbox.f4(
                             self.peer_pub_x_le,
@@ -448,7 +565,7 @@ pub const SmpStateMachine = struct {
                                 self.confirm_received = false;
                                 self.random_received = false;
                                 toolbox.getRandomBytes(&self.local_rand) catch return SmpError.EntropyUnavailable;
-                                const bit_next: u8 = @intCast((self.passkey >> self.passkey_round) & 1);
+                                const bit_next: u8 = @intCast((self.passkey.? >> self.passkey_round) & 1);
                                 const r_next: u8 = 0x80 | bit_next;
                                 self.local_confirm = toolbox.f4(
                                     self.local_ecdh.?.pub_x_le,
@@ -527,58 +644,60 @@ pub const SmpStateMachine = struct {
                 }
             },
             .wait_numeric_comparison => {
+                // The initiator's user may confirm before ours.
+                if (self.role == .responder and pdu == .pairing_dhkey_check and self.early_peer_check == null) {
+                    self.early_peer_check = pdu.pairing_dhkey_check.check_value;
+                    return 0;
+                }
                 return self.failWithReason(.unspecified_reason, out_buf);
             },
             .wait_dhkey_check => {
                 if (pdu != .pairing_dhkey_check) {
                     return self.failWithReason(.unspecified_reason, out_buf);
                 }
-                const expected_peer_check = self.computePeerDhKeyCheck();
-                if (!std.crypto.timing_safe.eql([16]u8, expected_peer_check, pdu.pairing_dhkey_check.check_value)) {
-                    return self.failWithReason(.dhkey_check_failed, out_buf);
-                }
-                if (self.role == .responder) {
-                    const eb = self.computeLocalDhKeyCheck();
-                    if (self.key_distribution_enabled and self.hasKeysToDistribute()) {
-                        self.state = .key_distribution;
-                    } else {
-                        self.state = .completed;
-                    }
-                    return (PairingDhKeyCheck{ .check_value = eb }).serialize(out_buf);
-                } else {
-                    if (self.key_distribution_enabled and self.hasKeysToDistribute()) {
-                        self.state = .key_distribution;
-                    } else {
-                        self.state = .completed;
-                    }
-                    return 0;
-                }
+                return self.finishDhKeyCheck(pdu.pairing_dhkey_check.check_value, out_buf);
             },
             .key_distribution => {
+                // Keys are secrets: never accept them over an unencrypted link.
+                if (!self.link_encrypted) return self.failWithReason(.unspecified_reason, out_buf);
                 switch (pdu) {
                     .encryption_information => |enc| {
+                        if (!self.expected_peer_keys.enc_key) return self.failWithReason(.unspecified_reason, out_buf);
                         self.peer_ltk = enc.long_term_key;
-                        return 0;
                     },
-                    .master_identification => {
-                        return 0;
+                    .master_identification => |id| {
+                        if (!self.expected_peer_keys.enc_key) return self.failWithReason(.unspecified_reason, out_buf);
+                        self.peer_ediv = id.ediv;
+                        self.peer_ltk_rand = id.rand;
+                        self.expected_peer_keys.enc_key = false;
                     },
                     .identity_information => |id| {
+                        if (!self.expected_peer_keys.id_key) return self.failWithReason(.unspecified_reason, out_buf);
                         self.peer_irk = id.irk;
-                        return 0;
                     },
                     .identity_address_information => |ia| {
+                        if (!self.expected_peer_keys.id_key) return self.failWithReason(.unspecified_reason, out_buf);
                         self.peer_identity_addr = ia.address;
                         self.peer_identity_addr_type = ia.addr_type;
-                        self.state = .completed;
-                        return 0;
+                        self.expected_peer_keys.id_key = false;
                     },
-                    .signing_information => {
-                        self.state = .completed;
-                        return 0;
+                    .signing_information => |sign| {
+                        if (!self.expected_peer_keys.sign_key) return self.failWithReason(.unspecified_reason, out_buf);
+                        self.peer_csrk = sign.csrk;
+                        self.expected_peer_keys.sign_key = false;
                     },
                     else => return self.failWithReason(.unspecified_reason, out_buf),
                 }
+                self.completeIfKeysExchanged();
+                return 0;
+            },
+            .completed => {
+                // Pairing succeeded without key exchange being requested; a peer may still
+                // send what was negotiated. That must not turn success into failure.
+                return switch (pdu) {
+                    .encryption_information, .master_identification, .identity_information, .identity_address_information, .signing_information => 0,
+                    else => self.failWithReason(.unspecified_reason, out_buf),
+                };
             },
             else => return self.failWithReason(.unspecified_reason, out_buf),
         };

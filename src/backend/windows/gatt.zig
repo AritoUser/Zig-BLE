@@ -27,16 +27,16 @@ pub fn ensureServicesDiscovered(backend: anytype, dev: anytype) BleError!void {
     }
 }
 
+/// Discovers services unless that already happened, honoring `backend.service_filter`.
 pub fn discoverServices(backend: anytype, dev: anytype) BleError!void {
-    return discoverServicesFiltered(backend, dev, &.{});
+    if (dev.characteristics_len > 0) return;
+    return discoverServicesFiltered(backend, dev, backend.service_filter);
 }
 
 pub fn discoverServicesFiltered(backend: anytype, dev: anytype, filter_uuids: []const UUID) BleError!void {
     if (builtin.os.tag != .windows) return BleError.NotSupported;
     if (backend.is_closed.load(.acquire)) return BleError.InvalidState;
     const d3 = dev.ble_device3 orelse return BleError.NotConnected;
-
-    if (dev.characteristics_len > 0) return;
 
     var svcs_op: ?*bindings.IAsyncOperationGeneric = null;
     const cache_mode: bindings.BluetoothCacheMode = if (backend.use_cached_services) .Cached else .Uncached;
@@ -50,7 +50,7 @@ pub fn discoverServicesFiltered(backend: anytype, dev: anytype, filter_uuids: []
 
     var status: bindings.GattCommunicationStatus = .Unreachable;
     if (svcs_res.lpVtbl.get_Status(svcs_res, &status) < 0 or status != .Success) {
-        log.warn("WinRT GetGattServices status: {s}", .{@tagName(status)});
+        log.debug("WinRT GetGattServices status: {s}", .{@tagName(status)});
         return BleError.ConnectionFailed;
     }
 
@@ -64,12 +64,12 @@ pub fn discoverServicesFiltered(backend: anytype, dev: anytype, filter_uuids: []
     var svc_count: u32 = 0;
     _ = sv.lpVtbl.get_Size(sv, &svc_count);
 
+    var matched_services: u32 = 0;
     var s_idx: u32 = 0;
     while (s_idx < svc_count) : (s_idx += 1) {
         var svc_raw: ?*anyopaque = null;
         if (sv.lpVtbl.GetAt(sv, s_idx, &svc_raw) < 0 or svc_raw == null) continue;
         const svc: *bindings.IGattDeviceService = @ptrCast(@alignCast(svc_raw.?));
-        try dev.addService(svc);
 
         var svc_guid: GUID = undefined;
         const svc_uuid = if (svc.lpVtbl.get_Uuid(svc, &svc_guid) >= 0) helpers.guidToUuid(svc_guid) else UUID.from16(0);
@@ -82,8 +82,13 @@ pub fn discoverServicesFiltered(backend: anytype, dev: anytype, filter_uuids: []
                     break;
                 }
             }
-            if (!matches) continue;
+            if (!matches) {
+                _ = svc.lpVtbl.Release(svc);
+                continue;
+            }
         }
+        try dev.addService(svc);
+        matched_services += 1;
 
         var svc3: ?*bindings.IGattDeviceService3 = null;
         if (svc.lpVtbl.QueryInterface(svc, &bindings.IID_IGattDeviceService3, @ptrCast(&svc3)) >= 0 and svc3 != null) {
@@ -109,6 +114,7 @@ pub fn discoverServicesFiltered(backend: anytype, dev: anytype, filter_uuids: []
             };
         }
     }
+    if (filter_uuids.len > 0 and matched_services == 0) return BleError.ServiceNotFound;
 }
 
 fn discoverCharacteristics(backend: anytype, dev: anytype, s3: *bindings.IGattDeviceService3, svc_uuid: UUID, cache_mode: bindings.BluetoothCacheMode) BleError!void {

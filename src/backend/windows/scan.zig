@@ -143,87 +143,78 @@ fn readAdvertisement(args: *bindings.IBluetoothLEAdvertisementReceivedEventArgs,
         }
     }
 
+    readManufacturerData(adv, report);
+    readDataSections(adv, report);
+}
+
+/// The first manufacturer data entry, if any.
+fn readManufacturerData(adv: *bindings.IBluetoothLEAdvertisement, report: *ReportData) void {
     var mfg_vec: ?*bindings.IVectorPtr = null;
-    if (adv.lpVtbl.get_ManufacturerData(adv, &mfg_vec) >= 0) {
-        const mv = mfg_vec orelse return;
-        defer _ = mv.lpVtbl.Release(mv);
-        var count: u32 = 0;
-        if (mv.lpVtbl.get_Size(mv, &count) < 0 or count == 0) return;
-        var item: ?*anyopaque = null;
-        if (mv.lpVtbl.GetAt(mv, 0, &item) < 0) return;
-        const md: *bindings.IBluetoothLEManufacturerData = @ptrCast(@alignCast(item orelse return));
-        defer _ = md.lpVtbl.Release(md);
+    if (adv.lpVtbl.get_ManufacturerData(adv, &mfg_vec) < 0) return;
+    const mv = mfg_vec orelse return;
+    defer _ = mv.lpVtbl.Release(mv);
+    var count: u32 = 0;
+    if (mv.lpVtbl.get_Size(mv, &count) < 0 or count == 0) return;
+    var item: ?*anyopaque = null;
+    if (mv.lpVtbl.GetAt(mv, 0, &item) < 0) return;
+    const md: *bindings.IBluetoothLEManufacturerData = @ptrCast(@alignCast(item orelse return));
+    defer _ = md.lpVtbl.Release(md);
 
-        var company: u16 = 0;
-        if (md.lpVtbl.get_CompanyId(md, &company) < 0) return;
-        var data: ?*bindings.IBuffer = null;
-        if (md.lpVtbl.get_Data(md, &data) < 0) return;
-        const buf = data orelse return;
-        defer _ = buf.lpVtbl.Release(buf);
-        // Longer payloads are truncated to the size `DiscoveredDevice` keeps.
-        report.mfg_len = helpers.readIBuffer(buf, &report.mfg_buf) catch return;
-        report.company_id = company;
-    }
+    var company: u16 = 0;
+    if (md.lpVtbl.get_CompanyId(md, &company) < 0) return;
+    var data: ?*bindings.IBuffer = null;
+    if (md.lpVtbl.get_Data(md, &data) < 0) return;
+    const buf = data orelse return;
+    defer _ = buf.lpVtbl.Release(buf);
+    // Longer payloads are truncated to the size `DiscoveredDevice` keeps.
+    report.mfg_len = helpers.readIBuffer(buf, &report.mfg_buf) catch return;
+    report.company_id = company;
+}
 
+/// TX power, if `IBluetoothLEAdvertisementReceivedEventArgs2` did not report it, and the first
+/// service data section.
+fn readDataSections(adv: *bindings.IBluetoothLEAdvertisement, report: *ReportData) void {
     var sections_vec: ?*bindings.IVectorPtr = null;
-    if (adv.lpVtbl.get_DataSections(adv, &sections_vec) >= 0) {
-        if (sections_vec) |sv| {
-            defer _ = sv.lpVtbl.Release(sv);
-            var count: u32 = 0;
-            if (sv.lpVtbl.get_Size(sv, &count) >= 0) {
-                var i: u32 = 0;
-                while (i < count) : (i += 1) {
-                    var item: ?*anyopaque = null;
-                    if (sv.lpVtbl.GetAt(sv, i, &item) < 0) continue;
-                    const ds: *bindings.IBluetoothLEAdvertisementDataSection = @ptrCast(@alignCast(item orelse continue));
-                    defer _ = ds.lpVtbl.Release(ds);
+    if (adv.lpVtbl.get_DataSections(adv, &sections_vec) < 0) return;
+    const sv = sections_vec orelse return;
+    defer _ = sv.lpVtbl.Release(sv);
+    var count: u32 = 0;
+    if (sv.lpVtbl.get_Size(sv, &count) < 0) return;
 
-                    var data_type: u8 = 0;
-                    if (ds.lpVtbl.get_DataType(ds, &data_type) < 0) continue;
+    var i: u32 = 0;
+    while (i < count) : (i += 1) {
+        var item: ?*anyopaque = null;
+        if (sv.lpVtbl.GetAt(sv, i, &item) < 0) continue;
+        const ds: *bindings.IBluetoothLEAdvertisementDataSection = @ptrCast(@alignCast(item orelse continue));
+        defer _ = ds.lpVtbl.Release(ds);
 
-                    var data_buf_ptr: ?*bindings.IBuffer = null;
-                    if (ds.lpVtbl.get_Data(ds, &data_buf_ptr) < 0) continue;
-                    const data_buf = data_buf_ptr orelse continue;
-                    defer _ = data_buf.lpVtbl.Release(data_buf);
+        var data_type: u8 = 0;
+        if (ds.lpVtbl.get_DataType(ds, &data_type) < 0) continue;
+        var data_buf_ptr: ?*bindings.IBuffer = null;
+        if (ds.lpVtbl.get_Data(ds, &data_buf_ptr) < 0) continue;
+        const data_buf = data_buf_ptr orelse continue;
+        defer _ = data_buf.lpVtbl.Release(data_buf);
 
-                    var temp_raw: [128]u8 = undefined;
-                    const raw_len = helpers.readIBuffer(data_buf, &temp_raw) catch continue;
-                    const raw = temp_raw[0..raw_len];
+        var temp_raw: [255]u8 = undefined;
+        const raw_len = helpers.readIBuffer(data_buf, &temp_raw) catch continue;
+        const raw = temp_raw[0..raw_len];
 
-                    // Check for TX Power Level (0x0A) if not already set from args2
-                    if (data_type == 0x0A and raw.len >= 1 and report.tx_power == null) {
-                        report.tx_power = @as(i8, @bitCast(raw[0]));
-                    }
-                    // Service Data 16-bit (0x16)
-                    else if (data_type == 0x16 and raw.len >= 2 and report.service_data_uuid == null) {
-                        const u16_val = std.mem.readInt(u16, raw[0..2], .little);
-                        report.service_data_uuid = types.UUID.from16(u16_val);
-                        const payload = raw[2..];
-                        const copy_len = @min(report.service_data_buf.len, payload.len);
-                        @memcpy(report.service_data_buf[0..copy_len], payload[0..copy_len]);
-                        report.service_data_len = copy_len;
-                    }
-                    // Service Data 32-bit (0x20)
-                    else if (data_type == 0x20 and raw.len >= 4 and report.service_data_uuid == null) {
-                        const u32_val = std.mem.readInt(u32, raw[0..4], .little);
-                        report.service_data_uuid = types.UUID.from32(u32_val);
-                        const payload = raw[4..];
-                        const copy_len = @min(report.service_data_buf.len, payload.len);
-                        @memcpy(report.service_data_buf[0..copy_len], payload[0..copy_len]);
-                        report.service_data_len = copy_len;
-                    }
-                    // Service Data 128-bit (0x21)
-                    else if (data_type == 0x21 and raw.len >= 16 and report.service_data_uuid == null) {
-                        const le_bytes: *const [16]u8 = raw[0..16];
-                        report.service_data_uuid = types.UUID.fromLittleEndian(le_bytes.*);
-                        const payload = raw[16..];
-                        const copy_len = @min(report.service_data_buf.len, payload.len);
-                        @memcpy(report.service_data_buf[0..copy_len], payload[0..copy_len]);
-                        report.service_data_len = copy_len;
-                    }
-                }
-            }
+        if (data_type == 0x0A and raw.len >= 1) {
+            if (report.tx_power == null) report.tx_power = @as(i8, @bitCast(raw[0]));
+            continue;
         }
+        if (report.service_data_uuid != null) continue;
+        const uuid: types.UUID, const uuid_len: usize = switch (data_type) {
+            0x16 => if (raw.len >= 2) .{ .from16(std.mem.readInt(u16, raw[0..2], .little)), 2 } else continue,
+            0x20 => if (raw.len >= 4) .{ .from32(std.mem.readInt(u32, raw[0..4], .little)), 4 } else continue,
+            0x21 => if (raw.len >= 16) .{ .fromLittleEndian(raw[0..16].*), 16 } else continue,
+            else => continue,
+        };
+        const payload = raw[uuid_len..];
+        const copy_len = @min(report.service_data_buf.len, payload.len);
+        @memcpy(report.service_data_buf[0..copy_len], payload[0..copy_len]);
+        report.service_data_len = copy_len;
+        report.service_data_uuid = uuid;
     }
 }
 

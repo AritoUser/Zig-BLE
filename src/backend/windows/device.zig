@@ -54,7 +54,11 @@ pub fn DeviceContext(comptime pool_config: PoolConfig, comptime BackendType: typ
         /// Written by WinRT `ConnectionStatusChanged` threads, hence atomic.
         is_connected: std.atomic.Value(bool) = .init(false),
         connection_state: std.atomic.Value(types.ConnectionState) = .init(.disconnected),
+        /// Guarded by the backend's `state_mutex`.
         auto_resubscribe: bool = false,
+        saved_subscriptions: types.SavedSubscriptions = .{},
+        /// Windows restored the link itself; `processEvents` writes the CCCDs again.
+        resubscribe_pending: std.atomic.Value(bool) = .init(false),
         was_connected_once: bool = false,
         ble_device: ?*bindings.IBluetoothLEDevice = null,
         ble_device3: ?*bindings.IBluetoothLEDevice3 = null,
@@ -174,6 +178,7 @@ pub fn DeviceContext(comptime pool_config: PoolConfig, comptime BackendType: typ
                     event = .{ .connected = .{ .address = self.address } };
                     reconnected = self.was_connected_once;
                     self.was_connected_once = true;
+                    if (self.auto_resubscribe) self.resubscribe_pending.store(true, .release);
                 }
                 conn_cb = backend.connection_event_cb;
                 conn_ud = backend.connection_event_user_data;
@@ -190,8 +195,8 @@ pub fn DeviceContext(comptime pool_config: PoolConfig, comptime BackendType: typ
             }
         }
 
-        pub fn releaseAll(self: *Self) void {
-            self.conn_status_handler.deactivate();
+        /// Releases discovered services and characteristics; the connection stays up.
+        pub fn releaseGatt(self: *Self) void {
             for (self.characteristics[0..self.characteristics_len]) |*ch| {
                 ch.release();
             }
@@ -210,8 +215,15 @@ pub fn DeviceContext(comptime pool_config: PoolConfig, comptime BackendType: typ
                         _ = svc.lpVtbl.Release(svc);
                     }
                 }
-                self.services_len = 0;
+            }
+            self.services_len = 0;
+        }
 
+        pub fn releaseAll(self: *Self) void {
+            self.conn_status_handler.deactivate();
+            self.releaseGatt();
+
+            if (builtin.os.tag == .windows) {
                 if (self.gatt_session) |sess| {
                     _ = sess.lpVtbl.put_MaintainConnection(sess, 0);
                     var closable: ?*bindings.IClosable = null;

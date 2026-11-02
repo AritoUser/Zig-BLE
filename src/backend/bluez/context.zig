@@ -69,8 +69,13 @@ pub const BluezDeviceContext = struct {
     object_path: [128]u8 = undefined,
     object_path_len: u8 = 0,
     is_connected: bool = false,
-    connection_state: types.ConnectionState = .disconnected,
+    connection_state: std.atomic.Value(types.ConnectionState) = .init(.disconnected),
     auto_resubscribe: bool = false,
+    saved_subscriptions: types.SavedSubscriptions = .{},
+    /// BlueZ restored the link without a `connect` call.
+    external_reconnect: bool = false,
+    /// Services of an externally restored link are resolved; `processEvents` subscribes again.
+    resubscribe_pending: bool = false,
     rssi: ?i16 = null,
 
     characteristics: [64]BluezCharacteristicSlot = undefined,
@@ -146,6 +151,18 @@ pub const BluezDeviceContext = struct {
     /// Restores attribute-handle order after discovery (`GetManagedObjects` is unordered).
     pub fn sortCharacteristics(self: *BluezDeviceContext) void {
         std.mem.sort(BluezCharacteristicSlot, self.characteristics[0..self.characteristics_len], {}, BluezCharacteristicSlot.lessThan);
+    }
+
+    /// Applies the end of a link to the subscriptions: the peer has forgotten them, and only
+    /// `auto_resubscribe` keeps their callbacks for the next connection.
+    pub fn endSubscriptionsWithLink(self: *BluezDeviceContext) void {
+        if (!self.auto_resubscribe) {
+            self.clearSubscriptions();
+            return;
+        }
+        for (self.characteristics[0..self.characteristics_len]) |*ch| {
+            ch.is_notifying = false;
+        }
     }
 
     /// Cleans up all active notification subscriptions upon disconnect or daemon restart.

@@ -46,6 +46,9 @@ pub const MockCharacteristic = struct {
 
     notify_cb: ?NotificationCallback = null,
     notify_user_data: ?*anyopaque = null,
+    /// Whether the peripheral currently sends notifications. Like a real peer it forgets this
+    /// when the link goes down, whatever the host still remembers.
+    notifying: bool = false,
 
     descriptors: [4]MockDescriptor = undefined,
     descriptors_len: u8 = 0,
@@ -157,6 +160,7 @@ pub const MockController = struct {
         const dev = self.findDeviceByAddress(addr) orelse return BleError.DeviceNotFound;
         if (!dev.is_connected) return BleError.NotConnected;
         const ch = dev.findCharacteristic(char) orelse return BleError.CharacteristicNotFound;
+        if (!ch.notifying) return;
         if (ch.notify_cb) |cb| cb(ch.uuid, data, ch.notify_user_data);
     }
 
@@ -222,6 +226,10 @@ pub const MockController = struct {
         const dev = self.findDeviceByAddress(addr) orelse return BleError.DeviceNotFound;
         dev.is_connected = true;
         dev.connection_state = .connected;
+        // The peripheral starts every connection with notifications off.
+        for (dev.characteristics[0..dev.characteristics_len]) |*ch| {
+            ch.notifying = dev.auto_resubscribe and ch.notify_cb != null;
+        }
         return @ptrCast(dev);
     }
 
@@ -286,6 +294,7 @@ pub const MockController = struct {
 
         ch.notify_cb = cb;
         ch.notify_user_data = user_data;
+        ch.notifying = true;
     }
 
     pub fn unsubscribeNotifications(ctx: *anyopaque, dev_handle: *anyopaque, char: CharacteristicSelector) BleError!void {
@@ -294,6 +303,7 @@ pub const MockController = struct {
         const ch = dev.findCharacteristic(char) orelse return;
         ch.notify_cb = null;
         ch.notify_user_data = null;
+        ch.notifying = false;
     }
 
     pub fn readDescriptor(ctx: *anyopaque, dev_handle: *anyopaque, char: CharacteristicSelector, descriptor: UUID, buf: []u8) BleError!usize {
@@ -368,9 +378,15 @@ pub const MockController = struct {
 
     pub fn discoverServicesFiltered(ctx: *anyopaque, dev_handle: *anyopaque, filter_uuids: []const UUID) BleError!void {
         _ = ctx;
-        _ = filter_uuids;
         const dev: *MockDevice = @ptrCast(@alignCast(dev_handle));
         if (!dev.is_connected) return BleError.NotConnected;
+        if (filter_uuids.len == 0) return;
+        for (dev.characteristics[0..dev.characteristics_len]) |*ch| {
+            for (filter_uuids) |wanted| {
+                if (wanted.eql(ch.service_uuid)) return;
+            }
+        }
+        return BleError.ServiceNotFound;
     }
 
     pub const vtable: BackendVTable = .{

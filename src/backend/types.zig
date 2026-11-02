@@ -359,6 +359,42 @@ pub const ConnectionEvent = union(enum) {
     parameters_updated: ConnectionParameters,
 };
 
+/// Notification subscriptions remembered across a reconnect (`setAutoResubscribe`).
+pub const SavedSubscriptions = struct {
+    pub const Item = struct {
+        char: CharacteristicSelector,
+        cb: NotificationCallback,
+        user_data: ?*anyopaque,
+    };
+
+    items: [16]Item = undefined,
+    len: u8 = 0,
+
+    /// Replaces the saved list with the subscribed characteristics in `slots` (fields `uuid`,
+    /// `service_uuid`, `notify_cb`, `notify_user_data`). Keeps the old list if none is subscribed:
+    /// the slots may already have been released for this connection.
+    pub fn capture(self: *SavedSubscriptions, slots: anytype) void {
+        var infos: [64]CharacteristicInfo = undefined;
+        const n = CharacteristicInfo.list(slots, &infos);
+        var found: u8 = 0;
+        for (slots[0..n], infos[0..n]) |*slot, info| {
+            const cb = slot.notify_cb orelse continue;
+            if (found == self.items.len) break;
+            self.items[found] = .{ .char = info.selector(), .cb = cb, .user_data = slot.notify_user_data };
+            found += 1;
+        }
+        if (found > 0) self.len = found;
+    }
+
+    pub fn slice(self: *const SavedSubscriptions) []const Item {
+        return self.items[0..self.len];
+    }
+
+    pub fn clear(self: *SavedSubscriptions) void {
+        self.len = 0;
+    }
+};
+
 /// Callback invoked on connection state changes (connected, disconnected, parameters_updated).
 pub const ConnectionEventCallback = *const fn (event: ConnectionEvent, user_data: ?*anyopaque) void;
 

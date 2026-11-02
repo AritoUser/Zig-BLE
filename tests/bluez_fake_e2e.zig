@@ -42,6 +42,7 @@ const report_ref_uuid = "00002908-0000-1000-8000-00805f9b34fb";
 const cmd_notify: u8 = 0x01;
 const cmd_remote_disconnect: u8 = 0x02;
 const cmd_deny_reads: u8 = 0x03;
+const cmd_external_reconnect: u8 = 0x04;
 
 const FakeBluez = struct {
     conn: Connection,
@@ -51,6 +52,9 @@ const FakeBluez = struct {
     /// Services resolve some time after `Connect` returned, as on real BlueZ.
     resolve_at_ms: ?i64 = null,
     deny_reads: bool = false,
+    start_notify_calls: usize = 0,
+    /// Drop the link, then restore it without a `Connect` call, as BlueZ does for bonded devices.
+    reconnect_at_ms: ?i64 = null,
 
     fn run(self: *FakeBluez) void {
         while (!self.stop.load(.acquire)) {
@@ -59,6 +63,15 @@ const FakeBluez = struct {
                 defer msg.deinit();
                 if (msg.fixed_header.msg_type == .method_call) {
                     self.handle(&msg) catch |err| std.debug.print("fake bluez: {s}\n", .{@errorName(err)});
+                }
+            }
+            if (self.reconnect_at_ms) |at| {
+                if (wire.getMonotonicMs() >= at) {
+                    self.reconnect_at_ms = null;
+                    self.connected = true;
+                    self.resolved = true;
+                    self.emitBool(dev_path, BlueZ.Device1.Properties.Connected, true) catch {};
+                    self.emitBool(dev_path, BlueZ.Device1.Properties.ServicesResolved, true) catch {};
                 }
             }
             if (self.resolve_at_ms) |at| {
@@ -134,6 +147,7 @@ const FakeBluez = struct {
         defer reply.deinit();
         try self.conn.send(&reply);
 
+        if (eql(u8, member, "StartNotify")) self.start_notify_calls += 1;
         if (eql(u8, member, "StartDiscovery")) {
             try self.emitInterfacesAdded();
             try self.emitRssi(dev_path, -48);
@@ -153,6 +167,9 @@ const FakeBluez = struct {
                 try self.emitValue(report_a, &.{0x11});
                 try self.emitValue(report_b, &.{0x22});
                 try self.emitValue(battery_level, &.{0x33});
+            } else if (data.len == 1 and data[0] == cmd_external_reconnect) {
+                try self.dropLink(BlueZ.Device1.Reasons.Remote);
+                self.reconnect_at_ms = wire.getMonotonicMs() + 50;
             } else if (data.len == 1 and data[0] == cmd_deny_reads) {
                 self.deny_reads = true;
             } else if (data.len == 1 and data[0] == cmd_remote_disconnect) {
@@ -222,6 +239,21 @@ const FakeBluez = struct {
         try props.appendDictString(BlueZ.Device1.Properties.Name, name);
         try props.appendDictInt16(BlueZ.Device1.Properties.RSSI, rssi);
         try props.appendDictInt16(BlueZ.Device1.Properties.TxPower, -8);
+        {
+            var entry = try props.openDictEntry();
+            try entry.appendString(BlueZ.Device1.Properties.ServiceData);
+            var v = try entry.openVariant("a{sv}");
+            var arr = try v.openArray("{sv}");
+            var svc = try arr.openDictEntry();
+            try svc.appendString("0000fe2c-0000-1000-8000-00805f9b34fb");
+            var data = try svc.openVariant("ay");
+            try data.appendBytes(&.{ 0xAA, 0xBB, 0xCC });
+            try svc.closeContainer(&data);
+            try arr.closeContainer(&svc);
+            try v.closeContainer(&arr);
+            try entry.closeContainer(&v);
+            try props.closeContainer(&entry);
+        }
         try props.appendDictStringArray(BlueZ.Device1.Properties.UUIDs, &.{"0000180d-0000-1000-8000-00805f9b34fb"});
         var entry = try props.openDictEntry();
         try entry.appendString(BlueZ.Device1.Properties.ManufacturerData);
@@ -400,6 +432,9 @@ pub fn main() !void {
         check(d.address_type == .random, "scan: address type");
         check(d.company_id == 0x004C, "scan: manufacturer data");
         check(d.tx_power == -8, "scan: TX power");
+        if (d.getServiceData()) |sd| {
+            check(sd.uuid.eql(UUID.from16(0xFE2C)) and sd.data.len == 3, "scan: service data");
+        } else check(false, "scan: service data");
         check(d.getServiceUuids().len == 1 and d.getServiceUuids()[0].eql(UUID.from16(0x180D)), "scan: service UUIDs");
     } else check(false, "scan: device reported");
     if (scan.cached) |d| {
@@ -532,6 +567,63 @@ pub fn main() !void {
     pump_thread.join();
     check(failed_reads == 0, "threads: 300 reads with a concurrent processEvents loop");
     check(pumper.errors == 0, "threads: processEvents reports no errors");
+
+    // Auto-resubscribe: the peer forgets subscriptions, so StartNotify must happen again
+    {
+        var resub_log = NotifyLog{};
+        const wait_hit = struct {
+            fn f(l: *NotifyLog) bool {
+                return l.hits >= 1;
+            }
+        }.f;
+        check(dev.getConnectionState() == .connected, "state: connected");
+        dev.setAutoResubscribe(true);
+        try dev.subscribe(battery, NotifyLog.onNotify, &resub_log);
+
+        // Own disconnect and connect
+        var calls = fake.start_notify_calls;
+        try dev.disconnect();
+        check(dev.getConnectionState() == .disconnected, "state: disconnected after disconnect");
+        dev = try adapter.connect(addr, 3000);
+        check(fake.start_notify_calls == calls + 1, "resubscribe: StartNotify after own disconnect and connect");
+        try dev.writeCharacteristic(report, &.{cmd_notify}, true);
+        try pumpUntil(&adapter, &resub_log, wait_hit);
+        check(resub_log.hits >= 1 and resub_log.last == 0x33, "resubscribe: notifications arrive after reconnect");
+
+        // Remote drop and connect
+        calls = fake.start_notify_calls;
+        try dev.writeCharacteristic(report, &.{cmd_remote_disconnect}, true);
+        try pumpUntil(&adapter, &conn_log, struct {
+            fn f(l: *ConnLog) bool {
+                return l.disconnects >= 1;
+            }
+        }.f);
+        conn_log.disconnects = 0;
+        dev = try adapter.connect(addr, 3000);
+        check(fake.start_notify_calls == calls + 1, "resubscribe: StartNotify after remote drop and connect");
+
+        // BlueZ restores the link by itself
+        calls = fake.start_notify_calls;
+        try dev.writeCharacteristic(report, &.{cmd_external_reconnect}, true);
+        const deadline = wire.getMonotonicMs() + 2000;
+        while (fake.start_notify_calls == calls and wire.getMonotonicMs() < deadline) try adapter.processEvents(20);
+        check(fake.start_notify_calls == calls + 1, "resubscribe: StartNotify after BlueZ restored the link");
+        check(dev.getConnectionState() == .connected, "state: connected after BlueZ restored the link");
+        conn_log.disconnects = 0;
+
+        // Filter: other services' subscriptions stop, unknown service is an error
+        try dev.discoverServicesFiltered(&.{UUID.from16(0x1812)});
+        var filtered: [8]ble.CharacteristicInfo = undefined;
+        check((try dev.getCharacteristics(&filtered)) == 2, "filter: only that service's characteristics remain");
+        check(dev.readCharacteristic(battery, &buf) == error.CharacteristicNotFound, "filter: others are gone");
+        if (dev.discoverServicesFiltered(&.{UUID.from16(0x1234)})) |_| {
+            check(false, "filter: unknown service");
+        } else |err| check(err == error.ServiceNotFound, "filter: unknown service");
+        try dev.discoverServices();
+        check((try dev.getCharacteristics(&filtered)) == 3, "filter: full discovery widens again");
+
+        dev.setAutoResubscribe(false);
+    }
 
     // F11: disconnect reason
     try dev.writeCharacteristic(report, &.{cmd_remote_disconnect}, true);

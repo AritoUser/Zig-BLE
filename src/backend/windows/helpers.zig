@@ -88,7 +88,12 @@ pub fn hstringToUtf8(hstr: HSTRING, out_buf: []u8) usize {
 
 pub const Kernel32 = if (builtin.os.tag == .windows) struct {
     pub extern "kernel32" fn Sleep(dwMilliseconds: u32) callconv(bindings.WINAPI) void;
+    pub extern "kernel32" fn GetTickCount64() callconv(bindings.WINAPI) u64;
 } else struct {
+    pub fn GetTickCount64() u64 {
+        return 0;
+    }
+
     pub fn Sleep(dwMilliseconds: u32) void {
         _ = dwMilliseconds;
     }

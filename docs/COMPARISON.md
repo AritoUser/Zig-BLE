@@ -343,7 +343,7 @@ Alle Punkte wurden im Code nachgeprüft.
 | 9 | Ein einheitliches Event-Modell (`union(enum)`) mit `nextEvent()` — ✅ `EventQueue` | btleplug, TrouBLE |
 | 10 | ConnectionState und automatisches Neu-Abonnieren nach Reconnect — ✅ ConnectionState (connecting/connected/disconnecting/disconnected) & setAutoResubscribe | Kable |
 | 11 | Descriptors lesen/schreiben, Discovery mit UUID-Filter, Cache-Option (F9) — ✅ Descriptors, Cache-Option & discoverServicesFiltered | btleplug, tinygo, bleak |
-| 12 | HCI-Backend nach dem Runner-Modell von TrouBLE fertigbauen — *offen* | TrouBLE, tinygo |
+| 12 | HCI-Backend nach dem Runner-Modell von TrouBLE fertigbauen — *teilweise: gegen einen simulierten Controller getestet, nie gegen einen echten* | TrouBLE, tinygo |
 | 13 | Plattform- und Troubleshooting-Doku — ✅ [TROUBLESHOOTING.md](TROUBLESHOOTING.md) | bleak |
 | 14 | C-API für Nutzung aus anderen Sprachen — *offen* | SimpleBLE |
 | 15 | Vendor-Advertising-Decoder und vollständige Company-ID-Tabelle — ✅ Swift Pair, Fast Pair; Company-ID-Tabelle offen | ble-scanner |

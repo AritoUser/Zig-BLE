@@ -1,7 +1,7 @@
-//! # Zig-BLE README Code Examples Compilation & Execution Test
+//! # Zig-BLE API usage tests in the style of the README
 //!
-//! Compiles and runs all canonical code snippets from `README.md` in CI so any
-//! public API drift is caught immediately during `zig build test`.
+//! Runs the API flows the README shows against the mock backend. These are copies, not the
+//! README's code blocks themselves, so a README example can still go stale.
 
 const std = @import("std");
 const ble = @import("Zig_BLE");

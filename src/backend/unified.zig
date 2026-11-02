@@ -33,10 +33,16 @@ pub const UnifiedDevice = struct {
         return self.backend.isDeviceConnected(self.handle);
     }
 
+    /// Current link state, safe to call while another thread is connecting.
     pub fn getConnectionState(self: *UnifiedDevice) types.ConnectionState {
         return self.backend.getConnectionState(self.handle);
     }
 
+    /// When enabled, this device's notification subscriptions survive a disconnect: they are
+    /// set up again, with the same callbacks, on the next `connect` to this address and when the
+    /// OS restores the link itself (delivered from `processEvents`). A peer forgets its
+    /// subscriptions with the link, so this writes them again. Characteristics that no longer
+    /// exist are skipped with a warning. Disable it before `disconnect` to drop them.
     pub fn setAutoResubscribe(self: *UnifiedDevice, enabled: bool) void {
         self.backend.setAutoResubscribe(self.handle, enabled);
     }
@@ -49,6 +55,11 @@ pub const UnifiedDevice = struct {
         return self.backend.discoverServices(self.handle);
     }
 
+    /// Limits the known characteristics to the given services, or to all services if empty.
+    /// Subscriptions on other services end. Returns `ServiceNotFound` if no service matches.
+    /// `connect` has discovered everything by then on Windows; to avoid that round trip,
+    /// set `WindowsBackend.service_filter` before connecting. BlueZ discovers all services
+    /// itself, so there this only narrows the list.
     pub fn discoverServicesFiltered(self: *UnifiedDevice, filter_uuids: []const UUID) BleError!void {
         return self.backend.discoverServicesFiltered(self.handle, filter_uuids);
     }
@@ -316,7 +327,7 @@ test "UnifiedDevice tracks ConnectionState and supports auto-resubscribe" {
     try mock.triggerNotification(addr, char_uuid, &.{ 0x00, 70 });
     try std.testing.expectEqual(@as(usize, 1), hits.hits);
 
-    // Simulate disconnect: with auto_resubscribe=true, subscription callback is preserved
+    // The peripheral forgets its subscriptions with the link; the backend has to set them up again
     try connected.disconnect();
     try std.testing.expectEqual(types.ConnectionState.disconnected, connected.getConnectionState());
     try std.testing.expect(!connected.isConnected());
@@ -325,9 +336,16 @@ test "UnifiedDevice tracks ConnectionState and supports auto-resubscribe" {
     var reconnected = try adapter.connect(addr, 1000);
     try std.testing.expectEqual(types.ConnectionState.connected, reconnected.getConnectionState());
 
-    // Notification is still received after reconnect because subscription was preserved
     try mock.triggerNotification(addr, char_uuid, &.{ 0x00, 72 });
     try std.testing.expectEqual(@as(usize, 2), hits.hits);
+
+    // Without auto-resubscribe the subscription ends with the connection
+    reconnected.setAutoResubscribe(false);
+    try reconnected.disconnect();
+    var third = try adapter.connect(addr, 1000);
+    try mock.triggerNotification(addr, char_uuid, &.{ 0x00, 74 });
+    try std.testing.expectEqual(@as(usize, 2), hits.hits);
+    try third.disconnect();
 }
 
 test "UnifiedDevice discoverServicesFiltered" {
@@ -344,4 +362,5 @@ test "UnifiedDevice discoverServicesFiltered" {
 
     var connected = try adapter.connect(addr, 1000);
     try connected.discoverServicesFiltered(&.{UUID.from16(0x180D)});
+    try std.testing.expectError(BleError.ServiceNotFound, connected.discoverServicesFiltered(&.{UUID.from16(0x1812)}));
 }

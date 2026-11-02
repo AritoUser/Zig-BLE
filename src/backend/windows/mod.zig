@@ -107,6 +107,9 @@ pub fn WindowsBackendWithConfig(comptime pool_config: PoolConfig) type {
         /// Use Windows' GATT cache for service discovery instead of reading services over the
         /// air on every connect. Faster, but can return stale services after a firmware update.
         use_cached_services: bool = false,
+        /// Only read the characteristics of these services during `connect` and lazy discovery,
+        /// which saves round trips on devices with many services. Empty means all services.
+        service_filter: []const UUID = &.{},
         is_closed: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
 
         devices: [pool_config.max_devices]DeviceContext = @splat(.{}),
@@ -361,6 +364,7 @@ pub fn WindowsBackendWithConfig(comptime pool_config: PoolConfig) type {
 
             const eff_timeout = if (timeout_ms == 0) self.timeouts.connect_ms else timeout_ms;
             var dev_slot = try self.allocateDeviceSlot(addr);
+            if (dev_slot.auto_resubscribe) dev_slot.saved_subscriptions.capture(dev_slot.characteristics[0..dev_slot.characteristics_len]);
             dev_slot.releaseAll();
             dev_slot.parent_backend = self;
             dev_slot.connection_state.store(.connecting, .release);
@@ -404,14 +408,23 @@ pub fn WindowsBackendWithConfig(comptime pool_config: PoolConfig) type {
             }
             dev_slot.bond_state = pairing_mod.queryWinRtBondState(ble_dev);
 
+            // Windows connects lazily with the first GATT operation, which often reports
+            // `Unreachable` while the link is still coming up; keep trying within the timeout.
+            const deadline = helpers.Kernel32.GetTickCount64() + eff_timeout;
             self.mutex.unlock();
-            const disc_res = discoverServices(ctx, @ptrCast(dev_slot));
+            var disc_res = discoverServices(ctx, @ptrCast(dev_slot));
+            while (disc_res == BleError.ConnectionFailed and helpers.Kernel32.GetTickCount64() < deadline) {
+                helpers.Kernel32.Sleep(300);
+                disc_res = discoverServices(ctx, @ptrCast(dev_slot));
+            }
             self.mutex.lock();
             disc_res catch |err| {
                 dev_slot.connection_state.store(.disconnected, .release);
                 dev_slot.releaseAll();
                 return err;
             };
+            dev_slot.resubscribe_pending.store(false, .release);
+            self.restoreSubscriptions(dev_slot);
 
             return @ptrCast(dev_slot);
         }
@@ -453,8 +466,19 @@ pub fn WindowsBackendWithConfig(comptime pool_config: PoolConfig) type {
 
             const dev: *DeviceContext = @ptrCast(@alignCast(dev_handle));
             dev.connection_state.store(.disconnecting, .release);
+            if (dev.auto_resubscribe) dev.saved_subscriptions.capture(dev.characteristics[0..dev.characteristics_len]);
             dev.releaseAll();
             dev.connection_state.store(.disconnected, .release);
+        }
+
+        /// Sets up the saved subscriptions on the current connection. Caller holds `mutex`.
+        fn restoreSubscriptions(self: *Self, dev: *DeviceContext) void {
+            for (dev.saved_subscriptions.slice()) |sub| {
+                gatt_mod.subscribeNotifications(self, dev, sub.char, sub.cb, sub.user_data, onCharacteristicValueChanged) catch |err| {
+                    log.warn("Resubscribing to {f} failed: {s}", .{ sub.char.uuid, @errorName(err) });
+                };
+            }
+            dev.saved_subscriptions.clear();
         }
 
         pub fn getConnectionState(ctx: *anyopaque, dev_handle: *anyopaque) types.ConnectionState {
@@ -466,9 +490,12 @@ pub fn WindowsBackendWithConfig(comptime pool_config: PoolConfig) type {
 
         pub fn setAutoResubscribe(ctx: *anyopaque, dev_handle: *anyopaque, enabled: bool) void {
             if (builtin.os.tag != .windows) return;
-            _ = ctx;
+            const self: *Self = @ptrCast(@alignCast(ctx));
             const dev: *DeviceContext = @ptrCast(@alignCast(dev_handle));
+            self.state_mutex.lock();
+            defer self.state_mutex.unlock();
             dev.auto_resubscribe = enabled;
+            if (!enabled) dev.saved_subscriptions.clear();
         }
 
         pub fn discoverServicesFiltered(ctx: *anyopaque, dev_handle: *anyopaque, filter_uuids: []const UUID) BleError!void {
@@ -479,7 +506,16 @@ pub fn WindowsBackendWithConfig(comptime pool_config: PoolConfig) type {
 
             if (self.is_closed.load(.acquire)) return BleError.InvalidState;
             const dev: *DeviceContext = @ptrCast(@alignCast(dev_handle));
-            return gatt_mod.discoverServicesFiltered(self, dev, filter_uuids);
+            if (!dev.is_connected.load(.acquire)) return BleError.NotConnected;
+
+            // Rediscovers, because the list may have been narrowed before. Subscriptions on
+            // services that stay are set up again on the new characteristic objects.
+            dev.saved_subscriptions.capture(dev.characteristics[0..dev.characteristics_len]);
+            dev.clearSubscriptions();
+            dev.releaseGatt();
+            const result = gatt_mod.discoverServicesFiltered(self, dev, filter_uuids);
+            self.restoreSubscriptions(dev);
+            return result;
         }
 
         pub fn isDeviceConnected(ctx: *anyopaque, dev_handle: *anyopaque) bool {
@@ -495,8 +531,9 @@ pub fn WindowsBackendWithConfig(comptime pool_config: PoolConfig) type {
                 var status: bindings.BluetoothConnectionStatus = .Disconnected;
                 if (ble_dev.lpVtbl.get_ConnectionStatus(ble_dev, &status) >= 0) {
                     if (status == .Disconnected) {
-                        dev.clearSubscriptions();
+                        if (!dev.auto_resubscribe) dev.clearSubscriptions();
                         dev.is_connected.store(false, .release);
+                        dev.connection_state.store(.disconnected, .release);
                         return false;
                     }
                     return true;
@@ -567,7 +604,21 @@ pub fn WindowsBackendWithConfig(comptime pool_config: PoolConfig) type {
             if (builtin.os.tag != .windows) return BleError.NotSupported;
             const self: *Self = @ptrCast(@alignCast(ctx));
             if (self.is_closed.load(.acquire)) return BleError.InvalidState;
+            self.resubscribeRestoredLinks();
             helpers.Kernel32.Sleep(timeout_ms);
+        }
+
+        /// WinRT threads must not wait for GATT operations, so links Windows restored by itself
+        /// get their CCCDs written here.
+        fn resubscribeRestoredLinks(self: *Self) void {
+            for (&self.devices) |*dev| {
+                if (!dev.resubscribe_pending.swap(false, .acq_rel)) continue;
+                self.mutex.lock();
+                defer self.mutex.unlock();
+                if (!dev.in_use or !dev.is_connected.load(.acquire)) continue;
+                dev.saved_subscriptions.capture(dev.characteristics[0..dev.characteristics_len]);
+                self.restoreSubscriptions(dev);
+            }
         }
 
         pub fn readDescriptor(ctx: *anyopaque, dev_handle: *anyopaque, char: CharacteristicSelector, descriptor: UUID, buf: []u8) BleError!usize {

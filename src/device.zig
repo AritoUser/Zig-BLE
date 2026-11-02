@@ -145,9 +145,11 @@ pub const Device = struct {
                 var m = msg;
                 defer m.deinit();
                 const ev = checkDevicePropertySignal(&m, self.getObjectPath());
+                // A signal can be left over from the previous connection (a reconnect right after
+                // a disconnect), so it only prompts a look at the current state.
                 switch (ev) {
-                    .services_resolved => return,
-                    .disconnected => return error.Disconnected,
+                    .services_resolved => if (self.areServicesResolved() catch false) return,
+                    .disconnected => if (!(self.isConnected() catch false)) return error.Disconnected,
                     .none => {},
                 }
             }

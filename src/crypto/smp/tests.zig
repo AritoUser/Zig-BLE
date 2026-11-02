@@ -71,6 +71,8 @@ test "SMP State Machine: Full LE Secure Connections ECDH P-256 Handshake (Initia
 
     var initiator = SmpStateMachine.init(.initiator, init_addr, .public, resp_addr, .public);
     var responder = SmpStateMachine.init(.responder, resp_addr, .public, init_addr, .public);
+    initiator.require_user_confirmation = false;
+    responder.require_user_confirmation = false;
 
     var buf_a: [128]u8 = undefined;
     var buf_b: [128]u8 = undefined;
@@ -227,8 +229,8 @@ test "SMP State Machine: LE Secure Connections 20-round Passkey Entry" {
     responder.local_features.auth_req.mitm = true;
 
     const passkey: u32 = 839204;
-    initiator.setPasskey(passkey);
-    responder.setPasskey(passkey);
+    try initiator.setPasskey(passkey);
+    try responder.setPasskey(passkey);
 
     var buf_a: [128]u8 = undefined;
     var buf_b: [128]u8 = undefined;
@@ -294,6 +296,8 @@ test "SMP State Machine: Phase 3 Key Distribution (Identity Information & IRK)" 
     var responder = SmpStateMachine.init(.responder, resp_addr, .public, init_addr, .public);
     initiator.key_distribution_enabled = true;
     responder.key_distribution_enabled = true;
+    initiator.require_user_confirmation = false;
+    responder.require_user_confirmation = false;
 
     var buf_a: [128]u8 = undefined;
     var buf_b: [128]u8 = undefined;
@@ -314,6 +318,16 @@ test "SMP State Machine: Phase 3 Key Distribution (Identity Information & IRK)" 
     try std.testing.expectEqual(SmpState.key_distribution, initiator.state);
     try std.testing.expectEqual(SmpState.key_distribution, responder.state);
 
+    // Keys are secrets: refused until the link is encrypted
+    var unencrypted = initiator;
+    var early_irk: [17]u8 = @splat(0x11);
+    early_irk[0] = @intFromEnum(SmpOpcode.identity_information);
+    _ = try unencrypted.handlePdu(&early_irk, 95, &buf_a);
+    try std.testing.expectEqual(SmpState.failed, unencrypted.state);
+
+    initiator.onLinkEncrypted();
+    responder.onLinkEncrypted();
+
     // Responder distributes its IRK + Identity Address to initiator
     const test_irk = [_]u8{ 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0x00 };
     const dist_len = try responder.distributeIdentityKeys(test_irk, &buf_b);
@@ -323,8 +337,210 @@ test "SMP State Machine: Phase 3 Key Distribution (Identity Information & IRK)" 
     _ = try initiator.handlePdu(buf_b[0..17], 100, &buf_a);
     try std.testing.expectEqualSlices(u8, &test_irk, &initiator.peer_irk);
 
-    // Initiator processes Identity Address Information -> reaches .completed!
+    // LE Secure Connections distributes no LTK, but the signing key is still expected
     _ = try initiator.handlePdu(buf_b[17..dist_len], 101, &buf_a);
-    try std.testing.expectEqual(SmpState.completed, initiator.state);
     try std.testing.expect(initiator.peer_identity_addr.?.eql(resp_addr));
+    try std.testing.expectEqual(SmpState.key_distribution, initiator.state);
+
+    var csrk: [17]u8 = @splat(0x33);
+    csrk[0] = @intFromEnum(SmpOpcode.signing_information);
+    _ = try initiator.handlePdu(&csrk, 102, &buf_a);
+    try std.testing.expectEqual(@as(u8, 0x33), initiator.peer_csrk[0]);
+
+    // The initiator's own keys are still open until it sends them or declares them handled
+    try std.testing.expectEqual(SmpState.key_distribution, initiator.state);
+    _ = try initiator.distributeIdentityKeys(test_irk, &buf_a);
+    try std.testing.expectEqual(SmpState.key_distribution, initiator.state);
+    initiator.finishLocalKeyDistribution();
+    try std.testing.expectEqual(SmpState.completed, initiator.state);
+}
+
+/// Runs Passkey Entry from the start up to the initiator's first confirm value.
+const PasskeyPair = struct {
+    initiator: SmpStateMachine,
+    responder: SmpStateMachine,
+    buf_a: [128]u8 = undefined,
+    buf_b: [128]u8 = undefined,
+
+    fn init() !PasskeyPair {
+        const a = try Address.parse("C0:1A:7D:DA:71:01");
+        const b = try Address.parse("C0:1A:7D:DA:71:02");
+        var pair = PasskeyPair{
+            .initiator = SmpStateMachine.init(.initiator, a, .public, b, .public),
+            .responder = SmpStateMachine.init(.responder, b, .public, a, .public),
+        };
+        pair.initiator.local_features.io_capability = .keyboard_only;
+        pair.responder.local_features.io_capability = .display_only;
+        return pair;
+    }
+
+    /// Returns the length of the PDU the public key exchange left in `buf_a`.
+    fn exchangeKeys(self: *PasskeyPair) !usize {
+        const preq = try self.initiator.startPairing(100, &self.buf_a);
+        const pres = try self.responder.handlePdu(self.buf_a[0..preq], 110, &self.buf_b);
+        const pka = try self.initiator.handlePdu(self.buf_b[0..pres], 120, &self.buf_a);
+        const pkb = try self.responder.handlePdu(self.buf_a[0..pka], 130, &self.buf_b);
+        return self.initiator.handlePdu(self.buf_b[0..pkb], 140, &self.buf_a);
+    }
+
+    fn runRounds(self: *PasskeyPair, first: usize) !void {
+        var cur = first;
+        for (0..20) |_| {
+            const cb = try self.responder.handlePdu(self.buf_a[0..cur], 150, &self.buf_b);
+            const na = try self.initiator.handlePdu(self.buf_b[0..cb], 151, &self.buf_a);
+            const nb = try self.responder.handlePdu(self.buf_a[0..na], 152, &self.buf_b);
+            cur = try self.initiator.handlePdu(self.buf_b[0..nb], 153, &self.buf_a);
+        }
+        const eb = try self.responder.handlePdu(self.buf_a[0..cur], 200, &self.buf_b);
+        _ = try self.initiator.handlePdu(self.buf_b[0..eb], 201, &self.buf_a);
+    }
+};
+
+test "SMP Passkey Entry waits for the passkey instead of using a default" {
+    var p = try PasskeyPair.init();
+    try std.testing.expectEqual(@as(usize, 0), try p.exchangeKeys());
+    try std.testing.expectEqual(SmpState.wait_passkey, p.initiator.state);
+
+    // The display side generates the passkey, the keyboard side enters it
+    const shown = try p.responder.generatePasskey();
+    try std.testing.expect(shown <= 999_999);
+    const ca0 = try p.initiator.providePasskey(shown, &p.buf_a);
+    try p.runRounds(ca0);
+    try std.testing.expectEqual(SmpState.completed, p.initiator.state);
+    try std.testing.expectEqual(SmpState.completed, p.responder.state);
+    try std.testing.expectEqualSlices(u8, &p.initiator.ltk, &p.responder.ltk);
+}
+
+test "SMP Passkey Entry fails with a wrong passkey and when cancelled" {
+    var p = try PasskeyPair.init();
+    _ = try p.exchangeKeys();
+    try p.responder.setPasskey(123456);
+    const ca0 = try p.initiator.providePasskey(654321, &p.buf_a);
+    p.runRounds(ca0) catch {};
+    try std.testing.expect(p.initiator.state == .failed or p.responder.state == .failed);
+
+    var c = try PasskeyPair.init();
+    _ = try c.exchangeKeys();
+    const len = try c.initiator.rejectPasskey(&c.buf_a);
+    try std.testing.expectEqual(@as(usize, 2), len);
+    try std.testing.expectEqual(SmpState.failed, c.initiator.state);
+    try std.testing.expectEqual(smp.PairingFailedReason.passkey_entry_failed, c.initiator.last_failure_reason.?);
+
+    try std.testing.expectError(SmpError.InvalidParameter, c.responder.setPasskey(1_000_000));
+}
+
+test "SMP Passkey Entry: responder waits for its passkey too" {
+    var p = try PasskeyPair.init();
+    try p.initiator.setPasskey(42);
+    const ca0 = try p.exchangeKeys();
+    try std.testing.expectEqual(@as(usize, 0), try p.responder.handlePdu(p.buf_a[0..ca0], 150, &p.buf_b));
+    try std.testing.expectEqual(SmpState.wait_passkey, p.responder.state);
+    const cb0 = try p.responder.providePasskey(42, &p.buf_b);
+    try std.testing.expectEqual(@as(usize, 17), cb0);
+    try std.testing.expectEqual(SmpState.wait_random, p.responder.state);
+}
+
+test "SMP rejects a peer public key equal to its own" {
+    const a = try Address.parse("11:22:33:44:55:66");
+    const b = try Address.parse("AA:BB:CC:DD:EE:FF");
+    var i = SmpStateMachine.init(.initiator, a, .public, b, .public);
+    var r = SmpStateMachine.init(.responder, b, .public, a, .public);
+    var ba: [128]u8 = undefined;
+    var bb: [128]u8 = undefined;
+    const preq = try i.startPairing(100, &ba);
+    const pres = try r.handlePdu(ba[0..preq], 110, &bb);
+    const pka = try i.handlePdu(bb[0..pres], 120, &ba);
+    var own: [128]u8 = undefined;
+    @memcpy(own[0..pka], ba[0..pka]);
+    _ = try i.handlePdu(own[0..pka], 130, &ba);
+    try std.testing.expectEqual(SmpState.failed, i.state);
+}
+
+test "SMP Numeric Comparison works when the initiator's user confirms first" {
+    const a = try Address.parse("11:22:33:44:55:66");
+    const b = try Address.parse("AA:BB:CC:DD:EE:FF");
+    var i = SmpStateMachine.init(.initiator, a, .public, b, .public);
+    var r = SmpStateMachine.init(.responder, b, .public, a, .public);
+    var ba: [128]u8 = undefined;
+    var bb: [128]u8 = undefined;
+    const preq = try i.startPairing(100, &ba);
+    const pres = try r.handlePdu(ba[0..preq], 110, &bb);
+    const pka = try i.handlePdu(bb[0..pres], 120, &ba);
+    const both = try r.handlePdu(ba[0..pka], 130, &bb);
+    _ = try i.handlePdu(bb[0..65], 140, &ba);
+    const na = try i.handlePdu(bb[65..both], 145, &ba);
+    const nb = try r.handlePdu(ba[0..na], 150, &bb);
+    _ = try i.handlePdu(bb[0..nb], 160, &ba);
+
+    // Confirmation is the default: nothing proceeds without it
+    try std.testing.expectEqual(SmpState.wait_numeric_comparison, i.state);
+    try std.testing.expectEqual(SmpState.wait_numeric_comparison, r.state);
+
+    const ea = try i.confirmNumericComparison(true, &ba);
+    try std.testing.expectEqual(@as(usize, 0), try r.handlePdu(ba[0..ea], 170, &bb));
+    try std.testing.expectEqual(SmpState.wait_numeric_comparison, r.state);
+
+    const eb = try r.confirmNumericComparison(true, &bb);
+    try std.testing.expectEqual(@as(usize, 17), eb);
+    try std.testing.expectEqual(SmpState.completed, r.state);
+    _ = try i.handlePdu(bb[0..eb], 180, &ba);
+    try std.testing.expectEqual(SmpState.completed, i.state);
+    try std.testing.expectEqualSlices(u8, &i.ltk, &r.ltk);
+}
+
+test "SMP key distribution follows what was negotiated" {
+    const a = try Address.parse("11:22:33:44:55:66");
+    const b = try Address.parse("AA:BB:CC:DD:EE:FF");
+    var i = SmpStateMachine.init(.initiator, a, .public, b, .public);
+    var r = SmpStateMachine.init(.responder, b, .public, a, .public);
+    i.key_distribution_enabled = true;
+    r.key_distribution_enabled = true;
+    i.require_user_confirmation = false;
+    r.require_user_confirmation = false;
+    // Only the responder has a key to give, and only its identity
+    r.local_features.initiator_key_distribution = .{};
+    r.local_features.responder_key_distribution = .{ .id_key = true };
+
+    var ba: [128]u8 = undefined;
+    var bb: [128]u8 = undefined;
+    const preq = try i.startPairing(100, &ba);
+    const pres = try r.handlePdu(ba[0..preq], 110, &bb);
+    const pka = try i.handlePdu(bb[0..pres], 120, &ba);
+    const both = try r.handlePdu(ba[0..pka], 130, &bb);
+    _ = try i.handlePdu(bb[0..65], 140, &ba);
+    const na = try i.handlePdu(bb[65..both], 145, &ba);
+    const nb = try r.handlePdu(ba[0..na], 150, &bb);
+    const ea = try i.handlePdu(bb[0..nb], 160, &ba);
+    const eb = try r.handlePdu(ba[0..ea], 170, &bb);
+    _ = try i.handlePdu(bb[0..eb], 180, &ba);
+    i.onLinkEncrypted();
+    r.onLinkEncrypted();
+    try std.testing.expectEqual(SmpState.key_distribution, i.state);
+
+    // A key that was not negotiated is a protocol violation
+    var bad = i;
+    var csrk: [17]u8 = @splat(0x33);
+    csrk[0] = @intFromEnum(SmpOpcode.signing_information);
+    _ = try bad.handlePdu(&csrk, 190, &ba);
+    try std.testing.expectEqual(SmpState.failed, bad.state);
+
+    const irk: [16]u8 = @splat(0x44);
+    const dist = try r.distributeIdentityKeys(irk, &bb);
+    try std.testing.expectEqual(SmpState.completed, r.state);
+    _ = try i.handlePdu(bb[0..17], 200, &ba);
+    _ = try i.handlePdu(bb[17..dist], 201, &ba);
+    try std.testing.expectEqual(SmpState.completed, i.state);
+    try std.testing.expectEqual(@as(u8, 0x44), i.peer_irk[0]);
+}
+
+test "SMP ignores keys sent after pairing completed without key exchange" {
+    const a = try Address.parse("11:22:33:44:55:66");
+    const b = try Address.parse("AA:BB:CC:DD:EE:FF");
+    var i = SmpStateMachine.init(.initiator, a, .public, b, .public);
+    i.state = .completed;
+    var ba: [128]u8 = undefined;
+    var irk: [17]u8 = @splat(0x11);
+    irk[0] = @intFromEnum(SmpOpcode.identity_information);
+    try std.testing.expectEqual(@as(usize, 0), try i.handlePdu(&irk, 1, &ba));
+    try std.testing.expectEqual(SmpState.completed, i.state);
 }
