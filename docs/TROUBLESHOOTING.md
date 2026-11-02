@@ -69,6 +69,11 @@ backend. Error names refer to `BleError`.
   offers no session, a warning is logged and Windows may close an idle link. Reading or
   subscribing re-establishes it.
 
+**A device disconnects after a few seconds, although others stay connected**
+- Some devices may end connections from anything but their paired owner; a tracker tag
+  disconnected this way in testing, while a fitness band stayed connected. Tags can also
+  rotate their random address often, so scan again right before connecting.
+
 **HID devices (keyboards, mice, gamepads): characteristics missing**
 - Windows reserves the HID service (0x1812) for its own driver and denies applications
   access.

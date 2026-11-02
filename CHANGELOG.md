@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+* **The Windows backend could not scan or use GATT (v1.3.0 to v1.3.2).** `startScan` failed with `IoError` because WinRT rejected the event handler (`E_NOINTERFACE`): the delegate IIDs for scan results and notifications and six GATT interface IIDs were wrong. The `IGattCharacteristic` vtable also lacked `put_ProtectionLevel`, which shifted every later method by one slot, so `get_Uuid`, read, write and subscribe called the wrong WinRT methods. All IIDs and vtables now match the Windows SDK; `scripts/check_winrt_bindings.py` checks this. Verified on hardware: scanning, connecting, discovery, reads, descriptors and notifications. Writes, pairing and the peripheral role are not.
 * **BlueZ backend delivered no scan results, notifications or disconnect events.** It never read D-Bus signals; `processSignalWireMessage` only ran in tests. The new `processEvents(timeout_ms)` reads queued signals and invokes the callbacks. Scan results now come from `InterfacesAdded` and `Device1` `PropertiesChanged` and include name, RSSI, address type, service UUIDs and manufacturer data. BlueZ often reports only the changed property, so results are merged per device; names BlueZ already knows are loaded before the scan.
 * **Only one notification subscription per device** (Windows, BlueZ, mock). Subscribing to a second characteristic replaced the first one's callback, and unsubscribing any characteristic ended all of them. Callbacks are now stored per characteristic.
 * **Characteristics with the same UUID overwrote each other** (Windows, BlueZ). Only the last HID report (0x2A4D) or the last of two Battery services remained. Every characteristic now gets its own slot, stored in attribute-handle order with its service UUID.
@@ -31,6 +32,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * `EventQueue`: collects scan results, notifications (tagged with the device address) and connection events in a fixed ring buffer for a pull-style loop with `next()` / `wait()`.
 * `profiles.vendor_adv`: decoders for Microsoft Swift Pair and Google Fast Pair advertisements, and `decode()` to find iBeacon, Swift Pair or Fast Pair in raw advertising data.
 * Windows `use_cached_services` option to use the GATT cache for discovery.
+* `examples/hardware_check.zig` (`zig build run-hardware-check [-- <address>]`): scans with the native backend and, with a device address, connects, reads, subscribes and stays idle to check that the connection holds.
+* `scripts/check_winrt_bindings.py`: checks all WinRT IIDs and vtable orders against the Windows SDK headers.
 * `zig build check-api`: compiles every public function for the target, including ones no test calls.
 * `tests/bluez_fake_e2e.zig` with `scripts/run_bluez_fake_e2e.sh`: runs `BluezBackend` over a real D-Bus connection against a simulated `org.bluez` on a private bus, without radio, root or `bluetoothd`.
 * `-Dlink-libc=true` build option. CI runs the tests with libc, `check-api` for all targets and the simulated BlueZ test.

@@ -12,6 +12,7 @@ produktionsreifen BLE-Bibliothek machen. Sortiert nach Priorität:
 ## Status-Zusammenfassung
 
 - **Erledigt:** P0 weitgehend, Windows-/BlueZ-Punkte aus P1, die meisten Diagnose- und Release-Punkte.
+- **Windows-Korrektur (nach v1.3.2):** Wegen falscher WinRT-IIDs und einer verschobenen Vtable konnte `WindowsBackend` seit v1.3.0 weder scannen noch GATT nutzen. Behoben und am 2026-11-02 mit `zig build run-hardware-check` gegen ein Fitnessband und einen Tracker-Tag geprüft: Scannen, Verbinden, Discovery, Lesen, Descriptors, Notifications, MTU, 30 s Halten einer Verbindung mit aktiven Abos. Nicht geprüft: Schreiben, Pairing, Peripheral-Rolle.
 - **Implementiert, aber nicht auf Hardware verifiziert:** Windows-Pairing, -Peripheral-Rolle, -MTU-Abfrage und -Verbindungsabbruch (Punkte 6, 9–11). Erst nach einem Test mit echtem Gerät als verifiziert betrachten.
 - **Offen:** Raw-HCI/UART-Backend, ATT/SMP über Raw-L2CAP, EATT-Anbindung (15, 16, 18, 19, 21), Hardware- und vHCI-Tests (26, 27), Langzeittests (30), README-Beispieltests (36).
 - Tests: `zig build test` läuft unter Windows (261 Tests); die Test-Binaries für Linux (musl, glibc, mit libc) liefen zusätzlich in einem Debian-13-Container grün (266 Tests), dazu `tests/bluez_fake_e2e.zig` gegen ein simuliertes `org.bluez`. Die macOS-Binaries kompilieren, ausgeführt werden sie erst in der CI.

@@ -26,15 +26,18 @@ A Bluetooth Low Energy (BLE) library written entirely in Zig (0.17.0+). It works
 | Feature | Windows 11 (WinRT) | Linux (BlueZ) | Linux Raw HCI (`HciBackend`) | Bare-Metal (`UartBackend` H4 / H5) | macOS |
 | :--- | :---: | :---: | :---: | :---: | :---: |
 | Scanning / advertising reports | ✅ | 🧪 | ✅ | 🚧 | ❌ |
-| Connect, service discovery | ✅ | ✅ | 🚧 | 🚧 | ❌ |
-| GATT read / write / notifications | ✅ | 🧪 | 🚧 | 🚧 | ❌ |
+| Connect, service discovery | ✅ | 🧪 | 🚧 | 🚧 | ❌ |
+| GATT read / notifications | ✅ | 🧪 | 🚧 | 🚧 | ❌ |
+| GATT write | 🧪 | 🧪 | 🚧 | 🚧 | ❌ |
 | Pairing and bonding | 🧪 (`DeviceInformationCustomPairing`) | ✅ (via BlueZ + pairing agent) | 🚧 | 🚧 | ❌ |
-| Negotiated MTU query | 🧪 (`GattSession.MaxPduSize`) | 🧪 (`GattCharacteristic1.MTU`) | 🚧 | 🚧 | ❌ |
+| Negotiated MTU query | ✅ (`GattSession.MaxPduSize`) | 🧪 (`GattCharacteristic1.MTU`) | 🚧 | 🚧 | ❌ |
 | Peripheral: GATT server, advertising | 🧪 (`GattServiceProvider` / `Publisher`) | ✅ (BlueZ GATT + Adv) | ❌ | ❌ | ❌ |
 
 ✅ implemented and verified on hardware · 🧪 implemented, not yet verified on hardware · 🚧 experimental, not usable on real hardware yet · ❌ not available
 
 **Raw HCI and UART (`HciBackend`, `UartBackend`) are experimental.** They implement the backend interface and drive the ATT and SMP state machines in tests, but against a real controller they do not work yet: connections do not wait for the controller's connection-complete event, GATT calls return without waiting for the response, and pairing neither asks the user to confirm numeric comparison nor starts link encryption. Use the Windows or BlueZ backend for real devices.
+
+**Windows:** v1.3.0 to v1.3.2 could not scan or use GATT through `WindowsBackend` because of wrong WinRT IIDs and a wrong vtable. That is fixed and verified with `zig build run-hardware-check -- <address>` against a fitness band and a tracker tag: scanning, connecting, discovery, reading characteristics and descriptors, notifications, and holding an idle connection with active subscriptions for 30 s.
 
 **BlueZ through `BluezBackend` / `UnifiedAdapter`:** before this release the backend never read D-Bus signals, so scan results, notifications and disconnects did not reach the callbacks. That is fixed (call `processEvents` regularly) and tested over a real D-Bus connection against a simulated `org.bluez`, but not yet against real BlueZ or on hardware. The lower-level BlueZ API (`Adapter`, `Device`, `GattCharacteristic`) is unaffected.
 
@@ -84,7 +87,7 @@ graph TD
 - SIG profiles: Heart Rate, Battery, Device Information, Current Time, Health Thermometer, Blood Pressure, HID over GATT, Environmental Sensing, Pulse Oximeter, Fitness Machine, Cycling Power, Running Speed & Cadence, Nordic UART, iBeacon and Eddystone (`src/profiles/`).
 - Wireshark PCAP writer (`DLT_BLUETOOTH_HCI_H4`) (`src/tooling/pcap.zig`) with live `PcapHook` integration across backends.
 
-**Testing:** unit, end-to-end and edge-case/stress tests against the mock backend (`zig build test`), a mock end-to-end smoke test (`zig build run-mock-e2e`), the BlueZ backend over real D-Bus against a simulated `org.bluez` (`zig build bluez-fake-e2e`, `scripts/run_bluez_fake_e2e.sh`), a compile check of every public function (`zig build check-api`), coverage-guided fuzz targets (`src/fuzz.zig`) as well as standalone fuzz runners (`zig build fuzz`, `zig build fuzz-dbus`), CI on Linux, Windows and macOS. There is no hardware-in-the-loop testing yet.
+**Testing:** unit, end-to-end and edge-case/stress tests against the mock backend (`zig build test`), a mock end-to-end smoke test (`zig build run-mock-e2e`), the BlueZ backend over real D-Bus against a simulated `org.bluez` (`zig build bluez-fake-e2e`, `scripts/run_bluez_fake_e2e.sh`), a compile check of every public function (`zig build check-api`), a check of the WinRT bindings against the Windows SDK (`scripts/check_winrt_bindings.py`), a hardware check with a real adapter (`zig build run-hardware-check`), coverage-guided fuzz targets (`src/fuzz.zig`) as well as standalone fuzz runners (`zig build fuzz`, `zig build fuzz-dbus`), CI on Linux, Windows and macOS. There is no hardware-in-the-loop testing yet.
 
 ---
 

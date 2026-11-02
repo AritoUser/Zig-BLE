@@ -209,7 +209,10 @@ pub fn startScan(
     };
 
     const add_hr = w.lpVtbl.add_Received(w, @ptrCast(&backend.watcher_handler), &backend.watcher_token);
-    if (add_hr < 0) return BleError.IoError;
+    if (add_hr < 0) {
+        log.err("WinRT add_Received returned HRESULT 0x{X:0>8}", .{@as(u32, @bitCast(add_hr))});
+        return BleError.IoError;
+    }
 
     const start_hr = w.lpVtbl.Start(w);
     if (start_hr < 0) {

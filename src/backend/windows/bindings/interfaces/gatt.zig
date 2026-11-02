@@ -162,6 +162,7 @@ pub const IGattCharacteristicVtbl = extern struct {
     GetDescriptors: *const anyopaque,
     get_CharacteristicProperties: *const fn (self: *anyopaque, value: *u32) callconv(WINAPI) HRESULT,
     get_ProtectionLevel: *const fn (self: *anyopaque, value: *i32) callconv(WINAPI) HRESULT,
+    put_ProtectionLevel: *const anyopaque,
     get_UserDescription: *const fn (self: *anyopaque, value: *HSTRING) callconv(WINAPI) HRESULT,
     get_Uuid: *const fn (self: *anyopaque, value: *GUID) callconv(WINAPI) HRESULT,
     get_AttributeHandle: *const fn (self: *anyopaque, value: *u16) callconv(WINAPI) HRESULT,

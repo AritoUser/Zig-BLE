@@ -46,6 +46,7 @@ pub fn discoverServices(backend: anytype, dev: anytype) BleError!void {
 
     var status: bindings.GattCommunicationStatus = .Unreachable;
     if (svcs_res.lpVtbl.get_Status(svcs_res, &status) < 0 or status != .Success) {
+        log.warn("WinRT GetGattServices status: {s}", .{@tagName(status)});
         return BleError.ConnectionFailed;
     }
 

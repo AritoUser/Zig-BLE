@@ -468,6 +468,27 @@ pub fn build(b: *std.Build) void {
     bluez_fake_e2e_step.dependOn(&b.addInstallArtifact(bluez_fake_e2e_exe, .{}).step);
 
     // ========================================================================
+    // Hardware check for the native backends (run-hardware-check)
+    // ========================================================================
+    const hardware_check_exe = b.addExecutable(.{
+        .name = "ble-hardware-check",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("examples/hardware_check.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "Zig_BLE", .module = mod },
+            },
+        }),
+    });
+    const run_hardware_check_cmd = b.addRunArtifact(hardware_check_exe);
+    run_hardware_check_cmd.addPassthruArgs();
+    const run_hardware_check_step = b.step("run-hardware-check", "Scan with the native backend; with a device address also connect and read (needs a Bluetooth adapter)");
+    run_hardware_check_step.dependOn(&run_hardware_check_cmd.step);
+    const hardware_check_step = b.step("hardware-check", "Build the hardware check without running it");
+    hardware_check_step.dependOn(&b.addInstallArtifact(hardware_check_exe, .{}).step);
+
+    // ========================================================================
     // Compile every public function, used or not (check-api)
     // ========================================================================
     const analyze_api = b.addTest(.{
