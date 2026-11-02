@@ -491,7 +491,7 @@ pub fn MemoryBondStore(comptime max_devices: usize) type {
                         _ = std.os.linux.unlink(tmp_path.ptr);
                         return error.IoError;
                     }
-                    total_written += w_rc;
+                    total_written += @intCast(w_rc);
                 }
 
                 _ = std.os.linux.fsync(fd);
@@ -541,7 +541,7 @@ pub fn MemoryBondStore(comptime max_devices: usize) type {
                     .ACCMODE = .RDONLY,
                     .CLOEXEC = true,
                 };
-                const open_rc = std.posix.system.open(path.ptr, flags, 0);
+                const open_rc = std.posix.system.open(path.ptr, flags, @as(std.posix.mode_t, 0));
                 if (std.posix.errno(open_rc) != .SUCCESS) return error.IoError;
                 const fd: std.posix.fd_t = @intCast(open_rc);
                 defer _ = std.posix.system.close(fd);
@@ -561,7 +561,7 @@ pub fn MemoryBondStore(comptime max_devices: usize) type {
                     const r_rc = std.posix.system.read(fd, raw_buf[total_read..].ptr, raw_buf.len - total_read);
                     if (std.posix.errno(r_rc) != .SUCCESS) return error.IoError;
                     if (r_rc == 0) break;
-                    total_read += r_rc;
+                    total_read += @intCast(r_rc);
                 }
                 try self.deserialize(raw_buf[0..total_read]);
             } else {

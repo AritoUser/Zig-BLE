@@ -5,6 +5,66 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+* **The Windows backend could not scan or use GATT (v1.3.0 to v1.3.2).** `startScan` failed with `IoError` because WinRT rejected the event handler (`E_NOINTERFACE`): the delegate IIDs for scan results and notifications and six GATT interface IIDs were wrong. The `IGattCharacteristic` vtable also lacked `put_ProtectionLevel`, which shifted every later method by one slot, so `get_Uuid`, read, write and subscribe called the wrong WinRT methods. All IIDs and vtables now match the Windows SDK; `scripts/check_winrt_bindings.py` checks this. Verified on hardware: scanning, connecting, discovery, reads, descriptors and notifications. Writes, pairing and the peripheral role are not.
+* **`src/dbus/wire/socket.zig` controllen compilation failure with `-Dlink-libc=true`.** Cast `controllen` with `@intCast` so both libc (`u32`) and standalone Linux syscalls (`usize`) compile cleanly.
+* **Windows & BlueZ scanner missed Service Data and TX Power.** WinRT `get_DataSections` now parses AD types 0x0A (TX Power), 0x16 (16-bit Service Data), 0x20 (32-bit) and 0x21 (128-bit); BlueZ parses the ServiceData dictionary `{s: ay}` and TxPower property.
+* **BlueZ backend delivered no scan results, notifications or disconnect events.** It never read D-Bus signals; `processSignalWireMessage` only ran in tests. The new `processEvents(timeout_ms)` reads queued signals and invokes the callbacks. Scan results now come from `InterfacesAdded` and `Device1` `PropertiesChanged` and include name, RSSI, address type, service UUIDs and manufacturer data. BlueZ often reports only the changed property, so results are merged per device; names BlueZ already knows are loaded before the scan.
+* **Only one notification subscription per device** (Windows, BlueZ, mock). Subscribing to a second characteristic replaced the first one's callback, and unsubscribing any characteristic ended all of them. Callbacks are now stored per characteristic.
+* **Characteristics with the same UUID overwrote each other** (Windows, BlueZ). Only the last HID report (0x2A4D) or the last of two Battery services remained. Every characteristic now gets its own slot, stored in attribute-handle order with its service UUID.
+* **Windows dropped idle connections.** Connect now opens a `GattSession` with `MaintainConnection = true`, which is released on disconnect.
+* **Scan results lacked TX power (Windows, BlueZ), and on Windows manufacturer data and address type**, and advertisement and scan response arrived as unrelated results (often one without the name). Both are now merged per device.
+* **Windows connected random-address devices unreliably.** The address type seen while scanning is used with `FromBluetoothAddressWithBluetoothAddressTypeAsync`.
+* **Windows callbacks raced with backend calls.** WinRT threads now only touch state under a separate `state_mutex` that is never held across WinRT calls; `is_connected` is atomic.
+* **Windows discovery silently dropped services** whose characteristics could not be read (e.g. HID, which Windows reserves). They are now skipped with a warning naming the service and the error.
+* **BlueZ `connect` ignored its timeout** and returned before BlueZ had resolved the services, so the first GATT calls often found nothing. It now waits for `ServicesResolved` within the timeout and returns `DeviceNotFound` for devices BlueZ has not seen.
+* **The backend mutex spun at 100 % CPU** while another thread held it, e.g. during a 10 s connect. `SyncMutex` (and the D-Bus connection's mutex) now sleep in the kernel: SRW lock on Windows, futex on Linux, `os_unfair_lock` on Darwin.
+* **Invented disconnect reasons.** Windows always reported 0x08 and BlueZ 0x08 or 0x13. BlueZ now reports the reason from `Device1.Disconnected` (BlueZ 5.71+); otherwise the reason is `null`.
+* **`Connection.initSystem`, `Connection.initSession` and the bond store's Linux file functions did not compile when the application links libc**, because integer literals were passed to the variadic `open`. Checked from now on with `-Dlink-libc=true`.
+* **All failed reads returned `ReadFailed`.** Windows and BlueZ now report `PermissionDenied`, `InsufficientAuthentication` or `InsufficientEncryption` where the device or BlueZ says so.
+* **Windows `connect` failed sporadically with `ConnectionFailed`** while the link was still coming up (`Unreachable`). It now retries within the timeout.
+* **BlueZ `connect` failed with `Disconnected` right after a disconnect**, because the old connection's `Connected = false` signal counted against the new one. Such signals now only prompt a look at the current state.
+* **128-bit service UUIDs in `ReadByGroupTypeResponse` were not byte-swapped.**
+* **Device slots were never freed** (Windows, BlueZ). After 8 different addresses `connect` failed with `PoolExhausted`, which devices with rotating addresses reach quickly. Slots of disconnected devices are now reused, so a `UnifiedDevice` handle must not be used after `disconnect`.
+* **The D-Bus bus address was ignored in large environments**: `getEnvVar` read only the first 4 KB of the process environment. It now reads up to 64 KB.
+* **`run-v1-live` printed "ALL 7 PILLARS PASSED" and "ready for production" without checking them**, and it and `run-windows-scanner` stopped scanning immediately. `run-v1-live` is now labeled a demo, and both scan for several seconds.
+* **Public functions that did not compile on first use**, because no test called them: `L2capSocket.setNonBlocking`, `getSecurityLevel` and `read`, `HciController.sendL2capPdu`, and the ATT PDU encoder for handle lists. `zig build check-api` now compiles every public function.
+
+### Added
+* **`HciBackend` / `UartBackend` host logic**, still experimental: not run against a real controller yet, only against a simulated one in `src/backend/hci_tests.zig` that answers HCI commands, pages its ATT responses and pairs through a real `SmpStateMachine`.
+  * `connect` uses the address type from the scan and waits for the connection event. A transport without `poll_packet` gets `NotSupported` instead of a pretended connection.
+  * Discovery walks all paged responses for services, characteristics and descriptors. CCCDs are found, not assumed at the next handle, and written with Write Requests.
+  * Pairing as initiator: asks through `PairingCallbacks` (refused without one), starts link encryption, takes the peer's keys, and reports `bonded` only on an encrypted link.
+  * ACL fragmentation to the controller's buffer size, and the real controller address for key derivation (`setLocalAddress` for other transports).
+  * Known gaps: no ACL credit flow control, central role only, no Security Request handling, and events must be pumped on one thread.
+* **SMP state machine**: LE Secure Connections Passkey Entry (20 rounds), `providePasskey` / `generatePasskey` / `rejectPasskey`, Numeric Comparison confirmation in either order, and key distribution that follows what was negotiated and needs an encrypted link (`onLinkEncrypted`, `finishLocalKeyDistribution`).
+* `ConnectionState` (`disconnected`, `connecting`, `connected`, `disconnecting`) from `UnifiedDevice.getConnectionState()`.
+* `UnifiedDevice.setAutoResubscribe(bool)`: subscriptions survive a disconnect and are written to the peer again on the next `connect` and when the OS restores the link. Verified on hardware on Windows, against the simulated BlueZ on Linux.
+* `UnifiedDevice.discoverServicesFiltered(filter_uuids)` limits the known characteristics to the given services, and `WindowsBackend.service_filter` saves the round trips during `connect`.
+* `DiscoveredDevice.service_data` with `getServiceData()` (first service data section).
+* `CharacteristicSelector` (`uuid`, optional `service`, `instance`) to address characteristics that share a UUID, e.g. `dev.readCharacteristic(.{ .uuid = UUID.from16(0x2A4D), .instance = 1 }, &buf)`. Passing a plain `UUID` still selects the first match.
+* `UnifiedDevice.getCharacteristics` / `Backend.getCharacteristics` lists the discovered characteristics as `CharacteristicInfo` (service UUID, UUID, instance).
+* `UnifiedAdapter.processEvents(timeout_ms)` / `Backend.processEvents`. Required on BlueZ; on Windows it only waits, so one event loop works on both.
+* `ScanFilter.matches`, `MockCharacteristic.service_uuid`, `DiscoveredDevice.tx_power`.
+* `UnifiedDevice.readDescriptor` / `writeDescriptor` (Windows, BlueZ, mock), e.g. for the User Description (0x2901).
+* `EventQueue`: collects scan results, notifications (tagged with the device address) and connection events in a fixed ring buffer for a pull-style loop with `next()` / `wait()`.
+* `profiles.vendor_adv`: decoders for Microsoft Swift Pair and Google Fast Pair advertisements, and `decode()` to find iBeacon, Swift Pair or Fast Pair in raw advertising data.
+* Windows `use_cached_services` option to use the GATT cache for discovery.
+* `examples/hardware_check.zig` (`zig build run-hardware-check [-- <address>]`): scans with the native backend and, with a device address, connects, reads, subscribes and stays idle to check that the connection holds.
+* `scripts/check_winrt_bindings.py`: checks all WinRT IIDs and vtable orders against the Windows SDK headers.
+* `zig build check-api`: compiles every public function for the target, including ones no test calls.
+* `tests/bluez_fake_e2e.zig` with `scripts/run_bluez_fake_e2e.sh`: runs `BluezBackend` over a real D-Bus connection against a simulated `org.bluez` on a private bus, without radio, root or `bluetoothd`.
+* `-Dlink-libc=true` build option. CI runs the tests with libc, `check-api` for all targets and the simulated BlueZ test.
+* [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) with platform behavior and fixes for common problems.
+
+### Changed
+* **Breaking for custom backends:** the `BackendVTable` entries `readCharacteristic`, `writeCharacteristic`, `subscribeNotifications`, `unsubscribeNotifications` and `acquireNotifyFd` take a `CharacteristicSelector` instead of a `UUID`. The new entries `getCharacteristics`, `processEvents`, `readDescriptor` and `writeDescriptor` are optional. Code that calls `UnifiedDevice`, `Backend` or `MockController.triggerNotification` with a `UUID` compiles unchanged.
+* BlueZ callbacks run after the backend mutex is released, so they may call back into the backend.
+* **Breaking:** `ConnectionEvent.disconnected.reason_code` is `?u8` (null when the platform does not report a reason).
+* **Security, `SmpStateMachine`:** `require_user_confirmation` now defaults to `true`, so Numeric Comparison no longer accepts itself. `setPasskey` validates the range and returns an error. Passkey Entry waits for a passkey (`wait_passkey`) instead of running with `0`, and a peer public key equal to the local one is rejected (CVE-2020-26558).
+
 ## [1.3.2] - 2026-10-29
 
 ### Changed

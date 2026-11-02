@@ -140,7 +140,7 @@ pub fn loadOrCreateKeyFile(path: [:0]const u8) BondStoreError![16]u8 {
     const linux = std.os.linux;
 
     var key: [16]u8 = undefined;
-    const open_rc = std.posix.system.open(path.ptr, .{ .ACCMODE = .RDONLY, .CLOEXEC = true }, 0);
+    const open_rc = std.posix.system.open(path.ptr, .{ .ACCMODE = .RDONLY, .CLOEXEC = true }, @as(std.posix.mode_t, 0));
     switch (std.posix.errno(open_rc)) {
         .SUCCESS => {
             const fd: std.posix.fd_t = @intCast(open_rc);
@@ -156,7 +156,7 @@ pub fn loadOrCreateKeyFile(path: [:0]const u8) BondStoreError![16]u8 {
                 const r_rc = std.posix.system.read(fd, key[total..].ptr, key.len - total);
                 if (std.posix.errno(r_rc) != .SUCCESS) return error.IoError;
                 if (r_rc == 0) return error.InvalidData;
-                total += r_rc;
+                total += @intCast(r_rc);
             }
             return key;
         },
@@ -165,7 +165,7 @@ pub fn loadOrCreateKeyFile(path: [:0]const u8) BondStoreError![16]u8 {
             errdefer std.crypto.secureZero(u8, &key);
 
             const flags = std.posix.O{ .ACCMODE = .WRONLY, .CREAT = true, .EXCL = true, .CLOEXEC = true };
-            const create_rc = std.posix.system.open(path.ptr, flags, 0o600);
+            const create_rc = std.posix.system.open(path.ptr, flags, @as(std.posix.mode_t, 0o600));
             if (std.posix.errno(create_rc) != .SUCCESS) return error.IoError;
             const fd: std.posix.fd_t = @intCast(create_rc);
             _ = linux.fchmod(fd, 0o600);
@@ -178,7 +178,7 @@ pub fn loadOrCreateKeyFile(path: [:0]const u8) BondStoreError![16]u8 {
                     _ = linux.unlink(path.ptr);
                     return error.IoError;
                 }
-                total += w_rc;
+                total += @intCast(w_rc);
             }
             _ = linux.fsync(fd);
             _ = std.posix.system.close(fd);

@@ -478,7 +478,7 @@ pub const ReadByGroupTypeResponse = struct {
             const uuid: UUID = if (uuid_bytes.len == 2)
                 UUID.from16(std.mem.readInt(u16, uuid_bytes[0..2], .little))
             else if (uuid_bytes.len == 16)
-                UUID{ .bytes = uuid_bytes[0..16].* }
+                UUID.fromLittleEndian(uuid_bytes[0..16].*)
             else
                 return null;
 
@@ -700,7 +700,7 @@ pub const ReadMultipleRequest = struct {
         dest[0] = @intFromEnum(opcode);
         var off: usize = 1;
         for (handles) |h| {
-            std.mem.writeInt(u16, dest[off .. off + 2], h, .little);
+            std.mem.writeInt(u16, dest[off..][0..2], h, .little);
             off += 2;
         }
         return total;

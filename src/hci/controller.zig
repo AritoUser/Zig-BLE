@@ -329,7 +329,7 @@ pub const HciController = struct {
         if (builtin.os.tag != .linux) return HciError.NotSupported;
 
         var l2cap_buf: [520]u8 = undefined;
-        if (4 + payload.len > l2cap_buf.len) return HciError.InvalidArgument;
+        if (4 + payload.len > l2cap_buf.len) return HciError.BufferTooSmall;
         std.mem.writeInt(u16, l2cap_buf[0..2], @intCast(payload.len), .little);
         std.mem.writeInt(u16, l2cap_buf[2..4], cid, .little);
         @memcpy(l2cap_buf[4 .. 4 + payload.len], payload);

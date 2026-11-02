@@ -36,12 +36,17 @@ pub const Device = struct {
 
     /// Establishes a BLE connection (GAP link establishment).
     pub fn connect(self: *Device) !void {
+        return self.connectWithTimeout(30000);
+    }
+
+    /// Like `connect`, waiting at most `timeout_ms` for BlueZ to establish the link.
+    pub fn connectWithTimeout(self: *Device, timeout_ms: u32) !void {
         var reply = try self.conn.callMethod(
             BlueZ.service_name,
             self.getObjectPath(),
             BlueZ.Device1.interface_name,
             BlueZ.Device1.Methods.Connect,
-            30000,
+            std.math.lossyCast(i32, timeout_ms),
         );
         reply.deinit();
     }
@@ -140,9 +145,11 @@ pub const Device = struct {
                 var m = msg;
                 defer m.deinit();
                 const ev = checkDevicePropertySignal(&m, self.getObjectPath());
+                // A signal can be left over from the previous connection (a reconnect right after
+                // a disconnect), so it only prompts a look at the current state.
                 switch (ev) {
-                    .services_resolved => return,
-                    .disconnected => return error.Disconnected,
+                    .services_resolved => if (self.areServicesResolved() catch false) return,
+                    .disconnected => if (!(self.isConnected() catch false)) return error.Disconnected,
                     .none => {},
                 }
             }

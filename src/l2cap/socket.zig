@@ -300,7 +300,7 @@ pub const L2capSocket = struct {
         if (std.posix.errno(rc) != .SUCCESS) {
             return L2capError.SecurityFailed;
         }
-        return std.meta.intToEnum(SecurityLevel, sec.level) catch return L2capError.SecurityFailed;
+        return std.enums.fromInt(SecurityLevel, sec.level) orelse L2capError.SecurityFailed;
     }
 
     /// Queries L2CAP parameters (omtu, imtu, mode, etc.).
@@ -342,13 +342,11 @@ pub const L2capSocket = struct {
     pub fn setNonBlocking(self: *L2capSocket, non_blocking: bool) L2capError!void {
         if (builtin.os.tag != .linux) return L2capError.NotSupported;
 
-        const rc = std.posix.system.fcntl(self.fd, std.posix.F.GETFL, 0);
+        const rc = std.posix.system.fcntl(self.fd, std.posix.F.GETFL, @as(usize, 0));
         if (std.posix.errno(rc) != .SUCCESS) return L2capError.SocketOptionFailed;
-        const flags: usize = @intCast(rc);
-        const new_flags = if (non_blocking)
-            flags | std.posix.O.NONBLOCK
-        else
-            flags & ~@as(usize, std.posix.O.NONBLOCK);
+        var flags: std.posix.O = @bitCast(@as(u32, @intCast(rc)));
+        flags.NONBLOCK = non_blocking;
+        const new_flags: usize = @as(u32, @bitCast(flags));
         const set_rc = std.posix.system.fcntl(self.fd, std.posix.F.SETFL, new_flags);
         if (std.posix.errno(set_rc) != .SUCCESS) return L2capError.SocketOptionFailed;
     }
@@ -376,7 +374,7 @@ pub const L2capSocket = struct {
 
         const rc = std.posix.system.read(self.fd, buf.ptr, buf.len);
         const err = std.posix.errno(rc);
-        if (err == .AGAIN or err == .WOULDBLOCK) return 0;
+        if (err == .AGAIN) return 0;
         if (err != .SUCCESS) return L2capError.ReadFailed;
         if (rc == 0) return L2capError.ConnectionClosed;
         return @intCast(rc);

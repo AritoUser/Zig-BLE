@@ -3,13 +3,18 @@
 //! Bridges the unified `BackendVTable` interface with the native, zero-allocation
 //! Pure-Zig D-Bus Wire Protocol engine (`src/dbus/`, `src/adapter.zig`, `src/device.zig`, `src/gatt_client.zig`).
 //!
+//! ## Events
+//! BlueZ reports scan results, notifications and connection changes as D-Bus signals.
+//! They are delivered when the application calls `processEvents` (or
+//! `UnifiedAdapter.processEvents`); signals that arrive during other calls are queued until then.
+//!
 //! ## Concurrency & Lifecycle Guarantees
-//! - All public backend operations are synchronized via `mutex` (`std.Thread.Mutex`).
+//! - All public backend operations are synchronized via `mutex` (`SyncMutex`).
 //! - Callbacks (`ScanCallback`, `NotificationCallback`, `ConnectionEventCallback`) are invoked
-//!   outside internal state mutations and are strictly suppressed once `closeAdapter` / `deinit` begins
-//!   (`is_closed` atomic guard).
-//! - Handles `PropertiesChanged` (`Connected = false`), `InterfacesRemoved`, and `NameOwnerChanged`
-//!   (automatic recovery when `bluetoothd` restarts).
+//!   after the mutex is released, so they may call back into the backend, and are suppressed
+//!   once `closeAdapter` / `deinit` begins (`is_closed` atomic guard).
+//! - Handles `InterfacesAdded` and `PropertiesChanged` (scan results, `Connected`, characteristic
+//!   `Value`), `InterfacesRemoved`, and `NameOwnerChanged` (automatic recovery when `bluetoothd` restarts).
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -24,6 +29,8 @@ pub const UUID = types.UUID;
 pub const ScanFilter = types.ScanFilter;
 pub const ScanCallback = types.ScanCallback;
 pub const NotificationCallback = types.NotificationCallback;
+pub const CharacteristicSelector = types.CharacteristicSelector;
+pub const CharacteristicInfo = types.CharacteristicInfo;
 pub const ConnectionEvent = types.ConnectionEvent;
 pub const ConnectionEventCallback = types.ConnectionEventCallback;
 pub const DiscoveredDevice = types.DiscoveredDevice;
@@ -43,10 +50,14 @@ const constants = @import("../../bluez/constants.zig");
 const BlueZ = constants.BlueZ;
 const wire = @import("../../dbus/wire/mod.zig");
 
+const signals = @import("signals.zig");
 pub const context_mod = @import("context.zig");
 pub const DaemonRestartCallback = context_mod.DaemonRestartCallback;
 pub const BluezCharacteristicSlot = context_mod.BluezCharacteristicSlot;
 pub const BluezDeviceContext = context_mod.BluezDeviceContext;
+pub const ScanCache = context_mod.ScanCache;
+
+pub const PendingCallbacks = signals.PendingCallbacks;
 
 pub const BluezBackend = struct {
     conn: if (builtin.os.tag == .linux) ?dbus.Connection else void = if (builtin.os.tag == .linux) null else {},
@@ -57,6 +68,7 @@ pub const BluezBackend = struct {
     active_scan_cb: ?ScanCallback = null,
     active_scan_user_data: ?*anyopaque = null,
     scan_filter: ScanFilter = .{},
+    scan_cache: ScanCache = .{},
 
     connection_event_cb: ?ConnectionEventCallback = null,
     connection_event_user_data: ?*anyopaque = null,
@@ -120,6 +132,17 @@ pub const BluezBackend = struct {
                 return d;
             }
         }
+        // Slots of disconnected devices stay assigned so a reconnect finds its slot; reuse them
+        // when no slot is free. Devices with rotating addresses would exhaust the pool.
+        for (&self.devices) |*d| {
+            if (!d.is_connected) {
+                d.* = .{
+                    .in_use = true,
+                    .address = addr,
+                };
+                return d;
+            }
+        }
         return null;
     }
 
@@ -137,185 +160,65 @@ pub const BluezBackend = struct {
         return null;
     }
 
-    /// Processes a single incoming D-Bus wire message for disconnect signals, notifications,
-    /// and `bluetoothd` daemon restart (`NameOwnerChanged`).
-    /// Extracted for cross-platform unit testing as well as live Linux D-Bus stepping.
+    /// Processes one incoming D-Bus message (scan results, notifications, disconnects,
+    /// `bluetoothd` restarts) and invokes the resulting callbacks. `processEvents` calls this
+    /// for every queued signal; it is public for tests and custom event loops.
     pub fn processSignalWireMessage(self: *BluezBackend, msg: *const wire.Message) void {
-        if (self.is_closed.load(.acquire)) return;
-        if (msg.fixed_header.msg_type != .signal) return;
-
-        const iface = msg.getInterface() orelse return;
-        const member = msg.getMember() orelse return;
-
-        // 1. Detect bluetoothd restart via org.freedesktop.DBus.NameOwnerChanged
-        if (std.mem.eql(u8, iface, "org.freedesktop.DBus") and std.mem.eql(u8, member, "NameOwnerChanged")) {
-            var it = msg.iterator();
-            const bus_name = it.getString() orelse return;
-            const old_owner = it.getString() orelse return;
-            const new_owner = it.getString() orelse return;
-
-            if (std.mem.eql(u8, bus_name, BlueZ.service_name)) {
-                if (old_owner.len > 0 and new_owner.len == 0) {
-                    log.info("bluetoothd daemon disconnected from D-Bus; cleaning up active BLE sessions", .{});
-                    self.handleDaemonDown();
-                } else if (new_owner.len > 0) {
-                    log.info("bluetoothd daemon restarted (new owner: {s}); recovering adapter state", .{new_owner});
-                    if (self.daemon_restart_cb) |cb| {
-                        if (!self.is_closed.load(.acquire)) {
-                            cb(self.daemon_restart_user_data);
-                        }
-                    }
-                }
-            }
-            return;
-        }
-
-        // 2. Detect device removal via org.freedesktop.DBus.ObjectManager.InterfacesRemoved
-        if (std.mem.eql(u8, iface, BlueZ.ObjectManager.interface_name) and
-            std.mem.eql(u8, member, BlueZ.ObjectManager.Signals.InterfacesRemoved))
-        {
-            var it = msg.iterator();
-            const removed_path = it.getObjectPath() orelse return;
-            if (it.recurse()) |arr_val| {
-                var arr = arr_val;
-                while (arr.getString()) |removed_iface| {
-                    if (std.mem.eql(u8, removed_iface, BlueZ.Device1.interface_name)) {
-                        self.handleDeviceDisconnectedPath(removed_path, 0x08);
-                        break;
-                    }
-                }
-            }
-            return;
-        }
-
-        // 3. Detect PropertiesChanged on Device1 (Connected = false) or GattCharacteristic1 (Value)
-        if (std.mem.eql(u8, iface, BlueZ.Properties.interface_name) and
-            std.mem.eql(u8, member, BlueZ.Properties.Signals.PropertiesChanged))
-        {
-            const path = msg.getPath() orelse return;
-            var it = msg.iterator();
-            const changed_iface = it.getString() orelse return;
-            var dict = it.recurse() orelse return;
-
-            if (std.mem.eql(u8, changed_iface, BlueZ.Device1.interface_name)) {
-                while (dict.hasMore()) {
-                    if (dict.recurse()) |entry_val| {
-                        var entry = entry_val;
-                        const prop_name = entry.getString() orelse break;
-                        if (entry.getVariant()) |var_val| {
-                            var v = var_val;
-                            if (std.mem.eql(u8, prop_name, BlueZ.Device1.Properties.Connected)) {
-                                if (v.getBool()) |connected| {
-                                    if (!connected) {
-                                        self.handleDeviceDisconnectedPath(path, 0x13);
-                                    } else {
-                                        self.handleDeviceConnectedPath(path);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    if (!dict.next()) break;
-                }
-            } else if (std.mem.eql(u8, changed_iface, BlueZ.GattCharacteristic1.interface_name)) {
-                while (dict.hasMore()) {
-                    if (dict.recurse()) |entry_val| {
-                        var entry = entry_val;
-                        const prop_name = entry.getString() orelse break;
-                        if (entry.getVariant()) |var_val| {
-                            var v = var_val;
-                            if (std.mem.eql(u8, prop_name, BlueZ.GattCharacteristic1.Properties.Value)) {
-                                if (v.getFixedBytes()) |bytes| {
-                                    self.dispatchNotificationForPath(path, bytes);
-                                }
-                            }
-                        }
-                    }
-                    if (!dict.next()) break;
-                }
-            }
-        }
+        var pending: PendingCallbacks = .{};
+        signals.collectSignal(self, msg, &pending);
+        pending.fire(self);
     }
 
-    fn handleDaemonDown(self: *BluezBackend) void {
-        self.scanning = false;
-        for (&self.devices) |*dev| {
-            if (dev.in_use and dev.is_connected) {
-                const addr = dev.address;
-                dev.is_connected = false;
-                dev.clearSubscriptions();
-                if (!self.is_closed.load(.acquire)) {
-                    if (self.connection_event_cb) |cb| {
-                        cb(.{ .disconnected = .{ .address = addr, .reason_code = 0x08 } }, self.connection_event_user_data);
-                    }
-                }
-            }
-        }
-    }
+    /// Delivers queued scan results, notifications and connection events, waiting up to
+    /// `timeout_ms` for the first signal. Handles at most 256 signals per call so a busy
+    /// bus cannot starve the caller.
+    pub fn processEvents(ctx: *anyopaque, timeout_ms: u32) BleError!void {
+        if (builtin.os.tag != .linux) return BleError.NotSupported;
+        const self: *BluezBackend = @ptrCast(@alignCast(ctx));
+        if (self.is_closed.load(.acquire)) return BleError.InvalidState;
+        const conn_ptr = if (self.conn) |*c| c else return BleError.AdapterNotFound;
 
-    fn handleDeviceConnectedPath(self: *BluezBackend, path: []const u8) void {
-        if (self.findDeviceByPath(path)) |dev| {
-            if (!dev.is_connected) {
-                dev.is_connected = true;
-                if (!self.is_closed.load(.acquire)) {
-                    if (self.connection_event_cb) |cb| {
-                        cb(.{ .connected = .{ .address = dev.address } }, self.connection_event_user_data);
-                    }
-                }
+        const isSignal = struct {
+            fn f(_: void, m: *const wire.Message) bool {
+                return m.fixed_header.msg_type == .signal;
             }
-        }
-    }
+        }.f;
 
-    fn handleDeviceDisconnectedPath(self: *BluezBackend, path: []const u8, reason_code: u8) void {
-        if (self.findDeviceByPath(path)) |dev| {
-            const was_connected = dev.is_connected;
-            dev.is_connected = false;
-            dev.clearSubscriptions();
-            if (was_connected and !self.is_closed.load(.acquire)) {
-                if (self.connection_event_cb) |cb| {
-                    cb(.{ .disconnected = .{ .address = dev.address, .reason_code = reason_code } }, self.connection_event_user_data);
-                }
+        var waited = false;
+        var budget: usize = 256;
+        while (budget > 0) : (budget -= 1) {
+            // Only signals are taken; method replies stay queued for the thread waiting on them.
+            const msg = conn_ptr.popMatching({}, isSignal) orelse {
+                if (waited or timeout_ms == 0) return;
+                waited = true;
+                // Poll the socket without the connection's read lock so concurrent calls are not blocked.
+                _ = conn_ptr.socket.pollRead(std.math.lossyCast(i32, timeout_ms)) catch return BleError.IoError;
+                continue;
+            };
+            defer msg.deinit();
+
+            var pending: PendingCallbacks = .{};
+            {
+                self.mutex.lock();
+                defer self.mutex.unlock();
+                signals.collectSignal(self, &msg, &pending);
+                signals.resubscribeRestoredLinks(self, conn_ptr);
             }
-        }
-    }
-
-    fn dispatchNotificationForPath(self: *BluezBackend, char_path: []const u8, payload: []const u8) void {
-        if (self.is_closed.load(.acquire)) return;
-        if (self.pcap_hook) |hook| {
-            var pdu_buf: [517]u8 = undefined;
-            pdu_buf[0] = @intFromEnum(core.AttOpcode.handle_value_ntf);
-            pdu_buf[1] = 0x01;
-            pdu_buf[2] = 0x00;
-            const copy_len = @min(pdu_buf.len - 3, payload.len);
-            @memcpy(pdu_buf[3 .. 3 + copy_len], payload[0..copy_len]);
-            hook.emit(.controller_to_host, pdu_buf[0 .. 3 + copy_len]);
-        }
-
-        for (&self.devices) |*dev| {
-            if (!dev.in_use or !dev.is_connected) continue;
-            for (dev.characteristics[0..dev.characteristics_len]) |*ch| {
-                if (std.mem.eql(u8, ch.getPath(), char_path)) {
-                    if (dev.notify_cb) |cb| {
-                        if (dev.subscribed_uuid) |sub_uuid| {
-                            if (sub_uuid.eql(ch.uuid)) {
-                                cb(ch.uuid, payload, dev.notify_user_data);
-                            }
-                        }
-                    }
-                    return;
-                }
-            }
+            pending.fire(self);
         }
     }
 
     /// Re-initializes the D-Bus system bus connection and adapter subscription after `bluetoothd` restarts.
     pub fn recoverAfterDaemonRestart(self: *BluezBackend) BleError!void {
         if (builtin.os.tag != .linux) return BleError.NotSupported;
+        // Declared before the lock: callbacks run after the mutex is released.
+        var pending: PendingCallbacks = .{};
+        defer pending.fire(self);
         self.mutex.lock();
         defer self.mutex.unlock();
 
         if (self.is_closed.load(.acquire)) return BleError.InvalidState;
-        self.handleDaemonDown();
+        signals.handleDaemonDown(self, &pending);
 
         if (self.conn) |*c| {
             c.deinit();
@@ -429,6 +332,7 @@ pub const BluezBackend = struct {
         self.scan_filter = filter;
         self.active_scan_cb = cb;
         self.active_scan_user_data = user_data;
+        signals.seedScanCache(self, conn_ptr);
 
         var adp = adapter_mod.Adapter.init(conn_ptr, self.getAdapterPath());
         adp.setDiscoveryFilter(.{
@@ -473,21 +377,70 @@ pub const BluezBackend = struct {
 
         if (self.is_closed.load(.acquire)) return BleError.InvalidState;
         const conn_ptr = if (self.conn) |*c| c else return BleError.AdapterNotFound;
-        _ = timeout_ms;
+        const eff_timeout = if (timeout_ms == 0) self.timeouts.connect_ms else timeout_ms;
+        const deadline = wire.getMonotonicMs() + eff_timeout;
 
         var dev_slot = self.allocateDeviceSlot(addr) orelse return BleError.PoolExhausted;
+        dev_slot.connection_state.store(.connecting, .release);
 
         var path_buf: [96]u8 = undefined;
         const d_path = BlueZ.buildDevicePath(&path_buf, self.getAdapterPath(), addr);
         dev_slot.setPath(d_path);
 
         var dev = device_mod.Device.init(conn_ptr, dev_slot.getPath());
-        dev.connect() catch |err| {
+        dev.connectWithTimeout(eff_timeout) catch |err| {
             log.err("BlueZ Device1.Connect failed for {s}: {s}", .{ dev_slot.getPath(), @errorName(err) });
-            return BleError.ConnectionFailed;
+            dev_slot.connection_state.store(.disconnected, .release);
+            dev_slot.in_use = false;
+            return switch (err) {
+                // BlueZ only knows devices it has seen; scan before connecting.
+                error.UnknownObject => BleError.DeviceNotFound,
+                error.Timeout, error.NoReply => BleError.ConnectionTimeout,
+                else => BleError.ConnectionFailed,
+            };
         };
-
         dev_slot.is_connected = true;
+        dev_slot.connection_state.store(.connected, .release);
+
+        // Connect returns before BlueZ has resolved the GATT database; GATT calls before
+        // `ServicesResolved` would see no characteristics.
+        const remaining: u32 = @intCast(std.math.clamp(deadline - wire.getMonotonicMs(), 0, std.math.maxInt(u32)));
+        dev.waitForServicesResolved(remaining) catch |err| {
+            log.err("BlueZ services of {s} not resolved: {s}", .{ dev_slot.getPath(), @errorName(err) });
+            dev.disconnect() catch {};
+            dev_slot.is_connected = false;
+            dev_slot.connection_state.store(.disconnected, .release);
+            dev_slot.in_use = false;
+            return if (err == error.Disconnected) BleError.Disconnected else BleError.ConnectionTimeout;
+        };
+        dev_slot.external_reconnect = false;
+        dev_slot.resubscribe_pending = false;
+
+        // The previous connection's GATT objects may be gone.
+        if (dev_slot.auto_resubscribe) dev_slot.saved_subscriptions.capture(dev_slot.characteristics[0..dev_slot.characteristics_len]);
+        dev_slot.characteristics_len = 0;
+        dev_slot.descriptors_len = 0;
+        if (dev_slot.auto_resubscribe and dev_slot.saved_subscriptions.len > 0) {
+            self.mutex.unlock();
+            const disc_res = discoverServices(ctx, @ptrCast(dev_slot));
+            self.mutex.lock();
+            disc_res catch |err| log.warn("BlueZ discovery for resubscribing failed: {s}", .{@errorName(err)});
+            for (dev_slot.saved_subscriptions.slice()) |sub| {
+                const ch_slot = dev_slot.findCharacteristic(sub.char) orelse {
+                    log.warn("BlueZ resubscribe: {f} no longer exists", .{sub.char.uuid});
+                    continue;
+                };
+                var ch = gatt_client.GattCharacteristic.init(conn_ptr, ch_slot.getPath());
+                ch.startNotify() catch |err| {
+                    log.warn("BlueZ resubscribe failed for {s}: {s}", .{ ch_slot.getPath(), @errorName(err) });
+                    continue;
+                };
+                ch_slot.is_notifying = true;
+                ch_slot.notify_cb = sub.cb;
+                ch_slot.notify_user_data = sub.user_data;
+            }
+            dev_slot.saved_subscriptions.clear();
+        }
         return @ptrCast(dev_slot);
     }
 
@@ -501,9 +454,11 @@ pub const BluezBackend = struct {
         const conn_ptr = if (self.conn) |*c| c else return BleError.AdapterNotFound;
         const dev_slot: *BluezDeviceContext = @ptrCast(@alignCast(dev_handle));
 
+        dev_slot.connection_state.store(.disconnecting, .release);
         var dev = device_mod.Device.init(conn_ptr, dev_slot.getPath());
-        dev_slot.clearSubscriptions();
+        dev_slot.endSubscriptionsWithLink();
         dev_slot.is_connected = false;
+        dev_slot.connection_state.store(.disconnected, .release);
         dev.disconnect() catch |err| {
             log.warn("BlueZ Device1.Disconnect failed: {s}", .{@errorName(err)});
             return BleError.IoError;
@@ -524,7 +479,8 @@ pub const BluezBackend = struct {
         const connected = dev.isConnected() catch false;
         dev_slot.is_connected = connected;
         if (!connected) {
-            dev_slot.clearSubscriptions();
+            dev_slot.connection_state.store(.disconnected, .release);
+            dev_slot.endSubscriptionsWithLink();
         }
         return connected;
     }
@@ -543,7 +499,28 @@ pub const BluezBackend = struct {
         return dev.getRSSI() catch dev_slot.rssi;
     }
 
+    pub fn getConnectionState(ctx: *anyopaque, dev_handle: *anyopaque) types.ConnectionState {
+        if (builtin.os.tag != .linux) return .disconnected;
+        _ = ctx;
+        const dev_slot: *BluezDeviceContext = @ptrCast(@alignCast(dev_handle));
+        return dev_slot.connection_state.load(.acquire);
+    }
+
+    pub fn setAutoResubscribe(ctx: *anyopaque, dev_handle: *anyopaque, enabled: bool) void {
+        if (builtin.os.tag != .linux) return;
+        const self: *BluezBackend = @ptrCast(@alignCast(ctx));
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        const dev_slot: *BluezDeviceContext = @ptrCast(@alignCast(dev_handle));
+        dev_slot.auto_resubscribe = enabled;
+        if (!enabled) dev_slot.saved_subscriptions.clear();
+    }
+
     pub fn discoverServices(ctx: *anyopaque, dev_handle: *anyopaque) BleError!void {
+        return discoverServicesFiltered(ctx, dev_handle, &.{});
+    }
+
+    pub fn discoverServicesFiltered(ctx: *anyopaque, dev_handle: *anyopaque, filter_uuids: []const UUID) BleError!void {
         if (builtin.os.tag != .linux) return BleError.NotSupported;
         const self: *BluezBackend = @ptrCast(@alignCast(ctx));
         self.mutex.lock();
@@ -569,24 +546,142 @@ pub const BluezBackend = struct {
         const DiscoverVisitor = struct {
             slot: *BluezDeviceContext,
             overflow_error: bool = false,
+            services: [32]object_manager.GattServiceInfo = undefined,
+            services_len: usize = 0,
+
+            fn ownsPath(v_self: *const @This(), path: []const u8) bool {
+                const dev_path = v_self.slot.getPath();
+                return std.mem.startsWith(u8, path, dev_path) and path.len > dev_path.len and path[dev_path.len] == '/';
+            }
+
+            pub fn onGattService(v_self: *@This(), info: object_manager.GattServiceInfo) void {
+                if (!v_self.ownsPath(info.getObjectPath())) return;
+                if (v_self.services_len == v_self.services.len) {
+                    v_self.overflow_error = true;
+                    return;
+                }
+                v_self.services[v_self.services_len] = info;
+                v_self.services_len += 1;
+            }
 
             pub fn onGattCharacteristic(v_self: *@This(), info: object_manager.GattCharacteristicInfo) void {
-                // Only add if characteristic path starts with our device's object path
-                if (std.mem.startsWith(u8, info.getObjectPath(), v_self.slot.getPath())) {
-                    v_self.slot.addCharacteristic(info.uuid, info.getObjectPath()) catch {
-                        v_self.overflow_error = true;
-                    };
-                }
+                if (!v_self.ownsPath(info.getObjectPath())) return;
+                v_self.slot.addCharacteristic(info.uuid, info.getObjectPath()) catch {
+                    v_self.overflow_error = true;
+                };
+            }
+
+            pub fn onGattDescriptor(v_self: *@This(), info: object_manager.GattDescriptorInfo) void {
+                if (!v_self.ownsPath(info.getObjectPath())) return;
+                // Descriptors beyond the pool are only unavailable to readDescriptor/writeDescriptor.
+                v_self.slot.addDescriptor(info.uuid, info.getObjectPath()) catch {
+                    log.warn("BlueZ descriptor pool full; {s} not stored", .{info.getObjectPath()});
+                };
             }
         };
 
         var visitor = DiscoverVisitor{ .slot = dev_slot };
         var it = reply.iterator();
         object_manager.parseManagedObjects(&it, DiscoverVisitor, &visitor);
+
+        var kept: usize = 0;
+        for (dev_slot.characteristics[0..dev_slot.characteristics_len]) |*ch| {
+            for (visitor.services[0..visitor.services_len]) |*svc| {
+                if (std.mem.eql(u8, svc.getObjectPath(), ch.getServicePath())) {
+                    ch.service_uuid = svc.uuid;
+                    break;
+                }
+            }
+
+            if (filter_uuids.len > 0) {
+                var matches = false;
+                for (filter_uuids) |f_uuid| {
+                    if (f_uuid.eql(ch.service_uuid)) {
+                        matches = true;
+                        break;
+                    }
+                }
+                if (!matches) {
+                    if (ch.is_notifying) {
+                        var gch = gatt_client.GattCharacteristic.init(conn_ptr, ch.getPath());
+                        gch.stopNotify() catch |err| log.warn("BlueZ StopNotify failed: {s}", .{@errorName(err)});
+                    }
+                    continue;
+                }
+            }
+
+            dev_slot.characteristics[kept] = ch.*;
+            kept += 1;
+        }
+        dev_slot.characteristics_len = @intCast(kept);
+        dev_slot.sortCharacteristics();
         if (visitor.overflow_error) return BleError.PoolExhausted;
+        if (filter_uuids.len > 0 and kept == 0) return BleError.ServiceNotFound;
     }
 
-    pub fn readCharacteristic(ctx: *anyopaque, dev_handle: *anyopaque, char_uuid: UUID, buf: []u8) BleError!usize {
+    pub fn readDescriptor(ctx: *anyopaque, dev_handle: *anyopaque, char: CharacteristicSelector, descriptor: UUID, buf: []u8) BleError!usize {
+        if (builtin.os.tag != .linux) return BleError.NotSupported;
+        const self: *BluezBackend = @ptrCast(@alignCast(ctx));
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        const found = try self.lookupDescriptor(ctx, dev_handle, char, descriptor);
+        var d = gatt_client.GattDescriptor.init(found.conn, found.desc.getPath());
+        return d.readValue(buf) catch |err| if (err == error.AccessDenied) BleError.PermissionDenied else BleError.ReadFailed;
+    }
+
+    pub fn writeDescriptor(ctx: *anyopaque, dev_handle: *anyopaque, char: CharacteristicSelector, descriptor: UUID, data: []const u8) BleError!void {
+        if (builtin.os.tag != .linux) return BleError.NotSupported;
+        const self: *BluezBackend = @ptrCast(@alignCast(ctx));
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        const found = try self.lookupDescriptor(ctx, dev_handle, char, descriptor);
+        var d = gatt_client.GattDescriptor.init(found.conn, found.desc.getPath());
+        d.writeValue(data) catch return BleError.WriteFailed;
+    }
+
+    /// Finds a discovered descriptor, discovering services first if needed. Caller holds `mutex`.
+    fn lookupDescriptor(self: *BluezBackend, ctx: *anyopaque, dev_handle: *anyopaque, char: CharacteristicSelector, descriptor: UUID) BleError!struct {
+        conn: *dbus.Connection,
+        desc: *context_mod.BluezDescriptorSlot,
+    } {
+        if (self.is_closed.load(.acquire)) return BleError.InvalidState;
+        const conn_ptr = if (self.conn) |*c| c else return BleError.AdapterNotFound;
+        const dev_slot: *BluezDeviceContext = @ptrCast(@alignCast(dev_handle));
+        if (!dev_slot.is_connected) return BleError.NotConnected;
+
+        if (dev_slot.characteristics_len == 0) {
+            self.mutex.unlock();
+            const disc_res = discoverServices(ctx, dev_handle);
+            self.mutex.lock();
+            try disc_res;
+        }
+        const ch_slot = dev_slot.findCharacteristic(char) orelse return BleError.CharacteristicNotFound;
+        const desc = dev_slot.findDescriptor(ch_slot, descriptor) orelse return BleError.DescriptorNotFound;
+        return .{ .conn = conn_ptr, .desc = desc };
+    }
+
+    pub fn getCharacteristics(ctx: *anyopaque, dev_handle: *anyopaque, out: []CharacteristicInfo) BleError!usize {
+        if (builtin.os.tag != .linux) return BleError.NotSupported;
+        const self: *BluezBackend = @ptrCast(@alignCast(ctx));
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        if (self.is_closed.load(.acquire)) return BleError.InvalidState;
+        const dev_slot: *BluezDeviceContext = @ptrCast(@alignCast(dev_handle));
+        if (!dev_slot.is_connected) return BleError.NotConnected;
+
+        if (dev_slot.characteristics_len == 0) {
+            self.mutex.unlock();
+            const disc_res = discoverServices(ctx, dev_handle);
+            self.mutex.lock();
+            try disc_res;
+        }
+        return CharacteristicInfo.list(dev_slot.characteristics[0..dev_slot.characteristics_len], out);
+    }
+
+    pub fn readCharacteristic(ctx: *anyopaque, dev_handle: *anyopaque, char: CharacteristicSelector, buf: []u8) BleError!usize {
         if (builtin.os.tag != .linux) return BleError.NotSupported;
         const self: *BluezBackend = @ptrCast(@alignCast(ctx));
         self.mutex.lock();
@@ -604,13 +699,13 @@ pub const BluezBackend = struct {
             try disc_res;
         }
 
-        const ch_slot = dev_slot.findCharacteristic(char_uuid) orelse return BleError.CharacteristicNotFound;
+        const ch_slot = dev_slot.findCharacteristic(char) orelse return BleError.CharacteristicNotFound;
         var ch = gatt_client.GattCharacteristic.init(conn_ptr, ch_slot.getPath());
         if (self.pcap_hook) |hook| {
             const req_pdu = [_]u8{ @intFromEnum(core.AttOpcode.read_req), 0x01, 0x00 };
             hook.emit(.host_to_controller, &req_pdu);
         }
-        const n = ch.readValue(buf) catch return BleError.ReadFailed;
+        const n = ch.readValue(buf) catch |err| return if (err == error.AccessDenied) BleError.PermissionDenied else BleError.ReadFailed;
         if (self.pcap_hook) |hook| {
             var rsp_pdu: [517]u8 = undefined;
             rsp_pdu[0] = @intFromEnum(core.AttOpcode.read_rsp);
@@ -621,7 +716,7 @@ pub const BluezBackend = struct {
         return n;
     }
 
-    pub fn writeCharacteristic(ctx: *anyopaque, dev_handle: *anyopaque, char_uuid: UUID, data: []const u8, with_response: bool) BleError!void {
+    pub fn writeCharacteristic(ctx: *anyopaque, dev_handle: *anyopaque, char: CharacteristicSelector, data: []const u8, with_response: bool) BleError!void {
         if (builtin.os.tag != .linux) return BleError.NotSupported;
         const self: *BluezBackend = @ptrCast(@alignCast(ctx));
         self.mutex.lock();
@@ -639,7 +734,7 @@ pub const BluezBackend = struct {
             try disc_res;
         }
 
-        const ch_slot = dev_slot.findCharacteristic(char_uuid) orelse return BleError.CharacteristicNotFound;
+        const ch_slot = dev_slot.findCharacteristic(char) orelse return BleError.CharacteristicNotFound;
         var ch = gatt_client.GattCharacteristic.init(conn_ptr, ch_slot.getPath());
         const w_type: core.WriteType = if (with_response) .with_response else .without_response;
         if (self.pcap_hook) |hook| {
@@ -660,7 +755,7 @@ pub const BluezBackend = struct {
         }
     }
 
-    pub fn subscribeNotifications(ctx: *anyopaque, dev_handle: *anyopaque, char_uuid: UUID, cb: NotificationCallback, user_data: ?*anyopaque) BleError!void {
+    pub fn subscribeNotifications(ctx: *anyopaque, dev_handle: *anyopaque, char: CharacteristicSelector, cb: NotificationCallback, user_data: ?*anyopaque) BleError!void {
         if (builtin.os.tag != .linux) return BleError.NotSupported;
         const self: *BluezBackend = @ptrCast(@alignCast(ctx));
         self.mutex.lock();
@@ -678,17 +773,16 @@ pub const BluezBackend = struct {
             try disc_res;
         }
 
-        const ch_slot = dev_slot.findCharacteristic(char_uuid) orelse return BleError.CharacteristicNotFound;
+        const ch_slot = dev_slot.findCharacteristic(char) orelse return BleError.CharacteristicNotFound;
         var ch = gatt_client.GattCharacteristic.init(conn_ptr, ch_slot.getPath());
         ch.startNotify() catch return BleError.NotificationFailed;
 
         ch_slot.is_notifying = true;
-        dev_slot.notify_cb = cb;
-        dev_slot.notify_user_data = user_data;
-        dev_slot.subscribed_uuid = char_uuid;
+        ch_slot.notify_cb = cb;
+        ch_slot.notify_user_data = user_data;
     }
 
-    pub fn unsubscribeNotifications(ctx: *anyopaque, dev_handle: *anyopaque, char_uuid: UUID) BleError!void {
+    pub fn unsubscribeNotifications(ctx: *anyopaque, dev_handle: *anyopaque, char: CharacteristicSelector) BleError!void {
         if (builtin.os.tag != .linux) return BleError.NotSupported;
         const self: *BluezBackend = @ptrCast(@alignCast(ctx));
         self.mutex.lock();
@@ -698,11 +792,11 @@ pub const BluezBackend = struct {
         const conn_ptr = if (self.conn) |*c| c else return BleError.AdapterNotFound;
         const dev_slot: *BluezDeviceContext = @ptrCast(@alignCast(dev_handle));
 
-        if (dev_slot.findCharacteristic(char_uuid)) |ch_slot| {
+        if (dev_slot.findCharacteristic(char)) |ch_slot| {
             var ch = gatt_client.GattCharacteristic.init(conn_ptr, ch_slot.getPath());
             ch_slot.is_notifying = false;
-            dev_slot.notify_cb = null;
-            dev_slot.subscribed_uuid = null;
+            ch_slot.notify_cb = null;
+            ch_slot.notify_user_data = null;
             ch.stopNotify() catch |err| {
                 log.warn("BlueZ GattCharacteristic1.StopNotify failed: {s}", .{@errorName(err)});
                 return BleError.NotificationFailed;
@@ -797,6 +891,7 @@ pub const BluezBackend = struct {
         defer reply.deinit();
         dev_slot.clearSubscriptions();
         dev_slot.is_connected = false;
+        dev_slot.connection_state.store(.disconnected, .release);
     }
 
     pub fn getBondState(ctx: *anyopaque, dev_handle: *anyopaque) types.BondState {
@@ -814,7 +909,7 @@ pub const BluezBackend = struct {
         return if (is_paired) .bonded else .not_bonded;
     }
 
-    pub fn acquireNotifyFd(ctx: *anyopaque, dev_handle: *anyopaque, char_uuid: UUID, out_mtu: *u16) BleError!std.posix.fd_t {
+    pub fn acquireNotifyFd(ctx: *anyopaque, dev_handle: *anyopaque, char: CharacteristicSelector, out_mtu: *u16) BleError!std.posix.fd_t {
         if (builtin.os.tag != .linux) return BleError.NotSupported;
         const self: *BluezBackend = @ptrCast(@alignCast(ctx));
         self.mutex.lock();
@@ -832,7 +927,7 @@ pub const BluezBackend = struct {
             try disc_res;
         }
 
-        const ch_slot = dev_slot.findCharacteristic(char_uuid) orelse return BleError.CharacteristicNotFound;
+        const ch_slot = dev_slot.findCharacteristic(char) orelse return BleError.CharacteristicNotFound;
         var ch = gatt_client.GattCharacteristic.init(conn_ptr, ch_slot.getPath());
         const stream = ch.acquireNotify() catch return BleError.NotificationFailed;
         out_mtu.* = stream.mtu;
@@ -862,6 +957,13 @@ pub const BluezBackend = struct {
         .unpairDevice = unpairDevice,
         .getBondState = getBondState,
         .acquireNotifyFd = acquireNotifyFd,
+        .getCharacteristics = getCharacteristics,
+        .processEvents = processEvents,
+        .getConnectionState = getConnectionState,
+        .setAutoResubscribe = setAutoResubscribe,
+        .discoverServicesFiltered = discoverServicesFiltered,
+        .readDescriptor = readDescriptor,
+        .writeDescriptor = writeDescriptor,
     };
 
     pub fn asBackend(self: *BluezBackend) Backend {

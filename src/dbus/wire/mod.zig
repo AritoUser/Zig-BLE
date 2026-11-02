@@ -29,6 +29,7 @@ pub const Message = message.Message;
 
 pub const connection = @import("connection.zig");
 pub const Connection = connection.Connection;
+pub const getMonotonicMs = connection.getMonotonicMs;
 pub const DBusError = connection.DBusError;
 pub const RequestNameFlags = connection.RequestNameFlags;
 pub const RequestNameReply = connection.RequestNameReply;

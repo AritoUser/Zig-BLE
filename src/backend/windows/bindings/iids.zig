@@ -17,16 +17,19 @@ pub const IID_IBluetoothAdapter = GUID.parse("7974f04c-5f7a-4a34-9225-a855f84b1a
 pub const IID_IBluetoothLEAdvertisementWatcher = GUID.parse("a6ac336f-f3d3-4297-8d6c-c81ea6623f40");
 pub const IID_IBluetoothLEAdvertisementReceivedEventArgs = GUID.parse("27987ddf-e596-41be-8d43-9e6731d4a913");
 pub const IID_IBluetoothLEAdvertisement = GUID.parse("066fb2b7-33d1-4e7d-8367-cf81d0f79653");
+pub const IID_IBluetoothLEAdvertisementReceivedEventArgs2 = GUID.parse("12d9c87b-0399-5f0e-a348-53b02b6b162e");
+pub const IID_IPropertyValue = GUID.parse("4bd682dd-7554-40e9-9a9b-82654ede7e62");
 pub const IID_IBluetoothLEManufacturerData = GUID.parse("912dba18-6963-4533-b061-4694dafb34e5");
 pub const IID_IBluetoothLEManufacturerDataFactory = GUID.parse("c09b39f8-319a-441e-8de5-66a81e877a6c");
 pub const IID_IBluetoothLEAdvertisementDataSection = GUID.parse("d7213314-3a43-40f9-b6f0-92bfefc34ae3");
 pub const IID_IBluetoothLEAdvertisementDataSectionFactory = GUID.parse("e7a40942-a845-4045-bf7e-3e9971db8a6b");
 pub const IID_IBluetoothLEAdvertisementPublisher = GUID.parse("cde820f9-d9fa-43d6-a264-ddd8b7da8b78");
 pub const IID_IBluetoothLEAdvertisementPublisherFactory = GUID.parse("5c5f065e-b863-4981-a1af-1c544d8b0c0d");
-pub const IID_ITypedEventHandler_Watcher_Received = GUID.parse("90eb4eca-d465-5ea0-a61c-033c8c5ecebe");
+pub const IID_ITypedEventHandler_Watcher_Received = GUID.parse("90eb4eca-d465-5ea0-a61c-033c8c5ecef2");
 
 // BluetoothLEDevice & GattSession
 pub const IID_IBluetoothLEDeviceStatics = GUID.parse("c8cf1a19-f0b6-4bf0-8689-41303de2d9f4");
+pub const IID_IBluetoothLEDeviceStatics2 = GUID.parse("5f12c06b-3bac-43e8-ad16-563271bd41c2");
 pub const IID_IBluetoothLEDevice = GUID.parse("b5ee2f7b-4ad8-4642-ac48-80a0b500e887");
 pub const IID_IBluetoothLEDevice2 = GUID.parse("26f062b3-7aee-4d31-baba-b1b9775f5916");
 pub const IID_IBluetoothLEDevice3 = GUID.parse("aee9e493-44ac-40dc-af33-b2c13c01ca46");
@@ -49,15 +52,19 @@ pub const IID_IDeviceUnpairingResult = GUID.parse("66f44ad3-79d9-444b-92cf-a92ef
 pub const IID_ITypedEventHandler_CustomPairing_PairingRequested = GUID.parse("fa65231f-4178-5de1-b2cc-03e22d7702b4");
 
 // GATT Client Services & Characteristics
-pub const IID_IGattDeviceServicesResult = GUID.parse("16cab870-8b34-4723-92f4-f0c057c75b2b");
-pub const IID_IGattDeviceService = GUID.parse("ac7b7c05-b33c-47cf-b70f-f88f55775d71");
+pub const IID_IGattDeviceServicesResult = GUID.parse("171dd3ee-016d-419d-838a-576cf475a3d8");
+pub const IID_IGattDeviceService = GUID.parse("ac7b7c05-b33c-47cf-990f-6b8f5577df71");
 pub const IID_IGattDeviceService3 = GUID.parse("b293a950-0c53-437c-a9b3-5c3210c6e569");
-pub const IID_IGattCharacteristicsResult = GUID.parse("e20a3371-33c7-4f08-a698-d58c17184f06");
+pub const IID_IGattCharacteristicsResult = GUID.parse("1194945c-b257-4f3e-9db7-f68bc9a9aef2");
 pub const IID_IGattCharacteristic = GUID.parse("59cb50c1-5934-4f68-a198-eb864fa44e6b");
-pub const IID_IGattReadResult = GUID.parse("63a66f08-17a6-4c4e-8999-a97f3126b508");
-pub const IID_IGattWriteResult = GUID.parse("4907627f-283c-48c0-9d98-9811b69c6533");
-pub const IID_IGattValueChangedEventArgs = GUID.parse("d21b60f2-6d3b-4016-b11a-b88f93179359");
-pub const IID_ITypedEventHandler_Characteristic_ValueChanged = GUID.parse("1bac2d2c-414d-52dc-8061-d04b9f6e3352");
+pub const IID_IGattCharacteristic3 = GUID.parse("3f3c663e-93d4-406b-b817-db81f8ed53b3");
+pub const IID_IGattDescriptorsResult = GUID.parse("9bc091f3-95e7-4489-8d25-ff81955a57b9");
+pub const IID_IGattDescriptor = GUID.parse("92055f2b-8084-4344-b4c2-284de19a8506");
+pub const IID_IGattReadResult2 = GUID.parse("a10f50a0-fb43-48af-baaa-638a5c6329fe");
+pub const IID_IGattReadResult = GUID.parse("63a66f08-1aea-4c4c-a50f-97bae474b348");
+pub const IID_IGattWriteResult = GUID.parse("4991ddb1-cb2b-44f7-99fc-d29a2871dc9b");
+pub const IID_IGattValueChangedEventArgs = GUID.parse("d21bdb54-06e3-4ed8-a263-acfac8ba7313");
+pub const IID_ITypedEventHandler_Characteristic_ValueChanged = GUID.parse("c1f420f6-6292-5760-a2c9-9ddf98683cfc");
 
 // GATT Server (GattServiceProvider, IGattLocalService, IGattLocalCharacteristic)
 pub const IID_IGattServiceProvider = GUID.parse("7822b3cd-2889-4f86-a051-3f0aed1c2760");

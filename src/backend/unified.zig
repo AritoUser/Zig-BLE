@@ -12,6 +12,8 @@ pub const ScanFilter = types.ScanFilter;
 pub const ScanCallback = types.ScanCallback;
 pub const NotificationCallback = types.NotificationCallback;
 pub const DiscoveredDevice = types.DiscoveredDevice;
+pub const CharacteristicSelector = types.CharacteristicSelector;
+pub const CharacteristicInfo = types.CharacteristicInfo;
 pub const BleError = types.BleError;
 pub const TimeoutConfig = types.TimeoutConfig;
 pub const Backend = vtable_mod.Backend;
@@ -21,12 +23,28 @@ pub const UnifiedDevice = struct {
     handle: *anyopaque,
     address: Address,
 
+    /// Ends the connection. The handle must not be used afterwards: its slot can be reused
+    /// by the next `connect`. Call `connect` again to get a new handle.
     pub fn disconnect(self: *UnifiedDevice) BleError!void {
         return self.backend.disconnectDevice(self.handle);
     }
 
     pub fn isConnected(self: *UnifiedDevice) bool {
         return self.backend.isDeviceConnected(self.handle);
+    }
+
+    /// Current link state, safe to call while another thread is connecting.
+    pub fn getConnectionState(self: *UnifiedDevice) types.ConnectionState {
+        return self.backend.getConnectionState(self.handle);
+    }
+
+    /// When enabled, this device's notification subscriptions survive a disconnect: they are
+    /// set up again, with the same callbacks, on the next `connect` to this address and when the
+    /// OS restores the link itself (delivered from `processEvents`). A peer forgets its
+    /// subscriptions with the link, so this writes them again. Characteristics that no longer
+    /// exist are skipped with a warning. Disable it before `disconnect` to drop them.
+    pub fn setAutoResubscribe(self: *UnifiedDevice, enabled: bool) void {
+        self.backend.setAutoResubscribe(self.handle, enabled);
     }
 
     pub fn getRSSI(self: *UnifiedDevice) ?i16 {
@@ -37,20 +55,49 @@ pub const UnifiedDevice = struct {
         return self.backend.discoverServices(self.handle);
     }
 
-    pub fn readCharacteristic(self: *UnifiedDevice, uuid: UUID, buf: []u8) BleError!usize {
-        return self.backend.readCharacteristic(self.handle, uuid, buf);
+    /// Limits the known characteristics to the given services, or to all services if empty.
+    /// Subscriptions on other services end. Returns `ServiceNotFound` if no service matches.
+    /// `connect` has discovered everything by then on Windows; to avoid that round trip,
+    /// set `WindowsBackend.service_filter` before connecting. BlueZ discovers all services
+    /// itself, so there this only narrows the list.
+    pub fn discoverServicesFiltered(self: *UnifiedDevice, filter_uuids: []const UUID) BleError!void {
+        return self.backend.discoverServicesFiltered(self.handle, filter_uuids);
     }
 
-    pub fn writeCharacteristic(self: *UnifiedDevice, uuid: UUID, data: []const u8, with_response: bool) BleError!void {
-        return self.backend.writeCharacteristic(self.handle, uuid, data, with_response);
+    // `char` is a `UUID` (first characteristic with that UUID) or a `CharacteristicSelector`,
+    // e.g. `.{ .uuid = UUID.from16(0x2A4D), .instance = 1 }` for the second HID report.
+
+    pub fn readCharacteristic(self: *UnifiedDevice, char: anytype, buf: []u8) BleError!usize {
+        return self.backend.readCharacteristic(self.handle, char, buf);
     }
 
-    pub fn subscribe(self: *UnifiedDevice, uuid: UUID, cb: NotificationCallback, user_data: ?*anyopaque) BleError!void {
-        return self.backend.subscribeNotifications(self.handle, uuid, cb, user_data);
+    pub fn writeCharacteristic(self: *UnifiedDevice, char: anytype, data: []const u8, with_response: bool) BleError!void {
+        return self.backend.writeCharacteristic(self.handle, char, data, with_response);
     }
 
-    pub fn unsubscribe(self: *UnifiedDevice, uuid: UUID) BleError!void {
-        return self.backend.unsubscribeNotifications(self.handle, uuid);
+    /// Each characteristic keeps its own callback; subscribing to one does not affect others.
+    pub fn subscribe(self: *UnifiedDevice, char: anytype, cb: NotificationCallback, user_data: ?*anyopaque) BleError!void {
+        return self.backend.subscribeNotifications(self.handle, char, cb, user_data);
+    }
+
+    pub fn unsubscribe(self: *UnifiedDevice, char: anytype) BleError!void {
+        return self.backend.unsubscribeNotifications(self.handle, char);
+    }
+
+    /// Reads a descriptor of `char`, e.g. `UUID.from16(0x2901)` for the User Description.
+    pub fn readDescriptor(self: *UnifiedDevice, char: anytype, descriptor: UUID, buf: []u8) BleError!usize {
+        return self.backend.readDescriptor(self.handle, char, descriptor, buf);
+    }
+
+    /// Writes a descriptor of `char`. Use `subscribe` rather than writing the CCCD (0x2902).
+    pub fn writeDescriptor(self: *UnifiedDevice, char: anytype, descriptor: UUID, data: []const u8) BleError!void {
+        return self.backend.writeDescriptor(self.handle, char, descriptor, data);
+    }
+
+    /// Lists the discovered characteristics in attribute-handle order and returns how many
+    /// were written to `out`.
+    pub fn getCharacteristics(self: *UnifiedDevice, out: []CharacteristicInfo) BleError!usize {
+        return self.backend.getCharacteristics(self.handle, out);
     }
 
     pub fn exchangeMtu(self: *UnifiedDevice, target_mtu: u16) BleError!u16 {
@@ -69,8 +116,8 @@ pub const UnifiedDevice = struct {
         return self.backend.getBondState(self.handle);
     }
 
-    pub fn acquireNotifyFd(self: *UnifiedDevice, uuid: UUID, out_mtu: *u16) BleError!std.posix.fd_t {
-        return self.backend.acquireNotifyFd(self.handle, uuid, out_mtu);
+    pub fn acquireNotifyFd(self: *UnifiedDevice, char: anytype, out_mtu: *u16) BleError!std.posix.fd_t {
+        return self.backend.acquireNotifyFd(self.handle, char, out_mtu);
     }
 };
 
@@ -104,6 +151,13 @@ pub const UnifiedAdapter = struct {
 
     pub fn stopScan(self: *UnifiedAdapter) BleError!void {
         return self.backend.stopScan();
+    }
+
+    /// Delivers pending scan results, notifications and connection events, waiting up to
+    /// `timeout_ms` for the first one. Call it regularly, e.g. in the main loop. BlueZ needs
+    /// it to deliver any callback; on Windows callbacks arrive on WinRT threads and this only waits.
+    pub fn processEvents(self: *UnifiedAdapter, timeout_ms: u32) BleError!void {
+        return self.backend.processEvents(timeout_ms);
     }
 
     pub fn connect(self: *UnifiedAdapter, addr: Address, timeout_ms: u32) BleError!UnifiedDevice {
@@ -148,4 +202,165 @@ test "UnifiedAdapter with MockController Test" {
 
     try connected_dev.disconnect();
     try std.testing.expect(!connected_dev.isConnected());
+}
+
+test "UnifiedDevice keeps one subscription per characteristic and addresses duplicate UUIDs" {
+    const mock_mod = @import("mock/mod.zig");
+    var mock = mock_mod.MockController.init();
+    var adapter = UnifiedAdapter.init(mock.asBackend());
+    try adapter.setPowered(true);
+
+    const hid = UUID.from16(0x1812);
+    const report = UUID.from16(0x2A4D);
+    const battery_level = UUID.from16(0x2A19);
+    const addr = Address{ .bytes = [_]u8{ 0x11, 0x22, 0x33, 0x44, 0x55, 0x77 } };
+    var dev = mock_mod.MockDevice{ .address = addr };
+    var report_a = mock_mod.MockCharacteristic{ .uuid = report, .service_uuid = hid };
+    report_a.setValue(&.{0xA0});
+    var report_b = mock_mod.MockCharacteristic{ .uuid = report, .service_uuid = hid };
+    report_b.setValue(&.{0xB0});
+    _ = dev.addCharacteristic(report_a);
+    _ = dev.addCharacteristic(report_b);
+    _ = dev.addCharacteristic(.{ .uuid = battery_level, .service_uuid = UUID.from16(0x180F) });
+    _ = try mock.addDevice(dev);
+
+    var connected = try adapter.connect(addr, 1000);
+
+    // Duplicate UUIDs: a plain UUID selects the first, `instance` the others
+    var buf: [4]u8 = undefined;
+    _ = try connected.readCharacteristic(report, &buf);
+    try std.testing.expectEqual(@as(u8, 0xA0), buf[0]);
+    _ = try connected.readCharacteristic(.{ .uuid = report, .service = hid, .instance = 1 }, &buf);
+    try std.testing.expectEqual(@as(u8, 0xB0), buf[0]);
+    try std.testing.expectError(BleError.CharacteristicNotFound, connected.readCharacteristic(.{ .uuid = report, .instance = 2 }, &buf));
+
+    var infos: [8]CharacteristicInfo = undefined;
+    const n = try connected.getCharacteristics(&infos);
+    try std.testing.expectEqual(@as(usize, 3), n);
+    try std.testing.expectEqual(@as(u8, 1), infos[1].instance);
+    _ = try connected.readCharacteristic(infos[1].selector(), &buf);
+    try std.testing.expectEqual(@as(u8, 0xB0), buf[0]);
+
+    // Each subscription keeps its own callback and survives unsubscribing another one
+    const Counter = struct {
+        hits: usize = 0,
+        fn onNotify(_: UUID, _: []const u8, udata: ?*anyopaque) void {
+            const self: *@This() = @ptrCast(@alignCast(udata));
+            self.hits += 1;
+        }
+    };
+    var battery_hits = Counter{};
+    var report_hits = Counter{};
+    try connected.subscribe(battery_level, Counter.onNotify, &battery_hits);
+    try connected.subscribe(.{ .uuid = report, .instance = 1 }, Counter.onNotify, &report_hits);
+
+    try mock.triggerNotification(addr, battery_level, &.{90});
+    try mock.triggerNotification(addr, CharacteristicSelector{ .uuid = report, .instance = 1 }, &.{1});
+    try mock.triggerNotification(addr, report, &.{2}); // first report is not subscribed
+    try std.testing.expectEqual(@as(usize, 1), battery_hits.hits);
+    try std.testing.expectEqual(@as(usize, 1), report_hits.hits);
+
+    try connected.unsubscribe(.{ .uuid = report, .instance = 1 });
+    try mock.triggerNotification(addr, battery_level, &.{89});
+    try mock.triggerNotification(addr, CharacteristicSelector{ .uuid = report, .instance = 1 }, &.{3});
+    try std.testing.expectEqual(@as(usize, 2), battery_hits.hits);
+    try std.testing.expectEqual(@as(usize, 1), report_hits.hits);
+
+    // processEvents returns immediately on backends without an event queue
+    try adapter.processEvents(0);
+}
+
+test "UnifiedDevice reads and writes descriptors" {
+    const mock_mod = @import("mock/mod.zig");
+    var mock = mock_mod.MockController.init();
+    var adapter = UnifiedAdapter.init(mock.asBackend());
+    try adapter.setPowered(true);
+
+    const addr = Address{ .bytes = [_]u8{ 0x11, 0x22, 0x33, 0x44, 0x55, 0x88 } };
+    var dev = mock_mod.MockDevice{ .address = addr };
+    var temp = mock_mod.MockCharacteristic{ .uuid = UUID.from16(0x2A6E) };
+    _ = temp.addDescriptor(.init(UUID.from16(0x2901), "Room"));
+    _ = dev.addCharacteristic(temp);
+    _ = try mock.addDevice(dev);
+
+    var connected = try adapter.connect(addr, 1000);
+    var buf: [16]u8 = undefined;
+    const n = try connected.readDescriptor(UUID.from16(0x2A6E), UUID.from16(0x2901), &buf);
+    try std.testing.expectEqualStrings("Room", buf[0..n]);
+
+    try connected.writeDescriptor(UUID.from16(0x2A6E), UUID.from16(0x2901), "Kitchen");
+    const m = try connected.readDescriptor(UUID.from16(0x2A6E), UUID.from16(0x2901), &buf);
+    try std.testing.expectEqualStrings("Kitchen", buf[0..m]);
+
+    try std.testing.expectError(BleError.DescriptorNotFound, connected.readDescriptor(UUID.from16(0x2A6E), UUID.from16(0x2904), &buf));
+}
+
+test "UnifiedDevice tracks ConnectionState and supports auto-resubscribe" {
+    const mock_mod = @import("mock/mod.zig");
+    var mock = mock_mod.MockController.init();
+    var adapter = UnifiedAdapter.init(mock.asBackend());
+    try adapter.setPowered(true);
+
+    const addr = Address{ .bytes = [_]u8{ 0x11, 0x22, 0x33, 0x44, 0x55, 0x99 } };
+    var dev = mock_mod.MockDevice{ .address = addr };
+    const char_uuid = UUID.from16(0x2A37);
+    _ = dev.addCharacteristic(.{ .uuid = char_uuid });
+    _ = try mock.addDevice(dev);
+
+    var connected = try adapter.connect(addr, 1000);
+    try std.testing.expectEqual(types.ConnectionState.connected, connected.getConnectionState());
+    try std.testing.expect(connected.isConnected());
+
+    // Enable auto-resubscribe
+    connected.setAutoResubscribe(true);
+
+    const Counter = struct {
+        hits: usize = 0,
+        fn onNotify(_: UUID, _: []const u8, udata: ?*anyopaque) void {
+            const self: *@This() = @ptrCast(@alignCast(udata));
+            self.hits += 1;
+        }
+    };
+    var hits = Counter{};
+    try connected.subscribe(char_uuid, Counter.onNotify, &hits);
+
+    try mock.triggerNotification(addr, char_uuid, &.{ 0x00, 70 });
+    try std.testing.expectEqual(@as(usize, 1), hits.hits);
+
+    // The peripheral forgets its subscriptions with the link; the backend has to set them up again
+    try connected.disconnect();
+    try std.testing.expectEqual(types.ConnectionState.disconnected, connected.getConnectionState());
+    try std.testing.expect(!connected.isConnected());
+
+    // Reconnect
+    var reconnected = try adapter.connect(addr, 1000);
+    try std.testing.expectEqual(types.ConnectionState.connected, reconnected.getConnectionState());
+
+    try mock.triggerNotification(addr, char_uuid, &.{ 0x00, 72 });
+    try std.testing.expectEqual(@as(usize, 2), hits.hits);
+
+    // Without auto-resubscribe the subscription ends with the connection
+    reconnected.setAutoResubscribe(false);
+    try reconnected.disconnect();
+    var third = try adapter.connect(addr, 1000);
+    try mock.triggerNotification(addr, char_uuid, &.{ 0x00, 74 });
+    try std.testing.expectEqual(@as(usize, 2), hits.hits);
+    try third.disconnect();
+}
+
+test "UnifiedDevice discoverServicesFiltered" {
+    const mock_mod = @import("mock/mod.zig");
+    var mock = mock_mod.MockController.init();
+    var adapter = UnifiedAdapter.init(mock.asBackend());
+    try adapter.setPowered(true);
+
+    const addr = Address{ .bytes = [_]u8{ 0x11, 0x22, 0x33, 0x44, 0x55, 0x9A } };
+    var dev = mock_mod.MockDevice{ .address = addr };
+    _ = dev.addCharacteristic(.{ .uuid = UUID.from16(0x2A19), .service_uuid = UUID.from16(0x180F) });
+    _ = dev.addCharacteristic(.{ .uuid = UUID.from16(0x2A37), .service_uuid = UUID.from16(0x180D) });
+    _ = try mock.addDevice(dev);
+
+    var connected = try adapter.connect(addr, 1000);
+    try connected.discoverServicesFiltered(&.{UUID.from16(0x180D)});
+    try std.testing.expectError(BleError.ServiceNotFound, connected.discoverServicesFiltered(&.{UUID.from16(0x1812)}));
 }

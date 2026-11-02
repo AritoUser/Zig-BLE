@@ -72,6 +72,8 @@ pub fn build(b: *std.Build) void {
     const is_linux_target = target.result.os.tag == .linux;
     const default_link_dbus = false;
     const link_dbus = b.option(bool, "link-dbus", "Link system libdbus-1 (legacy C backend)") orelse default_link_dbus;
+    const link_libc = b.option(bool, "link-libc", "Link libc, as applications that use it do") orelse false;
+    if (link_libc) mod.link_libc = true;
 
     if (link_dbus and is_linux_target) {
         mod.linkSystemLibrary("dbus-1", .{});
@@ -319,7 +321,7 @@ pub fn build(b: *std.Build) void {
 
         const run_v1_live_cmd = b.addRunArtifact(v1_live_exe);
         run_v1_live_cmd.addPassthruArgs();
-        const run_v1_live_step = b.step("run-v1-live", "Run the official Zig-BLE v1.0.0 Live Verification Suite");
+        const run_v1_live_step = b.step("run-v1-live", "Run the Zig-BLE live demo (protocol toolkit and scan)");
         run_v1_live_step.dependOn(&run_v1_live_cmd.step);
 
         const probe_ble_exe = b.addExecutable(.{
@@ -447,6 +449,60 @@ pub fn build(b: *std.Build) void {
     const run_mock_e2e_cmd = b.addRunArtifact(mock_e2e_exe);
     const run_mock_e2e_step = b.step("run-mock-e2e", "Run the end-to-end smoke test against the in-memory mock backend (no radio)");
     run_mock_e2e_step.dependOn(&run_mock_e2e_cmd.step);
+
+    // ========================================================================
+    // BlueZ Backend End-to-End Test against a simulated org.bluez (Linux)
+    // ========================================================================
+    const bluez_fake_e2e_exe = b.addExecutable(.{
+        .name = "ble-bluez-fake-e2e",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tests/bluez_fake_e2e.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "Zig_BLE", .module = mod },
+            },
+        }),
+    });
+    const bluez_fake_e2e_step = b.step("bluez-fake-e2e", "Build the BlueZ backend test against a simulated org.bluez (Linux only; run with scripts/run_bluez_fake_e2e.sh)");
+    bluez_fake_e2e_step.dependOn(&b.addInstallArtifact(bluez_fake_e2e_exe, .{}).step);
+
+    // ========================================================================
+    // Hardware check for the native backends (run-hardware-check)
+    // ========================================================================
+    const hardware_check_exe = b.addExecutable(.{
+        .name = "ble-hardware-check",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("examples/hardware_check.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "Zig_BLE", .module = mod },
+            },
+        }),
+    });
+    const run_hardware_check_cmd = b.addRunArtifact(hardware_check_exe);
+    run_hardware_check_cmd.addPassthruArgs();
+    const run_hardware_check_step = b.step("run-hardware-check", "Scan with the native backend; with a device address also connect and read (needs a Bluetooth adapter)");
+    run_hardware_check_step.dependOn(&run_hardware_check_cmd.step);
+    const hardware_check_step = b.step("hardware-check", "Build the hardware check without running it");
+    hardware_check_step.dependOn(&b.addInstallArtifact(hardware_check_exe, .{}).step);
+
+    // ========================================================================
+    // Compile every public function, used or not (check-api)
+    // ========================================================================
+    const analyze_api = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tests/analyze_api.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "Zig_BLE", .module = mod },
+            },
+        }),
+    });
+    const check_api_step = b.step("check-api", "Compile every public function for the target, including ones no test calls");
+    check_api_step.dependOn(&analyze_api.step);
 
     // ========================================================================
     // Fuzz Testing Suite (zig build fuzz / test-fuzz)

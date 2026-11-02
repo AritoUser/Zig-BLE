@@ -52,6 +52,35 @@ pub const IBluetoothLEDeviceStaticsVtbl = extern struct {
     GetDeviceSelector: *const fn (self: *anyopaque, deviceSelector: *HSTRING) callconv(WINAPI) HRESULT,
 };
 
+pub const IBluetoothLEDeviceStatics2 = extern struct {
+    lpVtbl: *const IBluetoothLEDeviceStatics2Vtbl,
+};
+
+pub const IBluetoothLEDeviceStatics2Vtbl = extern struct {
+    QueryInterface: *const fn (self: *anyopaque, riid: *const GUID, ppvObject: *?*anyopaque) callconv(WINAPI) HRESULT,
+    AddRef: *const fn (self: *anyopaque) callconv(WINAPI) ULONG,
+    Release: *const fn (self: *anyopaque) callconv(WINAPI) ULONG,
+    GetIids: *const anyopaque,
+    GetRuntimeClassName: *const anyopaque,
+    GetTrustLevel: *const anyopaque,
+
+    GetDeviceSelectorFromPairingState: *const anyopaque,
+    GetDeviceSelectorFromConnectionStatus: *const anyopaque,
+    GetDeviceSelectorFromDeviceName: *const anyopaque,
+    GetDeviceSelectorFromBluetoothAddress: *const anyopaque,
+    GetDeviceSelectorFromBluetoothAddressWithBluetoothAddressType: *const anyopaque,
+    GetDeviceSelectorFromAppearance: *const anyopaque,
+    FromBluetoothAddressWithBluetoothAddressTypeAsync: *const fn (self: *anyopaque, bluetoothAddress: u64, addressType: BluetoothAddressType, operation: *?*IAsyncOperationGeneric) callconv(WINAPI) HRESULT,
+};
+
+/// `Windows.Devices.Bluetooth.BluetoothAddressType`
+pub const BluetoothAddressType = enum(i32) {
+    Public = 0,
+    Random = 1,
+    Unspecified = 2,
+    _,
+};
+
 pub const IBluetoothLEDevice = extern struct {
     lpVtbl: *const IBluetoothLEDeviceVtbl,
 };

@@ -17,6 +17,11 @@ pub const ScanFilter = types.ScanFilter;
 pub const DiscoveredDevice = types.DiscoveredDevice;
 pub const ScanCallback = types.ScanCallback;
 pub const NotificationCallback = types.NotificationCallback;
+pub const CharacteristicSelector = types.CharacteristicSelector;
+pub const CharacteristicInfo = types.CharacteristicInfo;
+pub const event_queue = @import("event_queue.zig");
+pub const EventQueue = event_queue.EventQueue;
+pub const EventQueueConfig = event_queue.EventQueueConfig;
 pub const ConnectionParameters = types.ConnectionParameters;
 pub const ConnectionEvent = types.ConnectionEvent;
 pub const ConnectionEventCallback = types.ConnectionEventCallback;
@@ -34,6 +39,7 @@ pub const mock = @import("mock/mod.zig");
 pub const MockController = mock.MockController;
 pub const MockDevice = mock.MockDevice;
 pub const MockCharacteristic = mock.MockCharacteristic;
+pub const MockDescriptor = mock.MockDescriptor;
 
 pub const bluez = @import("bluez/mod.zig");
 pub const BluezBackend = bluez.BluezBackend;
@@ -120,22 +126,22 @@ pub const MacosBackend = struct {
             }
         }.f,
         .readCharacteristic = struct {
-            fn f(_: *anyopaque, _: *anyopaque, _: UUID, _: []u8) BleError!usize {
+            fn f(_: *anyopaque, _: *anyopaque, _: CharacteristicSelector, _: []u8) BleError!usize {
                 return BleError.NotSupported;
             }
         }.f,
         .writeCharacteristic = struct {
-            fn f(_: *anyopaque, _: *anyopaque, _: UUID, _: []const u8, _: bool) BleError!void {
+            fn f(_: *anyopaque, _: *anyopaque, _: CharacteristicSelector, _: []const u8, _: bool) BleError!void {
                 return BleError.NotSupported;
             }
         }.f,
         .subscribeNotifications = struct {
-            fn f(_: *anyopaque, _: *anyopaque, _: UUID, _: NotificationCallback, _: ?*anyopaque) BleError!void {
+            fn f(_: *anyopaque, _: *anyopaque, _: CharacteristicSelector, _: NotificationCallback, _: ?*anyopaque) BleError!void {
                 return BleError.NotSupported;
             }
         }.f,
         .unsubscribeNotifications = struct {
-            fn f(_: *anyopaque, _: *anyopaque, _: UUID) BleError!void {
+            fn f(_: *anyopaque, _: *anyopaque, _: CharacteristicSelector) BleError!void {
                 return BleError.NotSupported;
             }
         }.f,
@@ -173,6 +179,7 @@ test {
     _ = bluez;
     _ = windows;
     _ = unified;
+    _ = event_queue;
     _ = hci_backend;
     _ = uart_backend;
 }

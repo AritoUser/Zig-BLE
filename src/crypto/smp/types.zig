@@ -186,6 +186,9 @@ pub const SmpState = enum {
     wait_public_key,
     wait_confirm,
     wait_random,
+    wait_numeric_comparison,
+    /// Passkey Entry needs the passkey: call `providePasskey` (or `rejectPasskey`).
+    wait_passkey,
     wait_dhkey_check,
     key_distribution,
     completed,

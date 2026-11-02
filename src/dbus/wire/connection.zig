@@ -46,7 +46,8 @@ pub const DBusError = error{
     Unexpected,
 };
 
-fn getMonotonicMs() i64 {
+/// Monotonic clock in milliseconds (0 on non-Linux targets).
+pub fn getMonotonicMs() i64 {
     if (builtin.os.tag == .linux) {
         var ts: std.os.linux.timespec = undefined;
         _ = std.os.linux.clock_gettime(std.os.linux.CLOCK.MONOTONIC, &ts);
@@ -78,64 +79,8 @@ pub const ReleaseNameReply = enum(u32) {
     not_owner = 3,
 };
 
-pub const Mutex = struct {
-    state: std.atomic.Value(u32) = std.atomic.Value(u32).init(UNLOCKED),
-
-    const UNLOCKED: u32 = 0;
-    const LOCKED: u32 = 1;
-    const CONTENDED: u32 = 2;
-
-    pub fn lock(self: *Mutex) void {
-        // Fast path: try to acquire uncontended lock
-        var c = self.state.cmpxchgWeak(UNLOCKED, LOCKED, .acquire, .monotonic) orelse return;
-
-        // Brief spin loop to avoid syscall overhead on short critical sections
-        var spins: usize = 0;
-        while (spins < 16) : (spins += 1) {
-            if (c == UNLOCKED) {
-                c = self.state.cmpxchgWeak(UNLOCKED, LOCKED, .acquire, .monotonic) orelse return;
-            }
-            std.atomic.spinLoopHint();
-            c = self.state.load(.monotonic);
-        }
-
-        // Transition to CONTENDED state
-        if (c != CONTENDED) {
-            c = self.state.swap(CONTENDED, .acquire);
-        }
-
-        // Put thread to sleep in OS kernel (0% CPU on Linux) until unlocked
-        while (c != UNLOCKED) {
-            if (builtin.os.tag == .linux) {
-                _ = std.os.linux.futex_4arg(
-                    &self.state.raw,
-                    .{ .cmd = .WAIT, .private = true },
-                    CONTENDED,
-                    null,
-                );
-            } else {
-                std.Thread.yield() catch {};
-            }
-            c = self.state.swap(CONTENDED, .acquire);
-        }
-    }
-
-    pub fn unlock(self: *Mutex) void {
-        if (self.state.swap(UNLOCKED, .release) == CONTENDED) {
-            if (builtin.os.tag == .linux) {
-                _ = std.os.linux.futex_3arg(
-                    &self.state.raw,
-                    .{ .cmd = .WAKE, .private = true },
-                    1,
-                );
-            }
-        }
-    }
-
-    pub fn tryLock(self: *Mutex) bool {
-        return self.state.cmpxchgStrong(UNLOCKED, LOCKED, .acquire, .monotonic) == null;
-    }
-};
+/// Blocking mutex (futex on Linux); see `src/sync.zig`.
+pub const Mutex = @import("../../sync.zig").Mutex;
 
 pub const Connection = struct {
     allocator: std.mem.Allocator,
@@ -702,6 +647,8 @@ fn mapDBusError(error_name: ?[]const u8) DBusError {
     if (std.mem.endsWith(u8, name, "PropertyReadOnly")) return DBusError.PropertyReadOnly;
     if (std.mem.endsWith(u8, name, "InvalidArgs")) return DBusError.InvalidArgs;
     if (std.mem.endsWith(u8, name, "AccessDenied")) return DBusError.AccessDenied;
+    // BlueZ: the characteristic does not allow this operation, or requires pairing
+    if (std.mem.endsWith(u8, name, "NotPermitted") or std.mem.endsWith(u8, name, "NotAuthorized")) return DBusError.AccessDenied;
     if (std.mem.endsWith(u8, name, "NoReply")) return DBusError.NoReply;
     if (std.mem.endsWith(u8, name, "Timeout")) return DBusError.Timeout;
     return DBusError.Failed;

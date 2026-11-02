@@ -13,18 +13,59 @@ pub const UUID = types.UUID;
 pub const ScanFilter = types.ScanFilter;
 pub const ScanCallback = types.ScanCallback;
 pub const NotificationCallback = types.NotificationCallback;
+pub const CharacteristicSelector = types.CharacteristicSelector;
+pub const CharacteristicInfo = types.CharacteristicInfo;
 pub const DiscoveredDevice = types.DiscoveredDevice;
 pub const BleError = types.BleError;
 pub const BackendVTable = vtable_mod.BackendVTable;
 pub const Backend = vtable_mod.Backend;
 
+pub const MockDescriptor = struct {
+    uuid: UUID,
+    value: [32]u8 = @splat(0),
+    value_len: u8 = 0,
+
+    pub fn init(uuid: UUID, data: []const u8) MockDescriptor {
+        var d = MockDescriptor{ .uuid = uuid };
+        const len = @min(d.value.len, data.len);
+        @memcpy(d.value[0..len], data[0..len]);
+        d.value_len = @intCast(len);
+        return d;
+    }
+};
+
 pub const MockCharacteristic = struct {
     uuid: UUID,
+    /// Service the characteristic belongs to (0x0000 = unspecified).
+    service_uuid: UUID = UUID.from16(0),
     value: [128]u8 = @splat(0),
     value_len: u8 = 0,
     can_read: bool = true,
     can_write: bool = true,
     can_notify: bool = true,
+
+    notify_cb: ?NotificationCallback = null,
+    notify_user_data: ?*anyopaque = null,
+    /// Whether the peripheral currently sends notifications. Like a real peer it forgets this
+    /// when the link goes down, whatever the host still remembers.
+    notifying: bool = false,
+
+    descriptors: [4]MockDescriptor = undefined,
+    descriptors_len: u8 = 0,
+
+    pub fn addDescriptor(self: *MockCharacteristic, desc: MockDescriptor) bool {
+        if (self.descriptors_len == self.descriptors.len) return false;
+        self.descriptors[self.descriptors_len] = desc;
+        self.descriptors_len += 1;
+        return true;
+    }
+
+    pub fn findDescriptor(self: *MockCharacteristic, uuid: UUID) ?*MockDescriptor {
+        for (self.descriptors[0..self.descriptors_len]) |*d| {
+            if (d.uuid.eql(uuid)) return d;
+        }
+        return null;
+    }
 
     pub fn getValue(self: *const MockCharacteristic) []const u8 {
         return self.value[0..self.value_len];
@@ -43,13 +84,11 @@ pub const MockDevice = struct {
     name_len: u8 = 0,
     rssi: i16 = -55,
     is_connected: bool = false,
+    connection_state: types.ConnectionState = .disconnected,
+    auto_resubscribe: bool = false,
 
     characteristics: [16]MockCharacteristic = undefined,
     characteristics_len: u8 = 0,
-
-    notify_cb: ?NotificationCallback = null,
-    notify_user_data: ?*anyopaque = null,
-    subscribed_uuid: ?UUID = null,
 
     mtu: u16 = 23,
     bond_state: types.BondState = .not_bonded,
@@ -74,11 +113,17 @@ pub const MockDevice = struct {
         return false;
     }
 
-    pub fn findCharacteristic(self: *MockDevice, uuid: UUID) ?*MockCharacteristic {
+    pub fn findCharacteristic(self: *MockDevice, char: anytype) ?*MockCharacteristic {
+        const chars = self.characteristics[0..self.characteristics_len];
+        const idx = CharacteristicSelector.from(char).find(chars) orelse return null;
+        return &chars[idx];
+    }
+
+    pub fn clearSubscriptions(self: *MockDevice) void {
         for (self.characteristics[0..self.characteristics_len]) |*ch| {
-            if (ch.uuid.eql(uuid)) return ch;
+            ch.notify_cb = null;
+            ch.notify_user_data = null;
         }
-        return null;
     }
 };
 
@@ -110,16 +155,13 @@ pub const MockController = struct {
         return null;
     }
 
-    pub fn triggerNotification(self: *MockController, addr: Address, uuid: UUID, data: []const u8) BleError!void {
+    /// Simulates a notification from the characteristic `char` (a `UUID` or a `CharacteristicSelector`).
+    pub fn triggerNotification(self: *MockController, addr: Address, char: anytype, data: []const u8) BleError!void {
         const dev = self.findDeviceByAddress(addr) orelse return BleError.DeviceNotFound;
         if (!dev.is_connected) return BleError.NotConnected;
-        if (dev.notify_cb) |cb| {
-            if (dev.subscribed_uuid) |sub_uuid| {
-                if (sub_uuid.eql(uuid)) {
-                    cb(uuid, data, dev.notify_user_data);
-                }
-            }
-        }
+        const ch = dev.findCharacteristic(char) orelse return BleError.CharacteristicNotFound;
+        if (!ch.notifying) return;
+        if (ch.notify_cb) |cb| cb(ch.uuid, data, ch.notify_user_data);
     }
 
     // Backend implementation methods
@@ -183,6 +225,11 @@ pub const MockController = struct {
         if (!self.powered) return BleError.NotPowered;
         const dev = self.findDeviceByAddress(addr) orelse return BleError.DeviceNotFound;
         dev.is_connected = true;
+        dev.connection_state = .connected;
+        // The peripheral starts every connection with notifications off.
+        for (dev.characteristics[0..dev.characteristics_len]) |*ch| {
+            ch.notifying = dev.auto_resubscribe and ch.notify_cb != null;
+        }
         return @ptrCast(dev);
     }
 
@@ -190,8 +237,10 @@ pub const MockController = struct {
         _ = ctx;
         const dev: *MockDevice = @ptrCast(@alignCast(dev_handle));
         dev.is_connected = false;
-        dev.notify_cb = null;
-        dev.subscribed_uuid = null;
+        dev.connection_state = .disconnected;
+        if (!dev.auto_resubscribe) {
+            dev.clearSubscriptions();
+        }
     }
 
     pub fn isDeviceConnected(ctx: *anyopaque, dev_handle: *anyopaque) bool {
@@ -212,52 +261,78 @@ pub const MockController = struct {
         if (!dev.is_connected) return BleError.NotConnected;
     }
 
-    pub fn readCharacteristic(ctx: *anyopaque, dev_handle: *anyopaque, char_uuid: UUID, buf: []u8) BleError!usize {
+    pub fn readCharacteristic(ctx: *anyopaque, dev_handle: *anyopaque, char: CharacteristicSelector, buf: []u8) BleError!usize {
         _ = ctx;
         const dev: *MockDevice = @ptrCast(@alignCast(dev_handle));
         if (!dev.is_connected) return BleError.NotConnected;
-        const char = dev.findCharacteristic(char_uuid) orelse return BleError.CharacteristicNotFound;
-        if (!char.can_read) return BleError.PermissionDenied;
+        const ch = dev.findCharacteristic(char) orelse return BleError.CharacteristicNotFound;
+        if (!ch.can_read) return BleError.PermissionDenied;
 
-        const val = char.getValue();
+        const val = ch.getValue();
         const copy_len = @min(buf.len, val.len);
         @memcpy(buf[0..copy_len], val[0..copy_len]);
         return copy_len;
     }
 
-    pub fn writeCharacteristic(ctx: *anyopaque, dev_handle: *anyopaque, char_uuid: UUID, data: []const u8, with_response: bool) BleError!void {
+    pub fn writeCharacteristic(ctx: *anyopaque, dev_handle: *anyopaque, char: CharacteristicSelector, data: []const u8, with_response: bool) BleError!void {
         _ = ctx;
         _ = with_response;
         const dev: *MockDevice = @ptrCast(@alignCast(dev_handle));
         if (!dev.is_connected) return BleError.NotConnected;
-        const char = dev.findCharacteristic(char_uuid) orelse return BleError.CharacteristicNotFound;
-        if (!char.can_write) return BleError.PermissionDenied;
+        const ch = dev.findCharacteristic(char) orelse return BleError.CharacteristicNotFound;
+        if (!ch.can_write) return BleError.PermissionDenied;
 
-        char.setValue(data);
+        ch.setValue(data);
     }
 
-    pub fn subscribeNotifications(ctx: *anyopaque, dev_handle: *anyopaque, char_uuid: UUID, cb: NotificationCallback, user_data: ?*anyopaque) BleError!void {
+    pub fn subscribeNotifications(ctx: *anyopaque, dev_handle: *anyopaque, char: CharacteristicSelector, cb: NotificationCallback, user_data: ?*anyopaque) BleError!void {
         _ = ctx;
         const dev: *MockDevice = @ptrCast(@alignCast(dev_handle));
         if (!dev.is_connected) return BleError.NotConnected;
-        const char = dev.findCharacteristic(char_uuid) orelse return BleError.CharacteristicNotFound;
-        if (!char.can_notify) return BleError.PermissionDenied;
+        const ch = dev.findCharacteristic(char) orelse return BleError.CharacteristicNotFound;
+        if (!ch.can_notify) return BleError.PermissionDenied;
 
-        dev.notify_cb = cb;
-        dev.notify_user_data = user_data;
-        dev.subscribed_uuid = char_uuid;
+        ch.notify_cb = cb;
+        ch.notify_user_data = user_data;
+        ch.notifying = true;
     }
 
-    pub fn unsubscribeNotifications(ctx: *anyopaque, dev_handle: *anyopaque, char_uuid: UUID) BleError!void {
+    pub fn unsubscribeNotifications(ctx: *anyopaque, dev_handle: *anyopaque, char: CharacteristicSelector) BleError!void {
         _ = ctx;
         const dev: *MockDevice = @ptrCast(@alignCast(dev_handle));
-        if (dev.subscribed_uuid) |sub_uuid| {
-            if (sub_uuid.eql(char_uuid)) {
-                dev.notify_cb = null;
-                dev.subscribed_uuid = null;
-                dev.notify_user_data = null;
-            }
-        }
+        const ch = dev.findCharacteristic(char) orelse return;
+        ch.notify_cb = null;
+        ch.notify_user_data = null;
+        ch.notifying = false;
+    }
+
+    pub fn readDescriptor(ctx: *anyopaque, dev_handle: *anyopaque, char: CharacteristicSelector, descriptor: UUID, buf: []u8) BleError!usize {
+        _ = ctx;
+        const dev: *MockDevice = @ptrCast(@alignCast(dev_handle));
+        if (!dev.is_connected) return BleError.NotConnected;
+        const ch = dev.findCharacteristic(char) orelse return BleError.CharacteristicNotFound;
+        const desc = ch.findDescriptor(descriptor) orelse return BleError.DescriptorNotFound;
+        const n = @min(buf.len, desc.value_len);
+        @memcpy(buf[0..n], desc.value[0..n]);
+        return n;
+    }
+
+    pub fn writeDescriptor(ctx: *anyopaque, dev_handle: *anyopaque, char: CharacteristicSelector, descriptor: UUID, data: []const u8) BleError!void {
+        _ = ctx;
+        const dev: *MockDevice = @ptrCast(@alignCast(dev_handle));
+        if (!dev.is_connected) return BleError.NotConnected;
+        const ch = dev.findCharacteristic(char) orelse return BleError.CharacteristicNotFound;
+        const desc = ch.findDescriptor(descriptor) orelse return BleError.DescriptorNotFound;
+        if (data.len > desc.value.len) return BleError.BufferTooSmall;
+        @memcpy(desc.value[0..data.len], data);
+        desc.value_len = @intCast(data.len);
+    }
+
+    pub fn getCharacteristics(ctx: *anyopaque, dev_handle: *anyopaque, out: []CharacteristicInfo) BleError!usize {
+        _ = ctx;
+        const dev: *MockDevice = @ptrCast(@alignCast(dev_handle));
+        if (!dev.is_connected) return BleError.NotConnected;
+        return CharacteristicInfo.list(dev.characteristics[0..dev.characteristics_len], out);
     }
 
     pub fn exchangeMtu(ctx: *anyopaque, dev_handle: *anyopaque, target_mtu: u16) BleError!u16 {
@@ -289,6 +364,31 @@ pub const MockController = struct {
         return dev.bond_state;
     }
 
+    pub fn getConnectionState(ctx: *anyopaque, dev_handle: *anyopaque) types.ConnectionState {
+        _ = ctx;
+        const dev: *MockDevice = @ptrCast(@alignCast(dev_handle));
+        return dev.connection_state;
+    }
+
+    pub fn setAutoResubscribe(ctx: *anyopaque, dev_handle: *anyopaque, enabled: bool) void {
+        _ = ctx;
+        const dev: *MockDevice = @ptrCast(@alignCast(dev_handle));
+        dev.auto_resubscribe = enabled;
+    }
+
+    pub fn discoverServicesFiltered(ctx: *anyopaque, dev_handle: *anyopaque, filter_uuids: []const UUID) BleError!void {
+        _ = ctx;
+        const dev: *MockDevice = @ptrCast(@alignCast(dev_handle));
+        if (!dev.is_connected) return BleError.NotConnected;
+        if (filter_uuids.len == 0) return;
+        for (dev.characteristics[0..dev.characteristics_len]) |*ch| {
+            for (filter_uuids) |wanted| {
+                if (wanted.eql(ch.service_uuid)) return;
+            }
+        }
+        return BleError.ServiceNotFound;
+    }
+
     pub const vtable: BackendVTable = .{
         .name = "MockController",
         .openAdapter = openAdapter,
@@ -310,6 +410,12 @@ pub const MockController = struct {
         .pairDevice = pairDevice,
         .unpairDevice = unpairDevice,
         .getBondState = getBondState,
+        .getCharacteristics = getCharacteristics,
+        .readDescriptor = readDescriptor,
+        .writeDescriptor = writeDescriptor,
+        .getConnectionState = getConnectionState,
+        .setAutoResubscribe = setAutoResubscribe,
+        .discoverServicesFiltered = discoverServicesFiltered,
     };
 
     pub fn asBackend(self: *MockController) Backend {

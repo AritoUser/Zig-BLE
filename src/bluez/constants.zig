@@ -64,6 +64,20 @@ pub const BlueZ = struct {
     pub const Device1 = struct {
         pub const interface_name = Interfaces.device;
 
+        pub const Signals = struct {
+            /// `Disconnected(s reason, s message)`, BlueZ 5.71+. `reason` is one of `Reasons`.
+            pub const Disconnected = "Disconnected";
+        };
+
+        pub const Reasons = struct {
+            pub const Unknown = "org.bluez.Reason.Unknown";
+            pub const Timeout = "org.bluez.Reason.Timeout";
+            pub const Local = "org.bluez.Reason.Local";
+            pub const Remote = "org.bluez.Reason.Remote";
+            pub const Authentication = "org.bluez.Reason.Authentication";
+            pub const Suspend = "org.bluez.Reason.Suspend";
+        };
+
         pub const Methods = struct {
             pub const Connect = "Connect";
             pub const Disconnect = "Disconnect";
