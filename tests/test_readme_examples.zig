@@ -98,3 +98,35 @@ test "README Example 4: GATT Server & Peripheral Security Flags" {
     try std.testing.expectEqual(@as(usize, 1), app.service_count);
     try std.testing.expectEqual(@as(i32, 3), char.flags.toWinRtReadProtection());
 }
+
+test "README Quickstart 1: Cross-Platform Unified Scanner" {
+    var mock = ble.MockController.init();
+    var adapter = ble.UnifiedAdapter.init(mock.asBackend());
+    try adapter.setPowered(true);
+
+    const Scanner = struct {
+        count: usize = 0,
+        fn onDevice(dev: *const ble.backend.DiscoveredDevice, udata: ?*anyopaque) void {
+            const self: *@This() = @ptrCast(@alignCast(udata));
+            self.count += 1;
+            const addr = dev.address.toString();
+            _ = addr;
+            _ = dev.getName() orelse "<Unknown>";
+        }
+    };
+
+    var scanner = Scanner{};
+    try adapter.startScan(.{}, Scanner.onDevice, &scanner);
+    defer adapter.stopScan() catch {};
+
+    try adapter.processEvents(10);
+}
+
+test "README Quickstart 3: Wireshark PCAP Protocol Capture Generator" {
+    var buffer: [512]u8 = undefined;
+    var writer = ble.pcap.BufferWriter.init(&buffer);
+    var pcap_writer = ble.pcap.PcapWriter(*ble.pcap.BufferWriter).init(&writer);
+    try pcap_writer.writeHeader(); // Standard PCAP magic (DLT_BLUETOOTH_HCI_H4)
+    try pcap_writer.writeAttPdu(0x0040, 0x0004, &[_]u8{ 0x02, 0xF7, 0x00 });
+    try std.testing.expect(writer.pos > 24);
+}

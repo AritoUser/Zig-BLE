@@ -25,6 +25,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * **Public functions that did not compile on first use**, because no test called them: `L2capSocket.setNonBlocking`, `getSecurityLevel` and `read`, `HciController.sendL2capPdu`, and the ATT PDU encoder for handle lists. `zig build check-api` now compiles every public function.
 
 ### Added
+* **HCI & UART Low-Level Stack (`HciBackend`, `UartBackend`)**:
+  * TrouBLE-style event runner / packet pump (`pumpEvents` / `processEvents`) supporting both Linux raw HCI sockets (`ctrl.sock.poll` + `readPacket`) and custom transport hooks.
+  * Synchronous GATT operations (`connectDevice`, `readCharacteristic`, `writeCharacteristic`, `discoverServicesFiltered`, `exchangeMtu`, `readDescriptor`, `writeDescriptor`) with timeout deadlines.
+  * Real HCI connection lifecycle integration: `le_connection_complete`, `le_enhanced_connection_complete`, `disconnection_complete`, `number_of_completed_packets` credit replenishment via `AclFlowController`, and `le_advertising_report` AD payload parsing.
+  * Full `BackendVTable` parity: implemented `processEvents`, `getConnectionState`, `setAutoResubscribe`, `discoverServicesFiltered`, `getCharacteristics`, `readDescriptor`, and `writeDescriptor`.
+  * `UartBackend` serial event runner binding via `bindSerialPoller(poller)`.
+* **SMP (Security Manager Protocol) State Machine Phase 2 & 3 Enhancements**:
+  * Numeric Comparison user confirmation handling with MITM protection via `confirmNumericComparison(accept, out_buf)`.
+  * LE Secure Connections 20-round bitwise Passkey Entry (`f4` per bit with `0x80 | bit_i` across 20 rounds).
+  * Phase 3 Key Distribution for Identity Information (IRK & identity address) and Encryption Information (LTK).
 * `ConnectionState` enum (`disconnected`, `connecting`, `connected`, `disconnecting`) accessible via `UnifiedDevice.getConnectionState()` and `Backend.getConnectionState()`.
 * `UnifiedDevice.setAutoResubscribe(bool)` / `Backend.setAutoResubscribe` (Windows, BlueZ, mock) to automatically re-subscribe active notifications upon device reconnection without losing callbacks.
 * `UnifiedDevice.discoverServicesFiltered(filter_uuids)` / `Backend.discoverServicesFiltered` (Windows, BlueZ, mock) to restrict GATT discovery to specified service UUIDs.

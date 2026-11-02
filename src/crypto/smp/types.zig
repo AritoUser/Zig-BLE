@@ -186,6 +186,7 @@ pub const SmpState = enum {
     wait_public_key,
     wait_confirm,
     wait_random,
+    wait_numeric_comparison,
     wait_dhkey_check,
     key_distribution,
     completed,
