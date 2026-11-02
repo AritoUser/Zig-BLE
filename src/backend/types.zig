@@ -78,6 +78,14 @@ pub const BondState = enum(u8) {
     bonded = 2,
 };
 
+/// Observable connection state of a BLE peer device.
+pub const ConnectionState = enum(u8) {
+    disconnected = 0,
+    connecting = 1,
+    connected = 2,
+    disconnecting = 3,
+};
+
 /// IO Capabilities for BLE Security Manager (SMP) pairing.
 pub const IoCapability = enum(u8) {
     display_only = 0,
@@ -149,6 +157,10 @@ pub const DiscoveredDevice = struct {
     mfg_len: u8 = 0,
     company_id: ?u16 = null,
 
+    service_data_uuid: ?UUID = null,
+    service_data_buffer: [64]u8 = undefined,
+    service_data_len: u8 = 0,
+
     service_uuids: [8]UUID = undefined,
     service_uuids_len: u8 = 0,
 
@@ -173,6 +185,21 @@ pub const DiscoveredDevice = struct {
         const len = @min(self.mfg_buffer.len, data.len);
         @memcpy(self.mfg_buffer[0..len], data[0..len]);
         self.mfg_len = @intCast(len);
+    }
+
+    pub fn getServiceData(self: *const DiscoveredDevice) ?struct { uuid: UUID, data: []const u8 } {
+        if (self.service_data_len == 0 or self.service_data_uuid == null) return null;
+        return .{
+            .uuid = self.service_data_uuid.?,
+            .data = self.service_data_buffer[0..self.service_data_len],
+        };
+    }
+
+    pub fn setServiceData(self: *DiscoveredDevice, uuid: UUID, data: []const u8) void {
+        self.service_data_uuid = uuid;
+        const len = @min(self.service_data_buffer.len, data.len);
+        @memcpy(self.service_data_buffer[0..len], data[0..len]);
+        self.service_data_len = @intCast(len);
     }
 
     pub fn getServiceUuids(self: *const DiscoveredDevice) []const UUID {
@@ -369,6 +396,15 @@ test "DiscoveredDevice zero-alloc helper tests" {
     dev.setManufacturerData(0x0059, &[_]u8{ 0x01, 0x02, 0x03 });
     try std.testing.expectEqual(@as(u16, 0x0059), dev.company_id.?);
     try std.testing.expectEqualSlices(u8, &[_]u8{ 0x01, 0x02, 0x03 }, dev.getManufacturerData().?);
+
+    dev.tx_power = -12;
+    try std.testing.expectEqual(@as(?i16, -12), dev.tx_power);
+
+    const sdata_uuid = UUID.from16(0x181A);
+    dev.setServiceData(sdata_uuid, &[_]u8{ 0xAB, 0xCD });
+    const sdata = dev.getServiceData().?;
+    try std.testing.expect(sdata.uuid.eql(sdata_uuid));
+    try std.testing.expectEqualSlices(u8, &[_]u8{ 0xAB, 0xCD }, sdata.data);
 
     const test_uuid = UUID.from16(0x180D);
     try std.testing.expect(dev.addServiceUuid(test_uuid));

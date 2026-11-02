@@ -358,6 +358,7 @@ pub const BluezBackend = struct {
         if (info.tx_power) |tx| dev.tx_power = tx;
         if (info.getName()) |name| dev.setName(name);
         if (info.manufacturer_id) |company| dev.setManufacturerData(company, info.getManufacturerData().?);
+        if (info.service_data_uuid) |s_uuid| dev.setServiceData(s_uuid, info.service_data_buf[0..info.service_data_len]);
         if (info.service_uuids_len > 0) {
             dev.service_uuids_len = 0;
             for (info.getServiceUuids()) |uuid| _ = dev.addServiceUuid(uuid);
@@ -396,6 +397,23 @@ pub const BluezBackend = struct {
         if (self.findDeviceByPath(path)) |dev| {
             if (!dev.is_connected) {
                 dev.is_connected = true;
+                dev.connection_state = .connected;
+                if (builtin.os.tag == .linux) {
+                    if (dev.auto_resubscribe) {
+                        if (self.conn) |*c| {
+                            for (dev.characteristics[0..dev.characteristics_len]) |*ch| {
+                                if (ch.notify_cb != null and !ch.is_notifying) {
+                                    var gch = gatt_client.GattCharacteristic.init(c, ch.getPath());
+                                    gch.startNotify() catch |err| {
+                                        log.warn("BlueZ auto-resubscribe failed for {s}: {s}", .{ ch.getPath(), @errorName(err) });
+                                        continue;
+                                    };
+                                    ch.is_notifying = true;
+                                }
+                            }
+                        }
+                    }
+                }
                 self.pushConnectionEvent(.{ .connected = .{ .address = dev.address } }, pending);
             }
         }
@@ -415,7 +433,14 @@ pub const BluezBackend = struct {
         if (self.findDeviceByPath(path)) |dev| {
             const was_connected = dev.is_connected;
             dev.is_connected = false;
-            dev.clearSubscriptions();
+            dev.connection_state = .disconnected;
+            if (!dev.auto_resubscribe) {
+                dev.clearSubscriptions();
+            } else {
+                for (dev.characteristics[0..dev.characteristics_len]) |*ch| {
+                    ch.is_notifying = false;
+                }
+            }
             if (was_connected) {
                 self.pushConnectionEvent(.{ .disconnected = .{ .address = dev.address, .reason_code = reason_code } }, pending);
             }
@@ -685,6 +710,7 @@ pub const BluezBackend = struct {
         const deadline = wire.getMonotonicMs() + eff_timeout;
 
         var dev_slot = self.allocateDeviceSlot(addr) orelse return BleError.PoolExhausted;
+        dev_slot.connection_state = .connecting;
 
         var path_buf: [96]u8 = undefined;
         const d_path = BlueZ.buildDevicePath(&path_buf, self.getAdapterPath(), addr);
@@ -693,6 +719,7 @@ pub const BluezBackend = struct {
         var dev = device_mod.Device.init(conn_ptr, dev_slot.getPath());
         dev.connectWithTimeout(eff_timeout) catch |err| {
             log.err("BlueZ Device1.Connect failed for {s}: {s}", .{ dev_slot.getPath(), @errorName(err) });
+            dev_slot.connection_state = .disconnected;
             dev_slot.in_use = false;
             return switch (err) {
                 // BlueZ only knows devices it has seen; scan before connecting.
@@ -702,6 +729,7 @@ pub const BluezBackend = struct {
             };
         };
         dev_slot.is_connected = true;
+        dev_slot.connection_state = .connected;
 
         // Connect returns before BlueZ has resolved the GATT database; GATT calls before
         // `ServicesResolved` would see no characteristics.
@@ -710,6 +738,7 @@ pub const BluezBackend = struct {
             log.err("BlueZ services of {s} not resolved: {s}", .{ dev_slot.getPath(), @errorName(err) });
             dev.disconnect() catch {};
             dev_slot.is_connected = false;
+            dev_slot.connection_state = .disconnected;
             dev_slot.in_use = false;
             return if (err == error.Disconnected) BleError.Disconnected else BleError.ConnectionTimeout;
         };
@@ -726,9 +755,13 @@ pub const BluezBackend = struct {
         const conn_ptr = if (self.conn) |*c| c else return BleError.AdapterNotFound;
         const dev_slot: *BluezDeviceContext = @ptrCast(@alignCast(dev_handle));
 
+        dev_slot.connection_state = .disconnecting;
         var dev = device_mod.Device.init(conn_ptr, dev_slot.getPath());
-        dev_slot.clearSubscriptions();
+        if (!dev_slot.auto_resubscribe) {
+            dev_slot.clearSubscriptions();
+        }
         dev_slot.is_connected = false;
+        dev_slot.connection_state = .disconnected;
         dev.disconnect() catch |err| {
             log.warn("BlueZ Device1.Disconnect failed: {s}", .{@errorName(err)});
             return BleError.IoError;
@@ -768,7 +801,25 @@ pub const BluezBackend = struct {
         return dev.getRSSI() catch dev_slot.rssi;
     }
 
+    pub fn getConnectionState(ctx: *anyopaque, dev_handle: *anyopaque) types.ConnectionState {
+        if (builtin.os.tag != .linux) return .disconnected;
+        _ = ctx;
+        const dev_slot: *BluezDeviceContext = @ptrCast(@alignCast(dev_handle));
+        return dev_slot.connection_state;
+    }
+
+    pub fn setAutoResubscribe(ctx: *anyopaque, dev_handle: *anyopaque, enabled: bool) void {
+        if (builtin.os.tag != .linux) return;
+        _ = ctx;
+        const dev_slot: *BluezDeviceContext = @ptrCast(@alignCast(dev_handle));
+        dev_slot.auto_resubscribe = enabled;
+    }
+
     pub fn discoverServices(ctx: *anyopaque, dev_handle: *anyopaque) BleError!void {
+        return discoverServicesFiltered(ctx, dev_handle, &.{});
+    }
+
+    pub fn discoverServicesFiltered(ctx: *anyopaque, dev_handle: *anyopaque, filter_uuids: []const UUID) BleError!void {
         if (builtin.os.tag != .linux) return BleError.NotSupported;
         const self: *BluezBackend = @ptrCast(@alignCast(ctx));
         self.mutex.lock();
@@ -832,6 +883,7 @@ pub const BluezBackend = struct {
         var it = reply.iterator();
         object_manager.parseManagedObjects(&it, DiscoverVisitor, &visitor);
 
+        var kept: usize = 0;
         for (dev_slot.characteristics[0..dev_slot.characteristics_len]) |*ch| {
             for (visitor.services[0..visitor.services_len]) |*svc| {
                 if (std.mem.eql(u8, svc.getObjectPath(), ch.getServicePath())) {
@@ -839,7 +891,22 @@ pub const BluezBackend = struct {
                     break;
                 }
             }
+
+            if (filter_uuids.len > 0) {
+                var matches = false;
+                for (filter_uuids) |f_uuid| {
+                    if (f_uuid.eql(ch.service_uuid)) {
+                        matches = true;
+                        break;
+                    }
+                }
+                if (!matches) continue;
+            }
+
+            dev_slot.characteristics[kept] = ch.*;
+            kept += 1;
         }
+        dev_slot.characteristics_len = @intCast(kept);
         dev_slot.sortCharacteristics();
         if (visitor.overflow_error) return BleError.PoolExhausted;
     }
@@ -1183,6 +1250,9 @@ pub const BluezBackend = struct {
         .acquireNotifyFd = acquireNotifyFd,
         .getCharacteristics = getCharacteristics,
         .processEvents = processEvents,
+        .getConnectionState = getConnectionState,
+        .setAutoResubscribe = setAutoResubscribe,
+        .discoverServicesFiltered = discoverServicesFiltered,
         .readDescriptor = readDescriptor,
         .writeDescriptor = writeDescriptor,
     };

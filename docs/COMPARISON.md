@@ -96,7 +96,7 @@ Alle Punkte wurden im Code nachgeprüft.
 - Lösung: genauso vorgehen. Das ersetzt auch die MTU-Abfrage über den Umweg
   `IGattDeviceService3.Session`.
 
-**F5. Windows: Herstellerdaten, Service-Daten, TX-Power und Adresstyp fehlen beim Scan** — ✅ behoben bis auf Service-Daten (unveröffentlicht, nicht auf Hardware verifiziert)
+**F5. Windows: Herstellerdaten, Service-Daten, TX-Power und Adresstyp fehlen beim Scan** — ✅ behoben (Herstellerdaten, Service-Daten via DataSections 0x16/0x20/0x21, TX-Power, Adresstyp und Zusammenführung von Advertisement & Scan Response)
 - [`scan.zig:18`](../src/backend/windows/scan.zig) liest nur Name, RSSI und Service-UUIDs.
 - `get_ManufacturerData` und `get_DataSections` sind in den Bindings deklariert, werden aber
   nicht benutzt. `DiscoveredDevice.mfg_buffer` bleibt auf echten Backends immer leer.
@@ -341,8 +341,8 @@ Alle Punkte wurden im Code nachgeprüft.
 | 7 | Blockierender Mutex statt Spinlock, nicht über Awaits halten (F7, F8) | – |
 | 8 | Bumble als virtueller Controller in der Linux-CI — *offen; als Zwischenschritt testet `tests/bluez_fake_e2e.zig` das Backend gegen ein simuliertes `org.bluez`* | Bumble |
 | 9 | Ein einheitliches Event-Modell (`union(enum)`) mit `nextEvent()` — ✅ `EventQueue` | btleplug, TrouBLE |
-| 10 | `ConnectionState` und automatisches Neu-Abonnieren nach Reconnect — *offen* | Kable |
-| 11 | Descriptors lesen/schreiben, Discovery mit UUID-Filter, Cache-Option (F9) — ✅ Descriptors und Cache-Option; UUID-Filter offen | btleplug, tinygo, bleak |
+| 10 | ConnectionState und automatisches Neu-Abonnieren nach Reconnect — ✅ ConnectionState (connecting/connected/disconnecting/disconnected) & setAutoResubscribe | Kable |
+| 11 | Descriptors lesen/schreiben, Discovery mit UUID-Filter, Cache-Option (F9) — ✅ Descriptors, Cache-Option & discoverServicesFiltered | btleplug, tinygo, bleak |
 | 12 | HCI-Backend nach dem Runner-Modell von TrouBLE fertigbauen — *offen* | TrouBLE, tinygo |
 | 13 | Plattform- und Troubleshooting-Doku — ✅ [TROUBLESHOOTING.md](TROUBLESHOOTING.md) | bleak |
 | 14 | C-API für Nutzung aus anderen Sprachen — *offen* | SimpleBLE |

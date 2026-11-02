@@ -20,6 +20,7 @@ pub const UartFramingMode = enum {
 };
 
 pub const SerialWriteCallback = *const fn (ctx: ?*anyopaque, wire_bytes: []const u8) BleError!void;
+pub const SerialPollCallback = *const fn (ctx: ?*anyopaque, timeout_ms: u32) BleError!void;
 
 pub const UartBackend = struct {
     mode: UartFramingMode = .h4,
@@ -28,6 +29,7 @@ pub const UartBackend = struct {
     h5_channel: hci_mod.H5Channel = .{},
     serial_ctx: ?*anyopaque = null,
     on_serial_write: ?SerialWriteCallback = null,
+    on_serial_poll: ?SerialPollCallback = null,
 
     pub fn init(mode: UartFramingMode) UartBackend {
         return .{ .mode = mode };
@@ -41,10 +43,28 @@ pub const UartBackend = struct {
     pub fn bindSerialWriter(self: *UartBackend, ctx: ?*anyopaque, writer: SerialWriteCallback) void {
         self.serial_ctx = ctx;
         self.on_serial_write = writer;
+        self.syncTransportHook();
+    }
+
+    /// Binds an optional serial event polling callback (TrouBLE-style event runner).
+    pub fn bindSerialPoller(self: *UartBackend, poller: SerialPollCallback) void {
+        self.on_serial_poll = poller;
+        self.syncTransportHook();
+    }
+
+    fn syncTransportHook(self: *UartBackend) void {
         self.inner.setTransportHook(.{
             .ctx = self,
             .on_send_packet = onInnerSendH4Packet,
+            .poll_packet = if (self.on_serial_poll != null) onInnerPollSerial else null,
         });
+    }
+
+    fn onInnerPollSerial(ctx: ?*anyopaque, timeout_ms: u32) BleError!void {
+        const self: *UartBackend = @ptrCast(@alignCast(ctx.?));
+        if (self.on_serial_poll) |poller| {
+            try poller(self.serial_ctx, timeout_ms);
+        }
     }
 
     fn onInnerSendH4Packet(ctx: ?*anyopaque, h4_packet: []const u8) BleError!void {
@@ -158,4 +178,26 @@ test "UartBackend: H4 and H5 3-Wire UART roundtrip with HciBackend" {
     try std.testing.expect(lb.tx_len >= 6);
     try std.testing.expectEqual(@as(u8, 0xC0), lb.tx_bytes[0]);
     try std.testing.expectEqual(@as(u8, 0xC0), lb.tx_bytes[lb.tx_len - 1]);
+}
+
+test "UartBackend: Serial Poller and TrouBLE-style event runner" {
+    const PollerState = struct {
+        poll_invoked: usize = 0,
+        fn poll(ctx: ?*anyopaque, _: u32) BleError!void {
+            const self_p: *@This() = @ptrCast(@alignCast(ctx.?));
+            self_p.poll_invoked += 1;
+        }
+        fn write(_: ?*anyopaque, _: []const u8) BleError!void {}
+    };
+
+    var state = PollerState{};
+    var uart = UartBackend.init(.h4);
+    defer uart.deinit();
+    uart.bindSerialWriter(&state, PollerState.write);
+    uart.bindSerialPoller(PollerState.poll);
+
+    const b = uart.backend();
+    try b.openAdapter(0);
+    try b.processEvents(50);
+    try std.testing.expectEqual(@as(usize, 1), state.poll_invoked);
 }

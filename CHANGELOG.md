@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 * **The Windows backend could not scan or use GATT (v1.3.0 to v1.3.2).** `startScan` failed with `IoError` because WinRT rejected the event handler (`E_NOINTERFACE`): the delegate IIDs for scan results and notifications and six GATT interface IIDs were wrong. The `IGattCharacteristic` vtable also lacked `put_ProtectionLevel`, which shifted every later method by one slot, so `get_Uuid`, read, write and subscribe called the wrong WinRT methods. All IIDs and vtables now match the Windows SDK; `scripts/check_winrt_bindings.py` checks this. Verified on hardware: scanning, connecting, discovery, reads, descriptors and notifications. Writes, pairing and the peripheral role are not.
+* **`src/dbus/wire/socket.zig` controllen compilation failure with `-Dlink-libc=true`.** Cast `controllen` with `@intCast` so both libc (`u32`) and standalone Linux syscalls (`usize`) compile cleanly.
+* **Windows & BlueZ scanner missed Service Data and TX Power.** WinRT `get_DataSections` now parses AD types 0x0A (TX Power), 0x16 (16-bit Service Data), 0x20 (32-bit) and 0x21 (128-bit); BlueZ parses the ServiceData dictionary `{s: ay}` and TxPower property.
 * **BlueZ backend delivered no scan results, notifications or disconnect events.** It never read D-Bus signals; `processSignalWireMessage` only ran in tests. The new `processEvents(timeout_ms)` reads queued signals and invokes the callbacks. Scan results now come from `InterfacesAdded` and `Device1` `PropertiesChanged` and include name, RSSI, address type, service UUIDs and manufacturer data. BlueZ often reports only the changed property, so results are merged per device; names BlueZ already knows are loaded before the scan.
 * **Only one notification subscription per device** (Windows, BlueZ, mock). Subscribing to a second characteristic replaced the first one's callback, and unsubscribing any characteristic ended all of them. Callbacks are now stored per characteristic.
 * **Characteristics with the same UUID overwrote each other** (Windows, BlueZ). Only the last HID report (0x2A4D) or the last of two Battery services remained. Every characteristic now gets its own slot, stored in attribute-handle order with its service UUID.
@@ -28,6 +30,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * **Public functions that did not compile on first use**, because no test called them: `L2capSocket.setNonBlocking`, `getSecurityLevel` and `read`, `HciController.sendL2capPdu`, and the ATT PDU encoder for handle lists. `zig build check-api` now compiles every public function.
 
 ### Added
+* **HCI & UART Low-Level Stack (`HciBackend`, `UartBackend`)**:
+  * TrouBLE-style event runner / packet pump (`pumpEvents` / `processEvents`) supporting both Linux raw HCI sockets (`ctrl.sock.poll` + `readPacket`) and custom transport hooks.
+  * Synchronous GATT operations (`connectDevice`, `readCharacteristic`, `writeCharacteristic`, `discoverServicesFiltered`, `exchangeMtu`, `readDescriptor`, `writeDescriptor`) with timeout deadlines.
+  * Real HCI connection lifecycle integration: `le_connection_complete`, `le_enhanced_connection_complete`, `disconnection_complete`, `number_of_completed_packets` credit replenishment via `AclFlowController`, and `le_advertising_report` AD payload parsing.
+  * Full `BackendVTable` parity: implemented `processEvents`, `getConnectionState`, `setAutoResubscribe`, `discoverServicesFiltered`, `getCharacteristics`, `readDescriptor`, and `writeDescriptor`.
+  * `UartBackend` serial event runner binding via `bindSerialPoller(poller)`.
+* **SMP (Security Manager Protocol) State Machine Phase 2 & 3 Enhancements**:
+  * Numeric Comparison user confirmation handling with MITM protection via `confirmNumericComparison(accept, out_buf)`.
+  * LE Secure Connections 20-round bitwise Passkey Entry (`f4` per bit with `0x80 | bit_i` across 20 rounds).
+  * Phase 3 Key Distribution for Identity Information (IRK & identity address) and Encryption Information (LTK).
+* `ConnectionState` enum (`disconnected`, `connecting`, `connected`, `disconnecting`) accessible via `UnifiedDevice.getConnectionState()` and `Backend.getConnectionState()`.
+* `UnifiedDevice.setAutoResubscribe(bool)` / `Backend.setAutoResubscribe` (Windows, BlueZ, mock) to automatically re-subscribe active notifications upon device reconnection without losing callbacks.
+* `UnifiedDevice.discoverServicesFiltered(filter_uuids)` / `Backend.discoverServicesFiltered` (Windows, BlueZ, mock) to restrict GATT discovery to specified service UUIDs.
+* `DiscoveredDevice.tx_power` and zero-allocation `service_data` storage with `getServiceData()` and `setServiceData()` helpers.
+* `tests/test_readme_examples.zig` regression test suite verifying that all code snippets in `README.md` compile and run in test builds.
 * `CharacteristicSelector` (`uuid`, optional `service`, `instance`) to address characteristics that share a UUID, e.g. `dev.readCharacteristic(.{ .uuid = UUID.from16(0x2A4D), .instance = 1 }, &buf)`. Passing a plain `UUID` still selects the first match.
 * `UnifiedDevice.getCharacteristics` / `Backend.getCharacteristics` lists the discovered characteristics as `CharacteristicInfo` (service UUID, UUID, instance).
 * `UnifiedAdapter.processEvents(timeout_ms)` / `Backend.processEvents`. Required on BlueZ; on Windows it only waits, so one event loop works on both.

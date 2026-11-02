@@ -83,6 +83,17 @@ pub const SmpStateMachine = struct {
     peer_confirm: [16]u8 = @splat(0),
     passkey_r: [16]u8 = @splat(0),
 
+    passkey: u32 = 0,
+    passkey_round: u5 = 0,
+    require_user_confirmation: bool = false,
+    user_confirmed: bool = false,
+    key_distribution_enabled: bool = false,
+
+    peer_ltk: [16]u8 = @splat(0),
+    peer_irk: [16]u8 = @splat(0),
+    peer_identity_addr: ?Address = null,
+    peer_identity_addr_type: ?AddressType = null,
+
     confirm_received: bool = false,
     random_received: bool = false,
     public_key_received: bool = false,
@@ -93,6 +104,48 @@ pub const SmpStateMachine = struct {
     numeric_comparison_code: ?u32 = null,
     last_failure_reason: ?PairingFailedReason = null,
     timer_started_ms: u64 = 0,
+
+    pub fn setPasskey(self: *SmpStateMachine, passkey: u32) void {
+        self.passkey = passkey;
+        std.mem.writeInt(u32, self.passkey_r[0..4], passkey, .little);
+        @memset(self.passkey_r[4..16], 0);
+    }
+
+    pub fn confirmNumericComparison(self: *SmpStateMachine, accept: bool, out_buf: []u8) SmpError!usize {
+        if (self.state != .wait_numeric_comparison) return SmpError.InvalidParameter;
+        if (!accept) {
+            return self.failWithReason(.numeric_comparison_failed, out_buf);
+        }
+        self.user_confirmed = true;
+        self.deriveScKeysAndSendCheck();
+        if (self.role == .initiator) {
+            const ea = self.computeLocalDhKeyCheck();
+            self.state = .wait_dhkey_check;
+            return (PairingDhKeyCheck{ .check_value = ea }).serialize(out_buf);
+        } else {
+            self.state = .wait_dhkey_check;
+            return 0;
+        }
+    }
+
+    pub fn hasKeysToDistribute(self: *const SmpStateMachine) bool {
+        const i_dist = self.local_features.initiator_key_distribution;
+        const r_dist = self.local_features.responder_key_distribution;
+        return (i_dist.enc_key or i_dist.id_key or i_dist.sign_key or
+            r_dist.enc_key or r_dist.id_key or r_dist.sign_key);
+    }
+
+    pub fn distributeIdentityKeys(self: *SmpStateMachine, irk: [16]u8, out_buf: []u8) SmpError!usize {
+        var len: usize = 0;
+        const id_info = IdentityInformation{ .irk = irk };
+        len += try id_info.serialize(out_buf[len..]);
+        const id_addr = IdentityAddressInformation{
+            .addr_type = self.local_addr_type,
+            .address = self.local_addr,
+        };
+        len += try id_addr.serialize(out_buf[len..]);
+        return len;
+    }
 
     pub fn init(
         role: SmpRole,
@@ -273,11 +326,18 @@ pub const SmpStateMachine = struct {
                 toolbox.getRandomBytes(&self.local_rand) catch return SmpError.EntropyUnavailable;
 
                 if (self.role == .responder) {
-                    // Responder sends PairingPublicKey followed by PairingConfirm (Cb) in Just Works / Numeric Comparison
                     const pk_len = try (PairingPublicKey{
                         .x = self.local_ecdh.?.pub_x_le,
                         .y = self.local_ecdh.?.pub_y_le,
                     }).serialize(out_buf);
+
+                    if (self.method == .passkey_entry) {
+                        self.passkey_round = 0;
+                        self.state = .wait_confirm;
+                        return pk_len;
+                    }
+
+                    // In Just Works / Numeric Comparison, Responder sends PK + Cb (f4 with r=0)
                     self.local_confirm = toolbox.f4(
                         self.local_ecdh.?.pub_x_le,
                         self.peer_pub_x_le,
@@ -288,6 +348,20 @@ pub const SmpStateMachine = struct {
                     self.state = .wait_random;
                     return pk_len + cfm_len;
                 } else {
+                    if (self.method == .passkey_entry) {
+                        // Initiator starts round 0 of Passkey Entry
+                        self.passkey_round = 0;
+                        const bit_0: u8 = @intCast((self.passkey >> self.passkey_round) & 1);
+                        const r_val: u8 = 0x80 | bit_0;
+                        self.local_confirm = toolbox.f4(
+                            self.local_ecdh.?.pub_x_le,
+                            self.peer_pub_x_le,
+                            self.local_rand,
+                            r_val,
+                        );
+                        self.state = .wait_confirm;
+                        return (PairingConfirm{ .confirm_value = self.local_confirm }).serialize(out_buf);
+                    }
                     self.state = .wait_confirm;
                     return 0;
                 }
@@ -300,9 +374,30 @@ pub const SmpStateMachine = struct {
                 self.peer_confirm = pdu.pairing_confirm.confirm_value;
 
                 if (self.use_sc) {
-                    // Initiator received Cb from Responder -> now send Na (PairingRandom)
-                    self.state = .wait_random;
-                    return (PairingRandom{ .random_value = self.local_rand }).serialize(out_buf);
+                    if (self.method == .passkey_entry) {
+                        if (self.role == .responder) {
+                            // Responder received Cai -> compute and send Cbi
+                            toolbox.getRandomBytes(&self.local_rand) catch return SmpError.EntropyUnavailable;
+                            const bit_i: u8 = @intCast((self.passkey >> self.passkey_round) & 1);
+                            const r_val: u8 = 0x80 | bit_i;
+                            self.local_confirm = toolbox.f4(
+                                self.local_ecdh.?.pub_x_le,
+                                self.peer_pub_x_le,
+                                self.local_rand,
+                                r_val,
+                            );
+                            self.state = .wait_random;
+                            return (PairingConfirm{ .confirm_value = self.local_confirm }).serialize(out_buf);
+                        } else {
+                            // Initiator received Cbi -> send Nai
+                            self.state = .wait_random;
+                            return (PairingRandom{ .random_value = self.local_rand }).serialize(out_buf);
+                        }
+                    } else {
+                        // Initiator received Cb from Responder -> now send Na (PairingRandom)
+                        self.state = .wait_random;
+                        return (PairingRandom{ .random_value = self.local_rand }).serialize(out_buf);
+                    }
                 } else {
                     if (self.role == .responder) {
                         try self.prepareLegacyConfirm();
@@ -322,6 +417,56 @@ pub const SmpStateMachine = struct {
                 self.peer_rand = pdu.pairing_random.random_value;
 
                 if (self.use_sc) {
+                    if (self.method == .passkey_entry) {
+                        const bit_i: u8 = @intCast((self.passkey >> self.passkey_round) & 1);
+                        const r_val: u8 = 0x80 | bit_i;
+                        const expected_peer_confirm = toolbox.f4(
+                            self.peer_pub_x_le,
+                            self.local_ecdh.?.pub_x_le,
+                            self.peer_rand,
+                            r_val,
+                        );
+                        if (!std.crypto.timing_safe.eql([16]u8, expected_peer_confirm, self.peer_confirm)) {
+                            return self.failWithReason(.confirm_value_failed, out_buf);
+                        }
+
+                        if (self.role == .responder) {
+                            if (self.passkey_round < 19) {
+                                self.passkey_round += 1;
+                                self.confirm_received = false;
+                                self.random_received = false;
+                                self.state = .wait_confirm;
+                                return (PairingRandom{ .random_value = self.local_rand }).serialize(out_buf);
+                            } else {
+                                self.deriveScKeysAndSendCheck();
+                                self.state = .wait_dhkey_check;
+                                return (PairingRandom{ .random_value = self.local_rand }).serialize(out_buf);
+                            }
+                        } else {
+                            if (self.passkey_round < 19) {
+                                self.passkey_round += 1;
+                                self.confirm_received = false;
+                                self.random_received = false;
+                                toolbox.getRandomBytes(&self.local_rand) catch return SmpError.EntropyUnavailable;
+                                const bit_next: u8 = @intCast((self.passkey >> self.passkey_round) & 1);
+                                const r_next: u8 = 0x80 | bit_next;
+                                self.local_confirm = toolbox.f4(
+                                    self.local_ecdh.?.pub_x_le,
+                                    self.peer_pub_x_le,
+                                    self.local_rand,
+                                    r_next,
+                                );
+                                self.state = .wait_confirm;
+                                return (PairingConfirm{ .confirm_value = self.local_confirm }).serialize(out_buf);
+                            } else {
+                                self.deriveScKeysAndSendCheck();
+                                const ea = self.computeLocalDhKeyCheck();
+                                self.state = .wait_dhkey_check;
+                                return (PairingDhKeyCheck{ .check_value = ea }).serialize(out_buf);
+                            }
+                        }
+                    }
+
                     if (self.role == .initiator) {
                         // Verify Responder's confirm Cb = f4(PKb_x, PKa_x, Nb, 0)
                         const expected_cb = toolbox.f4(
@@ -339,6 +484,10 @@ pub const SmpStateMachine = struct {
                             self.local_rand,
                             self.peer_rand,
                         );
+                        if (self.method == .numeric_comparison and self.require_user_confirmation) {
+                            self.state = .wait_numeric_comparison;
+                            return 0;
+                        }
                         self.deriveScKeysAndSendCheck();
                         const ea = self.computeLocalDhKeyCheck();
                         self.state = .wait_dhkey_check;
@@ -351,6 +500,10 @@ pub const SmpStateMachine = struct {
                             self.peer_rand,
                             self.local_rand,
                         );
+                        if (self.method == .numeric_comparison and self.require_user_confirmation) {
+                            self.state = .wait_numeric_comparison;
+                            return (PairingRandom{ .random_value = self.local_rand }).serialize(out_buf);
+                        }
                         self.deriveScKeysAndSendCheck();
                         self.state = .wait_dhkey_check;
                         return (PairingRandom{ .random_value = self.local_rand }).serialize(out_buf);
@@ -373,6 +526,9 @@ pub const SmpStateMachine = struct {
                     }
                 }
             },
+            .wait_numeric_comparison => {
+                return self.failWithReason(.unspecified_reason, out_buf);
+            },
             .wait_dhkey_check => {
                 if (pdu != .pairing_dhkey_check) {
                     return self.failWithReason(.unspecified_reason, out_buf);
@@ -383,11 +539,45 @@ pub const SmpStateMachine = struct {
                 }
                 if (self.role == .responder) {
                     const eb = self.computeLocalDhKeyCheck();
-                    self.state = .completed;
+                    if (self.key_distribution_enabled and self.hasKeysToDistribute()) {
+                        self.state = .key_distribution;
+                    } else {
+                        self.state = .completed;
+                    }
                     return (PairingDhKeyCheck{ .check_value = eb }).serialize(out_buf);
                 } else {
-                    self.state = .completed;
+                    if (self.key_distribution_enabled and self.hasKeysToDistribute()) {
+                        self.state = .key_distribution;
+                    } else {
+                        self.state = .completed;
+                    }
                     return 0;
+                }
+            },
+            .key_distribution => {
+                switch (pdu) {
+                    .encryption_information => |enc| {
+                        self.peer_ltk = enc.long_term_key;
+                        return 0;
+                    },
+                    .master_identification => {
+                        return 0;
+                    },
+                    .identity_information => |id| {
+                        self.peer_irk = id.irk;
+                        return 0;
+                    },
+                    .identity_address_information => |ia| {
+                        self.peer_identity_addr = ia.address;
+                        self.peer_identity_addr_type = ia.addr_type;
+                        self.state = .completed;
+                        return 0;
+                    },
+                    .signing_information => {
+                        self.state = .completed;
+                        return 0;
+                    },
+                    else => return self.failWithReason(.unspecified_reason, out_buf),
                 }
             },
             else => return self.failWithReason(.unspecified_reason, out_buf),

@@ -69,6 +69,8 @@ pub const BluezDeviceContext = struct {
     object_path: [128]u8 = undefined,
     object_path_len: u8 = 0,
     is_connected: bool = false,
+    connection_state: types.ConnectionState = .disconnected,
+    auto_resubscribe: bool = false,
     rssi: ?i16 = null,
 
     characteristics: [64]BluezCharacteristicSlot = undefined,

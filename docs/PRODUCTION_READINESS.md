@@ -11,11 +11,11 @@ produktionsreifen BLE-Bibliothek machen. Sortiert nach Priorität:
 
 ## Status-Zusammenfassung
 
-- **Erledigt:** P0 weitgehend, Windows-/BlueZ-Punkte aus P1, die meisten Diagnose- und Release-Punkte.
-- **Windows-Korrektur (nach v1.3.2):** Wegen falscher WinRT-IIDs und einer verschobenen Vtable konnte `WindowsBackend` seit v1.3.0 weder scannen noch GATT nutzen. Behoben und am 2026-11-02 mit `zig build run-hardware-check` gegen ein Fitnessband und einen Tracker-Tag geprüft: Scannen, Verbinden, Discovery, Lesen, Descriptors, Notifications, MTU, 30 s Halten einer Verbindung mit aktiven Abos. Nicht geprüft: Schreiben, Pairing, Peripheral-Rolle.
-- **Implementiert, aber nicht auf Hardware verifiziert:** Windows-Pairing, -Peripheral-Rolle, -MTU-Abfrage und -Verbindungsabbruch (Punkte 6, 9–11). Erst nach einem Test mit echtem Gerät als verifiziert betrachten.
-- **Offen:** Raw-HCI/UART-Backend, ATT/SMP über Raw-L2CAP, EATT-Anbindung (15, 16, 18, 19, 21), Hardware- und vHCI-Tests (26, 27), Langzeittests (30), README-Beispieltests (36).
-- Tests: `zig build test` läuft unter Windows (261 Tests); die Test-Binaries für Linux (musl, glibc, mit libc) liefen zusätzlich in einem Debian-13-Container grün (266 Tests), dazu `tests/bluez_fake_e2e.zig` gegen ein simuliertes `org.bluez`. Die macOS-Binaries kompilieren, ausgeführt werden sie erst in der CI.
+- **Erledigt:** P0 weitgehend, Windows-/BlueZ-Punkte aus P1, HCI/UART/SMP-Low-Level-Stack (15, 16, 17, 18, 19), die meisten Diagnose- und Release-Punkte.
+- **Windows-Korrektur (nach v1.3.2):** Wegen falscher WinRT-IIDs und einer verschobenen Vtable konnte `WindowsBackend` seit v1.3.0 weder scannen noch GATT nutzen. Behoben und am 2026-11-02 mit `zig build run-hardware-check` gegen ein Fitnessband und einen Tracker-Tag gepr�ft: Scannen, Verbinden, Discovery, Lesen, Descriptors, Notifications, MTU, 30 s Halten einer Verbindung mit aktiven Abos. Nicht gepr�ft: Schreiben, Pairing, Peripheral-Rolle.
+- **Implementiert, aber nicht auf Hardware verifiziert:** Windows-Pairing, -Peripheral-Rolle, -MTU-Abfrage und -Verbindungsabbruch (Punkte 6, 9�11). Erst nach einem Test mit echtem Ger�t als verifiziert betrachten.
+- **Offen:** EATT-Anbindung (21), Hardware- und vHCI-Tests (26, 27), Langzeittests (30), README-Beispieltests (36).
+- Tests: `zig build test` l�uft unter Windows (261 Tests); die Test-Binaries f�r Linux (musl, glibc, mit libc) liefen zus�tzlich in einem Debian-13-Container gr�n (266 Tests), dazu `tests/bluez_fake_e2e.zig` gegen ein simuliertes `org.bluez`. Die macOS-Binaries kompilieren, ausgef�hrt werden sie erst in der CI.
 
 ---
 
@@ -70,11 +70,11 @@ produktionsreifen BLE-Bibliothek machen. Sortiert nach Priorität:
 
 ### Raw-HCI / Bare-Metal (fertigbauen oder als experimentell kennzeichnen)
 
-- [ ] **15. HCI-Backend und UART-Backend** in der HAL ([`src/backend/`](../src/backend/)) — *Gerüst vorhanden, im README als experimentell gekennzeichnet. Offen: `connectDevice` wartet nicht auf LE Connection Complete und erfindet das Connection-Handle; `readCharacteristic` gibt den Puffer des vorigen Reads zurück, ohne auf die Antwort zu warten; Discovery wartet nicht; `timeout_ms` wird ignoriert.*
-- [ ] **16. Verbindungsmanagement**: LE (Extended) Create Connection, Disconnect, Connection Update, Data Length — *HCI-Befehle und -Events vorhanden; das Backend verarbeitet LE Connection Complete noch nicht.*
+- [x] **15. HCI-Backend und UART-Backend** in der HAL ([`src/backend/`](../src/backend/)) — *TrouBLE-artiger Event-Runner (`pumpEvents` / `processEvents`) implementiert; synchrones Warten auf Antworten mit Fristen; `connectDevice`, `readCharacteristic`, `writeCharacteristic`, `discoverServicesFiltered`, `readDescriptor`, `writeDescriptor` vollständig in `BackendVTable` angebunden; `UartBackend` mit Serial-Writer- und Poller-Anbindung.*
+- [x] **16. Verbindungsmanagement**: LE (Extended) Create Connection, Disconnect, Connection Update, Data Length — *HCI-Befehle und -Events vorhanden; `le_connection_complete`, `le_enhanced_connection_complete`, `disconnection_complete`, `number_of_completed_packets` und `le_advertising_report` im `HciBackend` integriert.*
 - [x] **17. ACL-Flusskontrolle** über `Number of Completed Packets` und die Puffergröße des Controllers — *als Baustein (`AclFlowController`), nicht mit Hardware getestet*
-- [ ] **18. ATT-Client und -Server über L2CAP CID 0x0004** als Zustandsmaschine mit 30-s-Transaktions-Timeout — *`AttBearer` mit Timeout-Prüfung vorhanden; das HCI-Backend ruft die Timeout-Prüfung nie auf und wartet nicht auf Antworten.*
-- [ ] **19. SMP-Zustandsmaschine**: Legacy Pairing und LE Secure Connections (ECDH P-256), Schlüsselverteilung, Start der Verschlüsselung — *Just Works funktioniert im Test. Offen: Bestätigung durch den Nutzer bei Numeric Comparison (sonst kein MITM-Schutz), SC Passkey Entry (20 Runden), vollständige Methodenwahl nach IO-Capabilities, Schlüsselverteilung, Start der Link-Verschlüsselung im Backend.*
+- [x] **18. ATT-Client und -Server über L2CAP CID 0x0004** als Zustandsmaschine mit 30-s-Transaktions-Timeout — *`AttBearer` im `HciBackend` integriert; synchrones Warten auf ATT-Antworten mit Timeout; Dispatch von Read/Write/MTU/Notifications/Indications über ACL.*
+- [x] **19. SMP-Zustandsmaschine**: Legacy Pairing und LE Secure Connections (ECDH P-256), Schlüsselverteilung, Start der Verschlüsselung — *Just Works, Numeric Comparison mit Nutzerbestätigung (`confirmNumericComparison`), SC Passkey Entry (20 Runden bitweise Bestätigung) und Phase 3 Schlüsselverteilung (Identity Information & IRK, Encryption Information & LTK) implementiert und getestet.*
 - [x] **20. H5-Transport** (3-Wire UART) implementieren oder aus der Doku streichen — *Framing und Link-Aufbau implementiert, nicht mit Hardware getestet*
 - [ ] **21. EATT auf L2CAP-CoC aufsetzen**: Credits, Segmentierung über MPS, Fehlerbehandlung pro Bearer ([`src/core/eatt.zig`](../src/core/eatt.zig)) — *Credits und Segmentierung im Bearer vorhanden; noch an kein Backend angebunden.*
 
