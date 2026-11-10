@@ -52,6 +52,40 @@ pub const IBluetoothLEDeviceStaticsVtbl = extern struct {
     GetDeviceSelector: *const fn (self: *anyopaque, deviceSelector: *HSTRING) callconv(WINAPI) HRESULT,
 };
 
+/// Classic (BR/EDR) device, `Windows.Devices.Bluetooth.BluetoothDevice`.
+pub const IBluetoothDeviceStatics = extern struct {
+    lpVtbl: *const IBluetoothDeviceStaticsVtbl,
+};
+
+pub const IBluetoothDeviceStaticsVtbl = extern struct {
+    QueryInterface: *const fn (self: *anyopaque, riid: *const GUID, ppvObject: *?*anyopaque) callconv(WINAPI) HRESULT,
+    AddRef: *const fn (self: *anyopaque) callconv(WINAPI) ULONG,
+    Release: *const fn (self: *anyopaque) callconv(WINAPI) ULONG,
+    GetIids: *const anyopaque,
+    GetRuntimeClassName: *const anyopaque,
+    GetTrustLevel: *const anyopaque,
+
+    FromIdAsync: *const anyopaque,
+    FromHostNameAsync: *const anyopaque,
+    FromBluetoothAddressAsync: *const fn (self: *anyopaque, address: u64, operation: *?*IAsyncOperationGeneric) callconv(WINAPI) HRESULT,
+    GetDeviceSelector: *const anyopaque,
+};
+
+pub const IBluetoothDevice2 = extern struct {
+    lpVtbl: *const IBluetoothDevice2Vtbl,
+};
+
+pub const IBluetoothDevice2Vtbl = extern struct {
+    QueryInterface: *const fn (self: *anyopaque, riid: *const GUID, ppvObject: *?*anyopaque) callconv(WINAPI) HRESULT,
+    AddRef: *const fn (self: *anyopaque) callconv(WINAPI) ULONG,
+    Release: *const fn (self: *anyopaque) callconv(WINAPI) ULONG,
+    GetIids: *const anyopaque,
+    GetRuntimeClassName: *const anyopaque,
+    GetTrustLevel: *const anyopaque,
+
+    get_DeviceInformation: *const fn (self: *anyopaque, value: *?*IDeviceInformation) callconv(WINAPI) HRESULT,
+};
+
 pub const IBluetoothLEDeviceStatics2 = extern struct {
     lpVtbl: *const IBluetoothLEDeviceStatics2Vtbl,
 };

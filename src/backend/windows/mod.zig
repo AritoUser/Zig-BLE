@@ -407,13 +407,17 @@ pub fn WindowsBackendWithConfig(comptime pool_config: PoolConfig) type {
                 dev_slot.was_connected_once = true;
             }
             dev_slot.bond_state = pairing_mod.queryWinRtBondState(ble_dev);
+            dev_slot.bond_changed = false;
 
             // Windows connects lazily with the first GATT operation, which often reports
-            // `Unreachable` while the link is still coming up; keep trying within the timeout.
+            // `Unreachable` or takes longer than `discovery_ms` while the link is still coming
+            // up; keep trying within the connect timeout.
             const deadline = helpers.Kernel32.GetTickCount64() + eff_timeout;
             self.mutex.unlock();
             var disc_res = discoverServices(ctx, @ptrCast(dev_slot));
-            while (disc_res == BleError.ConnectionFailed and helpers.Kernel32.GetTickCount64() < deadline) {
+            while ((disc_res == BleError.ConnectionFailed or disc_res == BleError.ConnectionTimeout) and
+                helpers.Kernel32.GetTickCount64() < deadline)
+            {
                 helpers.Kernel32.Sleep(300);
                 disc_res = discoverServices(ctx, @ptrCast(dev_slot));
             }
@@ -678,7 +682,7 @@ pub fn WindowsBackendWithConfig(comptime pool_config: PoolConfig) type {
             if (self.is_closed.load(.acquire)) return .not_bonded;
             const dev: *DeviceContext = @ptrCast(@alignCast(dev_handle));
             if (dev.ble_device) |ble_dev| {
-                dev.bond_state = pairing_mod.queryWinRtBondState(ble_dev);
+                if (!dev.bond_changed) dev.bond_state = pairing_mod.queryWinRtBondState(ble_dev);
             }
             return dev.bond_state;
         }

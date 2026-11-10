@@ -59,6 +59,14 @@ pub const ScanCache = context_mod.ScanCache;
 
 pub const PendingCallbacks = signals.PendingCallbacks;
 
+/// Maps a failed GATT call. A D-Bus timeout usually means BlueZ is still trying to raise the
+/// link's security for a protected attribute.
+fn gattError(err: anyerror, fallback: BleError) BleError {
+    if (err == error.AccessDenied) return BleError.PermissionDenied;
+    if (err == error.Timeout or err == error.NoReply) return BleError.Timeout;
+    return fallback;
+}
+
 pub const BluezBackend = struct {
     conn: if (builtin.os.tag == .linux) ?dbus.Connection else void = if (builtin.os.tag == .linux) null else {},
     adapter_index: u16 = 0,
@@ -460,6 +468,8 @@ pub const BluezBackend = struct {
         dev_slot.is_connected = false;
         dev_slot.connection_state.store(.disconnected, .release);
         dev.disconnect() catch |err| {
+            // BlueZ removes a device it has not bonded with once the link is gone.
+            if (err == error.UnknownObject or err == error.UnknownMethod) return;
             log.warn("BlueZ Device1.Disconnect failed: {s}", .{@errorName(err)});
             return BleError.IoError;
         };
@@ -627,7 +637,7 @@ pub const BluezBackend = struct {
 
         const found = try self.lookupDescriptor(ctx, dev_handle, char, descriptor);
         var d = gatt_client.GattDescriptor.init(found.conn, found.desc.getPath());
-        return d.readValue(buf) catch |err| if (err == error.AccessDenied) BleError.PermissionDenied else BleError.ReadFailed;
+        return d.readValue(buf) catch |err| gattError(err, BleError.ReadFailed);
     }
 
     pub fn writeDescriptor(ctx: *anyopaque, dev_handle: *anyopaque, char: CharacteristicSelector, descriptor: UUID, data: []const u8) BleError!void {
@@ -638,7 +648,7 @@ pub const BluezBackend = struct {
 
         const found = try self.lookupDescriptor(ctx, dev_handle, char, descriptor);
         var d = gatt_client.GattDescriptor.init(found.conn, found.desc.getPath());
-        d.writeValue(data) catch return BleError.WriteFailed;
+        d.writeValue(data) catch |err| return gattError(err, BleError.WriteFailed);
     }
 
     /// Finds a discovered descriptor, discovering services first if needed. Caller holds `mutex`.
@@ -705,7 +715,7 @@ pub const BluezBackend = struct {
             const req_pdu = [_]u8{ @intFromEnum(core.AttOpcode.read_req), 0x01, 0x00 };
             hook.emit(.host_to_controller, &req_pdu);
         }
-        const n = ch.readValue(buf) catch |err| return if (err == error.AccessDenied) BleError.PermissionDenied else BleError.ReadFailed;
+        const n = ch.readValue(buf) catch |err| return gattError(err, BleError.ReadFailed);
         if (self.pcap_hook) |hook| {
             var rsp_pdu: [517]u8 = undefined;
             rsp_pdu[0] = @intFromEnum(core.AttOpcode.read_rsp);
@@ -746,7 +756,7 @@ pub const BluezBackend = struct {
             @memcpy(req_pdu[3 .. 3 + copy_len], data[0..copy_len]);
             hook.emit(.host_to_controller, req_pdu[0 .. 3 + copy_len]);
         }
-        ch.writeValue(data, w_type) catch return BleError.WriteFailed;
+        ch.writeValue(data, w_type) catch |err| return gattError(err, BleError.WriteFailed);
         if (with_response) {
             if (self.pcap_hook) |hook| {
                 const rsp_pdu = [_]u8{@intFromEnum(core.AttOpcode.write_rsp)};
@@ -976,4 +986,11 @@ pub const BluezBackend = struct {
 
 test {
     _ = @import("tests.zig");
+}
+
+test "gattError reports timeouts and missing permissions" {
+    try std.testing.expectEqual(BleError.PermissionDenied, gattError(error.AccessDenied, BleError.ReadFailed));
+    try std.testing.expectEqual(BleError.Timeout, gattError(error.Timeout, BleError.ReadFailed));
+    try std.testing.expectEqual(BleError.Timeout, gattError(error.NoReply, BleError.WriteFailed));
+    try std.testing.expectEqual(BleError.WriteFailed, gattError(error.Failed, BleError.WriteFailed));
 }

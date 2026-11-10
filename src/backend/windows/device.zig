@@ -78,6 +78,9 @@ pub fn DeviceContext(comptime pool_config: PoolConfig, comptime BackendType: typ
 
         mtu: u16 = 23,
         bond_state: types.BondState = .not_bonded,
+        /// Set by `pair` / `unpair`: the DeviceInformation of `ble_device` is a snapshot from
+        /// when it was opened and misses a pairing done since.
+        bond_changed: bool = false,
 
         pub fn findCharacteristic(self: *Self, char: CharacteristicSelector) ?*WinCharacteristicSlot {
             const chars = self.characteristics[0..self.characteristics_len];

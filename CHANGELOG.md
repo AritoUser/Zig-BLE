@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+* **Windows timeouts lasted several times longer than configured.** `awaitAsync` counted 2 ms per `Sleep(2)`, which usually lasts a whole timer tick (about 15 ms), so a 5 s timeout took up to about 40 s. It now measures real time. Connecting keeps retrying discovery within the connect timeout when a single attempt times out, which Windows' first GATT operation often does.
+* `ServerCharacteristic.notify` on Windows ignored failures and timeouts; it now returns them.
+* Windows `getBondState` reported `not_bonded` right after a successful `pair`, because the device's `DeviceInformation` is a snapshot from when it was opened. The result of `pair` / `unpair` now counts for that connection.
+* Windows `unpair` removed only the LE bond. Pairing a dual-mode device over LE also bonds BR/EDR (cross-transport key derivation); that bond stayed, and Windows kept connecting to the device over Classic. `unpair` now removes both.
+* BlueZ: `disconnect` returned `IoError` when BlueZ had already removed the device after the link dropped. GATT reads and writes now return `Timeout` instead of `ReadFailed` / `WriteFailed` when BlueZ does not answer in time (typically while it tries to pair for a protected attribute), and writes return `PermissionDenied` when not allowed.
+* `Peripheral.step` on Windows returned at once, so the `startBackground` worker kept a CPU core busy. It now waits for the given timeout.
 * **The Windows backend could not scan or use GATT (v1.3.0 to v1.3.2).** `startScan` failed with `IoError` because WinRT rejected the event handler (`E_NOINTERFACE`): the delegate IIDs for scan results and notifications and six GATT interface IIDs were wrong. The `IGattCharacteristic` vtable also lacked `put_ProtectionLevel`, which shifted every later method by one slot, so `get_Uuid`, read, write and subscribe called the wrong WinRT methods. All IIDs and vtables now match the Windows SDK; `scripts/check_winrt_bindings.py` checks this. Verified on hardware: scanning, connecting, discovery, reads, descriptors and notifications. Writes, pairing and the peripheral role are not.
 * **`src/dbus/wire/socket.zig` controllen compilation failure with `-Dlink-libc=true`.** Cast `controllen` with `@intCast` so both libc (`u32`) and standalone Linux syscalls (`usize`) compile cleanly.
 * **Windows & BlueZ scanner missed Service Data and TX Power.** WinRT `get_DataSections` now parses AD types 0x0A (TX Power), 0x16 (16-bit Service Data), 0x20 (32-bit) and 0x21 (128-bit); BlueZ parses the ServiceData dictionary `{s: ay}` and TxPower property.
@@ -52,7 +58,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * `EventQueue`: collects scan results, notifications (tagged with the device address) and connection events in a fixed ring buffer for a pull-style loop with `next()` / `wait()`.
 * `profiles.vendor_adv`: decoders for Microsoft Swift Pair and Google Fast Pair advertisements, and `decode()` to find iBeacon, Swift Pair or Fast Pair in raw advertising data.
 * Windows `use_cached_services` option to use the GATT cache for discovery.
-* `examples/hardware_check.zig` (`zig build run-hardware-check [-- <address>]`): scans with the native backend and, with a device address, connects, reads, subscribes and stays idle to check that the connection holds.
+* `examples/hardware_check.zig` (`zig build run-hardware-check [-- <address>]`): scans with the native backend and, with a device address, connects, reads, subscribes and stays idle to check that the connection holds. Further modes: `--resubscribe`, `--soak`, `--write`, `--pair`, `--unpair` and `--peripheral [--secure]`, a GATT server with a test service; `--service <uuid>` limits any mode to one service. See `docs/HARDWARE_TESTS.md`.
+* `ServerCharacteristic.subscribers()`: how many clients subscribed, and on Windows how many of them are still connected.
+* Verified on hardware with BlueZ 5.82: the BlueZ backend as central and the BlueZ peripheral role, against a Windows 11 PC (see `docs/HARDWARE_TESTS.md`).
+* `AgentCallbacks.display_passkey` and `display_pin_code`: on Linux the application never saw a passkey or PIN it had to show, so pairing that way could not be completed.
 * `scripts/check_winrt_bindings.py`: checks all WinRT IIDs and vtable orders against the Windows SDK headers.
 * `zig build check-api`: compiles every public function for the target, including ones no test calls.
 * `tests/bluez_fake_e2e.zig` with `scripts/run_bluez_fake_e2e.sh`: runs `BluezBackend` over a real D-Bus connection against a simulated `org.bluez` on a private bus, without radio, root or `bluetoothd`.

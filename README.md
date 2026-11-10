@@ -25,13 +25,13 @@ A Bluetooth Low Energy (BLE) library written entirely in Zig (0.17.0+). It works
 
 | Feature | Windows 11 (WinRT) | Linux (BlueZ) | Linux Raw HCI (`HciBackend`) | Bare-Metal (`UartBackend` H4 / H5) | macOS |
 | :--- | :---: | :---: | :---: | :---: | :---: |
-| Scanning / advertising reports | ✅ | 🧪 | ✅ | 🚧 | ❌ |
-| Connect, service discovery | ✅ | 🧪 | 🚧 | 🚧 | ❌ |
-| GATT read / notifications | ✅ | 🧪 | 🚧 | 🚧 | ❌ |
-| GATT write | 🧪 | 🧪 | 🚧 | 🚧 | ❌ |
-| Pairing and bonding | 🧪 (`DeviceInformationCustomPairing`) | ✅ (via BlueZ + pairing agent) | 🚧 | 🚧 | ❌ |
-| Negotiated MTU query | ✅ (`GattSession.MaxPduSize`) | 🧪 (`GattCharacteristic1.MTU`) | 🚧 | 🚧 | ❌ |
-| Peripheral: GATT server, advertising | 🧪 (`GattServiceProvider` / `Publisher`) | ✅ (BlueZ GATT + Adv) | ❌ | ❌ | ❌ |
+| Scanning / advertising reports | ✅ | ✅ | 🧪 | 🚧 | ❌ |
+| Connect, service discovery | ✅ | ✅ | 🚧 | 🚧 | ❌ |
+| GATT read / notifications | ✅ | ✅ | 🚧 | 🚧 | ❌ |
+| GATT write | ✅ | ✅ | 🚧 | 🚧 | ❌ |
+| Pairing and bonding | ✅ (`DeviceInformationCustomPairing`) | 🧪 (via BlueZ + pairing agent; verified as peripheral) | 🚧 | 🚧 | ❌ |
+| Negotiated MTU query | ✅ (`GattSession.MaxPduSize`) | ✅ (`GattCharacteristic1.MTU`) | 🚧 | 🚧 | ❌ |
+| Peripheral: GATT server, advertising | 🧪 (`GattServiceProvider` / `Publisher`), notifications unreliable | ✅ (BlueZ GATT + Adv) | ❌ | ❌ | ❌ |
 
 ✅ implemented and verified on hardware · 🧪 implemented, not yet verified on hardware · 🚧 experimental, not usable on real hardware yet · ❌ not available
 
@@ -39,7 +39,11 @@ A Bluetooth Low Energy (BLE) library written entirely in Zig (0.17.0+). It works
 
 **Windows:** v1.3.0 to v1.3.2 could not scan or use GATT through `WindowsBackend` because of wrong WinRT IIDs and a wrong vtable. That is fixed and verified with `zig build run-hardware-check -- <address>` against a fitness band and a tracker tag: scanning, connecting, discovery, reading characteristics and descriptors, notifications, and holding an idle connection with active subscriptions for 30 s.
 
-**BlueZ through `BluezBackend` / `UnifiedAdapter`:** before this release the backend never read D-Bus signals, so scan results, notifications and disconnects did not reach the callbacks. That is fixed (call `processEvents` regularly) and tested over a real D-Bus connection against a simulated `org.bluez`, but not yet against real BlueZ or on hardware. The lower-level BlueZ API (`Adapter`, `Device`, `GattCharacteristic`) is unaffected.
+**BlueZ through `BluezBackend` / `UnifiedAdapter`:** before this release the backend never read D-Bus signals, so scan results, notifications and disconnects did not reach the callbacks. That is fixed (call `processEvents` regularly). Verified on 2026-11-10 against BlueZ 5.82 with a Realtek USB adapter, with a Windows 11 PC as the other side: scanning, connecting, filtered discovery, reads, writes with and without response, notifications, descriptors, MTU, and the peripheral role (GATT server and advertising, read, write and notify from a Windows central). Pairing with the pairing agent works as peripheral (a Windows central paired by Numeric Comparison); pairing as central and the recovery after a `bluetoothd` restart are not verified yet.
+
+**Windows as peripheral:** advertising, reads and writes work against a BlueZ central, but notifications often stall: `NotifyValueAsync` does not complete within 5 s and the link drops, also with a single, connected subscriber. Treat the Windows peripheral role as unreliable for notifications.
+
+The open hardware tests and their commands are listed in [`docs/HARDWARE_TESTS.md`](docs/HARDWARE_TESTS.md).
 
 The in-memory **mock backend** (`src/backend/mock/`) implements the full backend interface for tests without hardware. On macOS, the protocol toolkit, crypto functions and parsers build and run, while `MacosBackend` returns `BleError.NotSupported`.
 

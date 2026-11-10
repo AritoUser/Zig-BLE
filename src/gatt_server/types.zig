@@ -342,21 +342,68 @@ pub const ServerCharacteristic = struct {
 
             try conn.send(&sig);
         } else if (builtin.os.tag == .windows) {
-            if (self.win_char) |wc| {
-                const ibuf = try win_mod.createIBuffer(self.getValue());
-                defer _ = ibuf.lpVtbl.Release(ibuf);
+            const wc = self.win_char orelse return;
+            const ibuf = try win_mod.createIBuffer(self.getValue());
+            defer _ = ibuf.lpVtbl.Release(ibuf);
 
-                var notify_op: ?*win_bindings.IAsyncOperationGeneric = null;
-                if (wc.lpVtbl.NotifyValueAsync(wc, ibuf, &notify_op) >= 0 and notify_op != null) {
-                    if (win_mod.awaitAsync(notify_op.?, 5000) catch null) |vec_raw| {
-                        const vec_unk: *win_bindings.IUnknown = @ptrCast(@alignCast(vec_raw));
-                        _ = vec_unk.release();
-                    }
-                }
+            var notify_op: ?*win_bindings.IAsyncOperationGeneric = null;
+            if (wc.lpVtbl.NotifyValueAsync(wc, ibuf, &notify_op) < 0 or notify_op == null) return error.NotificationFailed;
+            if (try win_mod.awaitAsync(notify_op.?, 5000)) |vec_raw| {
+                const vec_unk: *win_bindings.IUnknown = @ptrCast(@alignCast(vec_raw));
+                _ = vec_unk.release();
             }
         } else {
             return error.NotSupported;
         }
+    }
+
+    pub const Subscribers = struct {
+        /// Clients that enabled notifications or indications.
+        total: usize,
+        /// Of these, the ones whose session is still open. BlueZ reports a single subscription
+        /// without telling clients apart.
+        active: usize,
+    };
+
+    pub fn subscribers(self: *const ServerCharacteristic) Subscribers {
+        if (builtin.os.tag == .windows) {
+            const list = self.windowsSubscribedClients() catch return .{ .total = 0, .active = 0 };
+            defer _ = list.lpVtbl.Release(list);
+            var count: u32 = 0;
+            _ = list.lpVtbl.get_Size(list, &count);
+            var active: usize = 0;
+            for (0..count) |i| {
+                const client = windowsClientAt(list, @intCast(i)) orelse continue;
+                defer _ = client.lpVtbl.Release(client);
+                if (windowsSessionActive(client)) active += 1;
+            }
+            return .{ .total = count, .active = active };
+        }
+        const n: usize = @intFromBool(self.is_notifying);
+        return .{ .total = n, .active = n };
+    }
+
+    fn windowsSubscribedClients(self: *const ServerCharacteristic) !*win_bindings.IVectorViewGeneric {
+        const wc = self.win_char orelse return error.NotificationFailed;
+        var clients: ?*win_bindings.IVectorViewGeneric = null;
+        if (wc.lpVtbl.get_SubscribedClients(wc, &clients) < 0) return error.NotificationFailed;
+        return clients orelse error.NotificationFailed;
+    }
+
+    fn windowsClientAt(list: *win_bindings.IVectorViewGeneric, index: u32) ?*win_bindings.IGattSubscribedClient {
+        var raw: ?*anyopaque = null;
+        if (list.lpVtbl.GetAt(list, index, &raw) < 0) return null;
+        return @ptrCast(@alignCast(raw orelse return null));
+    }
+
+    fn windowsSessionActive(client: *win_bindings.IGattSubscribedClient) bool {
+        var session: ?*win_bindings.IGattSession = null;
+        if (client.lpVtbl.get_Session(client, &session) < 0) return false;
+        const s = session orelse return false;
+        defer _ = s.lpVtbl.Release(s);
+        var status: i32 = 0; // GattSessionStatus: 0 = Closed, 1 = Active
+        if (s.lpVtbl.get_SessionStatus(s, &status) < 0) return false;
+        return status == 1;
     }
 
     /// Sets the characteristic value by serializing a strongly-typed value.

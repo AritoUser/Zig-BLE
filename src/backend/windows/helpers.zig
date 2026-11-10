@@ -114,10 +114,11 @@ pub fn awaitAsync(op: *bindings.IAsyncOperationGeneric, timeout_ms: u32) BleErro
     }
 
     const eff_timeout: u32 = if (timeout_ms == 0) 10_000 else timeout_ms;
-    var elapsed_ms: u32 = 0;
+    // Sleep(2) usually lasts a whole timer tick (about 15 ms), so count real time.
+    const deadline = Kernel32.GetTickCount64() + eff_timeout;
     const poll_step_ms: u32 = 2;
 
-    while (elapsed_ms < eff_timeout) {
+    while (Kernel32.GetTickCount64() < deadline) {
         var status: bindings.AsyncStatus = .Started;
         const st_hr = info.lpVtbl.get_Status(info, &status);
         if (st_hr < 0) return BleError.IoError;
@@ -125,7 +126,6 @@ pub fn awaitAsync(op: *bindings.IAsyncOperationGeneric, timeout_ms: u32) BleErro
         switch (status) {
             .Started => {
                 Kernel32.Sleep(poll_step_ms);
-                elapsed_ms += poll_step_ms;
             },
             .Completed => {
                 var result: ?*anyopaque = null;

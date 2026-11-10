@@ -56,6 +56,13 @@ backend. Error names refer to `BleError`.
   A device that puts its service UUID only in the scan response is reported once the scan
   response has arrived.
 
+**A read or write takes long, returns `Timeout`, and the device disconnects**
+- BlueZ answers "insufficient authentication" or "insufficient encryption" from the device by
+  pairing on its own, then repeats the request. Without an agent that can answer, this runs into
+  a timeout and the link drops.
+- Pair first (`pair`, with a registered `Agent`), or leave protected characteristics alone.
+  BlueZ may create a bond while doing this, so do not probe devices you do not want bonded.
+
 **`bluetoothd` restarts**
 - All connections are reported as disconnected.
 - Register `setDaemonRestartCallback` and call `recoverAfterDaemonRestart`, then scan and
@@ -95,6 +102,16 @@ backend. Error names refer to `BleError`.
   device, so name, UUIDs and manufacturer data can appear in a later callback for the same
   device.
 - Only the first manufacturer data entry is kept.
+
+**Peripheral role: notifications stall**
+- Against a BlueZ central, `NotifyValueAsync` often did not complete within 5 s and the link
+  dropped afterwards, even with a single connected subscriber; reads and writes worked. The
+  cause is not known yet. `ServerCharacteristic.notify` returns the timeout.
+
+**Removing a bond with a dual-mode device**
+- Pairing over LE with a device that also speaks Classic Bluetooth creates a Classic bond as well
+  (cross-transport key derivation). `unpair` removes both.
+- The other device keeps its keys. Remove the bond there too before pairing again.
 
 **Pairing prompts**
 - `pair` uses `DeviceInformationCustomPairing` and asks through `PairingCallbacks`. Without

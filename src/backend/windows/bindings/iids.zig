@@ -29,6 +29,8 @@ pub const IID_ITypedEventHandler_Watcher_Received = GUID.parse("90eb4eca-d465-5e
 
 // BluetoothLEDevice & GattSession
 pub const IID_IBluetoothLEDeviceStatics = GUID.parse("c8cf1a19-f0b6-4bf0-8689-41303de2d9f4");
+pub const IID_IBluetoothDeviceStatics = GUID.parse("0991df51-57db-4725-bbd7-84f64327ec2c");
+pub const IID_IBluetoothDevice2 = GUID.parse("0133f954-b156-4dd0-b1f5-c11bc31a5163");
 pub const IID_IBluetoothLEDeviceStatics2 = GUID.parse("5f12c06b-3bac-43e8-ad16-563271bd41c2");
 pub const IID_IBluetoothLEDevice = GUID.parse("b5ee2f7b-4ad8-4642-ac48-80a0b500e887");
 pub const IID_IBluetoothLEDevice2 = GUID.parse("26f062b3-7aee-4d31-baba-b1b9775f5916");
@@ -73,6 +75,7 @@ pub const IID_IGattServiceProviderResult = GUID.parse("764696d8-c53e-428c-8a48-6
 pub const IID_IGattServiceProviderAdvertisingParameters = GUID.parse("e2ce31ab-6315-4c22-9bd7-781dbc3d8d82");
 pub const IID_IGattLocalService = GUID.parse("f513e258-f7f7-4902-b803-57fcc7d6fe83");
 pub const IID_IGattLocalCharacteristic = GUID.parse("aede376d-5412-4d74-92a8-8deb8526829c");
+pub const IID_IGattSubscribedClient = GUID.parse("736e9001-15a4-4ec2-9248-e3f20d463be9");
 pub const IID_IGattLocalCharacteristicParameters = GUID.parse("faf73db4-4cff-44c7-8445-040e6ead0063");
 pub const IID_IGattLocalCharacteristicResult = GUID.parse("7975de9b-0170-4397-9666-92f863f12ee6");
 pub const IID_IGattReadRequestedEventArgs = GUID.parse("93497243-f39c-484b-8ab6-996ba486cfa3");

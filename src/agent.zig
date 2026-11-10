@@ -49,6 +49,10 @@ pub const AgentCallbacks = struct {
     request_confirmation: ?*const fn (device_path: [:0]const u8, passkey: u32, user_data: ?*anyopaque) bool = null,
     request_authorization: ?*const fn (device_path: [:0]const u8, user_data: ?*anyopaque) bool = null,
     authorize_service: ?*const fn (device_path: [:0]const u8, uuid: [:0]const u8, user_data: ?*anyopaque) bool = null,
+    /// The user must enter this passkey on the other device. BlueZ calls it again per entered digit.
+    display_passkey: ?*const fn (device_path: [:0]const u8, passkey: u32, user_data: ?*anyopaque) void = null,
+    /// The user must enter this PIN on the other device (legacy pairing).
+    display_pin_code: ?*const fn (device_path: [:0]const u8, pin: [:0]const u8, user_data: ?*anyopaque) void = null,
     user_data: ?*anyopaque = null,
 
     /// Opt-in flag to automatically accept numeric confirmation/authorization
@@ -223,6 +227,7 @@ pub const Agent = struct {
             if (!isValidBluezDevicePath(dev_path) or passkey > 999_999) {
                 return try createRejectReply(msg, "Invalid DisplayPasskey arguments");
             }
+            if (self.callbacks.display_passkey) |cb| cb(dev_path, passkey, self.callbacks.user_data);
             return try Message.createMethodReturn(msg.allocator, msg);
         }
 
@@ -234,6 +239,7 @@ pub const Agent = struct {
             if (!isValidBluezDevicePath(dev_path) or pin.len == 0 or pin.len > 16) {
                 return try createRejectReply(msg, "Invalid DisplayPinCode arguments");
             }
+            if (self.callbacks.display_pin_code) |cb| cb(dev_path, pin, self.callbacks.user_data);
             return try Message.createMethodReturn(msg.allocator, msg);
         }
 
@@ -684,6 +690,48 @@ test "Agent: malicious D-Bus messages (missing args, invalid paths, out-of-range
         var reply = (try agent.handleRequest(&req)).?;
         defer reply.deinit();
         try std.testing.expectEqual(wire.MessageType.error_reply, reply.fixed_header.msg_type);
+    }
+}
+
+test "Agent: DisplayPasskey and DisplayPinCode reach the application" {
+    var dummy_conn: Connection = if (builtin.os.tag == .linux) .{
+        .allocator = std.testing.allocator,
+        .socket = .{ .fd = -1 },
+        .incoming_queue = .{},
+    } else .{};
+
+    const Shown = struct {
+        var passkey: ?u32 = null;
+        var pin_len: usize = 0;
+        fn onPasskey(_: [:0]const u8, value: u32, _: ?*anyopaque) void {
+            passkey = value;
+        }
+        fn onPin(_: [:0]const u8, pin: [:0]const u8, _: ?*anyopaque) void {
+            pin_len = pin.len;
+        }
+    };
+
+    var agent = Agent.initWithCallbacks(&dummy_conn, "/org/zig_ble/agent", .keyboard_display, .{
+        .display_passkey = Shown.onPasskey,
+        .display_pin_code = Shown.onPin,
+    });
+    const valid_dev = "/org/bluez/hci0/dev_11_22_33_44_55_66";
+
+    {
+        var req = try buildTestAgentCall(std.testing.allocator, "/org/zig_ble/agent", BlueZ.Agent1.interface_name, BlueZ.Agent1.Methods.DisplayPasskey, valid_dev, 123456, null);
+        defer req.deinit();
+        var reply = (try agent.handleRequest(&req)).?;
+        defer reply.deinit();
+        try std.testing.expectEqual(wire.MessageType.method_return, reply.fixed_header.msg_type);
+        try std.testing.expectEqual(@as(?u32, 123456), Shown.passkey);
+    }
+    {
+        var req = try buildTestAgentCall(std.testing.allocator, "/org/zig_ble/agent", BlueZ.Agent1.interface_name, BlueZ.Agent1.Methods.DisplayPinCode, valid_dev, null, "0000");
+        defer req.deinit();
+        var reply = (try agent.handleRequest(&req)).?;
+        defer reply.deinit();
+        try std.testing.expectEqual(wire.MessageType.method_return, reply.fixed_header.msg_type);
+        try std.testing.expectEqual(@as(usize, 4), Shown.pin_len);
     }
 }
 

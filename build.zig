@@ -483,7 +483,7 @@ pub fn build(b: *std.Build) void {
     });
     const run_hardware_check_cmd = b.addRunArtifact(hardware_check_exe);
     run_hardware_check_cmd.addPassthruArgs();
-    const run_hardware_check_step = b.step("run-hardware-check", "Scan with the native backend; with a device address also connect and read (needs a Bluetooth adapter)");
+    const run_hardware_check_step = b.step("run-hardware-check", "Run the hardware check, see examples/hardware_check.zig (needs a Bluetooth adapter; pairing prompts need the built binary)");
     run_hardware_check_step.dependOn(&run_hardware_check_cmd.step);
     const hardware_check_step = b.step("hardware-check", "Build the hardware check without running it");
     hardware_check_step.dependOn(&b.addInstallArtifact(hardware_check_exe, .{}).step);

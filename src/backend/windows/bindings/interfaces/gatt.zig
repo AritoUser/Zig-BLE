@@ -437,7 +437,7 @@ pub const IGattLocalCharacteristicVtbl = extern struct {
     get_Descriptors: *const anyopaque,
     get_UserDescription: *const fn (self: *anyopaque, value: *HSTRING) callconv(WINAPI) HRESULT,
     get_PresentationFormats: *const anyopaque,
-    get_SubscribedClients: *const anyopaque,
+    get_SubscribedClients: *const fn (self: *anyopaque, value: *?*IVectorViewGeneric) callconv(WINAPI) HRESULT,
     add_SubscribedClientsChanged: *const anyopaque,
     remove_SubscribedClientsChanged: *const anyopaque,
     add_ReadRequested: *const fn (self: *anyopaque, handler: *anyopaque, token: *EventRegistrationToken) callconv(WINAPI) HRESULT,
@@ -445,7 +445,25 @@ pub const IGattLocalCharacteristicVtbl = extern struct {
     add_WriteRequested: *const fn (self: *anyopaque, handler: *anyopaque, token: *EventRegistrationToken) callconv(WINAPI) HRESULT,
     remove_WriteRequested: *const fn (self: *anyopaque, token: EventRegistrationToken) callconv(WINAPI) HRESULT,
     NotifyValueAsync: *const fn (self: *anyopaque, value: *IBuffer, operation: *?*IAsyncOperationGeneric) callconv(WINAPI) HRESULT,
-    NotifyValueForSubscribedClientAsync: *const anyopaque,
+    NotifyValueForSubscribedClientAsync: *const fn (self: *anyopaque, value: *IBuffer, client: *IGattSubscribedClient, operation: *?*IAsyncOperationGeneric) callconv(WINAPI) HRESULT,
+};
+
+pub const IGattSubscribedClient = extern struct {
+    lpVtbl: *const IGattSubscribedClientVtbl,
+};
+
+pub const IGattSubscribedClientVtbl = extern struct {
+    QueryInterface: *const fn (self: *anyopaque, riid: *const GUID, ppvObject: *?*anyopaque) callconv(WINAPI) HRESULT,
+    AddRef: *const fn (self: *anyopaque) callconv(WINAPI) ULONG,
+    Release: *const fn (self: *anyopaque) callconv(WINAPI) ULONG,
+    GetIids: *const anyopaque,
+    GetRuntimeClassName: *const anyopaque,
+    GetTrustLevel: *const anyopaque,
+
+    get_Session: *const fn (self: *anyopaque, value: *?*IGattSession) callconv(WINAPI) HRESULT,
+    get_MaxNotificationSize: *const fn (self: *anyopaque, value: *u16) callconv(WINAPI) HRESULT,
+    add_MaxNotificationSizeChanged: *const anyopaque,
+    remove_MaxNotificationSizeChanged: *const anyopaque,
 };
 
 pub const IGattReadRequestedEventArgs = extern struct {
