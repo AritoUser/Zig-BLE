@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 * **Windows `disconnect` did not end the link while an indication subscription was active.** Windows keeps a link whose peer still sends indications, even after every object of the device is released and even after the process has ended; the link then stayed up for minutes and a "reconnect" reused it. `disconnect` (and `deinit`) now turn notifications and indications off on the peer first. Found on hardware against a BlueZ peripheral; after the fix the peripheral advertises again 4 to 20 s after `disconnect`, which is how long Windows itself takes.
+* **Windows could not pair by Just Works.** `pair(.no_input_no_output)` asked the peer for MITM protection, which a side without input and output cannot give; a BlueZ peer refused with "authentication requirements" and `pair` returned `PairingFailed`. It now asks for encryption only.
 * BlueZ: every second entry of a characteristic's `Flags` was skipped, so `GattCharacteristicInfo.flags` missed properties, e.g. `write_without_response` on a characteristic reported as read, write-without-response, write.
 * BlueZ: `writeCharacteristic` without response now returns `NotSupported` when the characteristic does not allow it; the peer drops such a write and nothing reports it.
 * Windows: a `subscribe` the peer refused (e.g. on a characteristic that cannot notify) left its handler registered, so the characteristic counted as subscribed.

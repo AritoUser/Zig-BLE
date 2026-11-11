@@ -9,6 +9,8 @@ const BleError = types.BleError;
 const PairingCallbacks = types.PairingCallbacks;
 const HSTRING = bindings.HSTRING;
 
+const log = std.log.scoped(.zig_ble);
+
 pub const PairingSessionContext = struct {
     io_cap: types.IoCapability,
     callbacks: PairingCallbacks,
@@ -86,6 +88,7 @@ pub fn onPairingRequested(pair_ctx: *anyopaque, args: *bindings.IDevicePairingRe
     }
 
     const action = evaluatePairingCeremony(kind, pin_slice, ctx.io_cap, ctx.callbacks);
+    log.debug("WinRT pairing requested: kind {d}, answer {t}", .{ kind, action });
     switch (action) {
         .reject => {},
         .accept_only => {
@@ -228,7 +231,14 @@ pub fn pairBleDevice(ble_dev: *bindings.IBluetoothLEDevice, io_cap: types.IoCapa
     };
 
     var pair_op: ?*bindings.IAsyncOperationGeneric = null;
-    if (cp.lpVtbl.PairAsync(cp, supported_kinds, &pair_op) < 0 or pair_op == null) return BleError.PairingFailed;
+    // Without a level Windows asks for MITM protection, which a side without input and output
+    // cannot give: the peer then refuses with "authentication requirements". Just Works needs
+    // the level that only asks for encryption.
+    const pair_hr = if (io_cap == .no_input_no_output)
+        cp.lpVtbl.PairWithProtectionLevelAsync(cp, supported_kinds, .Encryption, &pair_op)
+    else
+        cp.lpVtbl.PairAsync(cp, supported_kinds, &pair_op);
+    if (pair_hr < 0 or pair_op == null) return BleError.PairingFailed;
     const res_raw = (try helpers.awaitAsync(pair_op.?, timeout_ms)) orelse return BleError.PairingFailed;
 
     const pair_res: *bindings.IDevicePairingResult = @ptrCast(@alignCast(res_raw));
@@ -236,7 +246,10 @@ pub fn pairBleDevice(ble_dev: *bindings.IBluetoothLEDevice, io_cap: types.IoCapa
 
     var status: bindings.DevicePairingResultStatus = .Failed;
     if (pair_res.lpVtbl.get_Status(pair_res, &status) < 0) return BleError.PairingFailed;
-    if (status != .Paired and status != .AlreadyPaired) return BleError.PairingFailed;
+    if (status != .Paired and status != .AlreadyPaired) {
+        log.debug("WinRT pairing ended with status {d}", .{@intFromEnum(status)});
+        return BleError.PairingFailed;
+    }
 }
 
 pub fn unpairDevice(backend: anytype, dev: anytype) BleError!void {

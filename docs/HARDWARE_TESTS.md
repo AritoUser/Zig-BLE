@@ -105,8 +105,39 @@ Linux-Peripheral, L = Linux als Central gegen das Windows-Peripheral:
   im Wiederholungslauf keine von 90. Gewertet ist der Wiederholungslauf.
 - Die Kriterien verlangen einen zweiten vollständig grünen Lauf an einem anderen Tag.
 
-Die Pairing-Prüfungen steuert `scripts/hardware_pairing.sh` von einem der beiden Rechner aus;
-der zweite wird über ssh bedient. Die Abfragen beantwortet das Skript über `--answers`.
+## Pairing
+
+`scripts/hardware_pairing.sh` steuert beide Rechner von einem aus, der zweite wird über ssh
+bedient. Es beantwortet die Abfragen über `--answers` wie ein Mensch: Einen Code bestätigt es
+nur, wenn beide Seiten denselben zeigen, und den Passkey der einen Seite tippt es auf der
+anderen ein. Nach jeder Runde entfernt es den Bond auf beiden Seiten.
+
+```bash
+PEER_SSH="ssh user@linux-host" PEER_BIN=/home/user/ble-hardware-check \
+LOCAL_BIN=zig-out/bin/ble-hardware-check.exe PERIPHERAL_ADDR=<addr> \
+  scripts/hardware_pairing.sh local numeric 10              # dieser Rechner ist Central
+  scripts/hardware_pairing.sh peer numeric 10 peripheral    # der andere ist Central
+```
+
+Stand 2026-11-11 (Tag 1). W = Windows als Central koppelt mit `--pair` und verbindet danach neu
+(„bonded“ muss bleiben, protected lesbar sein). L = Linux als Central abonniert nur
+(`--await-pair`), das Windows-Peripheral startet das Pairing; ohne Reconnect, weil Linux einen
+gekoppelten PC nicht wieder erreicht (B13).
+
+| Methode | W | L |
+| :--- | :---: | :---: |
+| Numeric Comparison | 10/10 | 8/10 |
+| Just Works | 10/10 | 10/10 |
+| Passkey, Central tippt | 10/10 | 8/10 |
+| Passkey, Peripheral tippt | 10/10 | 10/10 |
+
+- **L, 8/10:** In den vier Runden endete die Verbindung beim Start der Verschlüsselung mit einem
+  Timeout (A9 in `V2_BLOCKERS.md`).
+- **W:** In einem früheren Lauf meldete Windows nach fünf Runden für einige Minuten
+  `OperationAlreadyInProgress` (A8); gewertet ist der Wiederholungslauf.
+- Linux kann einen Bond nur über eine Verbindung entfernen, die zum gekoppelten PC nicht mehr
+  zustande kommt. Das Skript nimmt dafür `CENTRAL_FORGET` (unter BlueZ `Adapter1.RemoveDevice`)
+  und für das Windows-Peripheral `PERIPHERAL_FORGET`.
 
 ## Außerhalb der v2-Bedingung
 

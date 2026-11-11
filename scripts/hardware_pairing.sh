@@ -24,6 +24,8 @@
 #   PERIPHERAL_ADDR    address of the peripheral, or `auto` (default) to find it by its service
 #   PERIPHERAL_FORGET  command run on the peripheral's computer after every round to remove the
 #                      bond there, e.g. "bluetoothctl remove AA:BB:CC:DD:EE:FF" (optional)
+#   CENTRAL_FORGET     command run on the central's computer instead of `--unpair`, for a
+#                      central that cannot connect to a bonded peer again (optional)
 #
 # The central removes its own bond with `--unpair` after every round. Both programs CHANGE the
 # bond state of both computers; use it only between computers of your own.
@@ -100,7 +102,8 @@ answer_prompts() {
           [ "$method" = numeric ] || answer "$side" y ;;
         *"Pair without a code"*|*"Allow access to service"*) answer "$side" y ;;
         *"Enter the 6-digit code"*)
-          [ -n "${passkey:-}" ] || return
+          # The other side may not have shown the passkey yet; look again on the next pass.
+          [ -n "${passkey:-}" ] || break
           answer "$side" "$passkey" ;;
         *"Enter "*" on the other device"*) passkey=$(printf '%s' "$line" | grep -o '[0-9]\{6\}') ;;
       esac
@@ -150,14 +153,16 @@ for round in $(seq 1 "$rounds"); do
   [ $paired = yes ] && [ $readable = yes ] && [ $rebonded != no ] && [ $same != no ] && { verdict=PASS; passed=$((passed + 1)); }
   echo "round $round ($method, central $central, $initiator pairs): paired=$paired protected=$readable bonded-after-reconnect=$rebonded codes-equal=$same code=${code_c:-${passkey:-none}} -> $verdict"
   if [ $verdict = FAIL ]; then
-    echo "--- central log"; printf '%s\n' "$c_log" | grep -v '^  notification' | tail -15
+    echo "--- central log"; printf '%s\n' "$c_log" | grep -E 'Connected after|[Pp]airing|>>>|answer|Bond state|^error' | tail -15
     echo "--- peripheral log"; log_of p | grep -v ' s, echo' | tail -8
   fi
 
   # Remove the bond on both sides so the next round pairs from scratch.
   unpair_addr=$addr
   [ "$unpair_addr" = auto ] && unpair_addr=$(printf '%s\n' "$c_log" | grep -o 'Connecting to [0-9A-F:]*' | tail -1 | cut -d' ' -f3)
-  if [ "$central" = local ]; then
+  if [ -n "${CENTRAL_FORGET:-}" ]; then
+    if [ "$central" = local ]; then sh -c "$CENTRAL_FORGET" > /dev/null 2>&1; else $PEER_SSH "$CENTRAL_FORGET" > /dev/null 2>&1; fi
+  elif [ "$central" = local ]; then
     "$LOCAL_BIN" "$unpair_addr" --service "$service" --unpair > "$work/unpair.log" 2>&1
   else
     $PEER_SSH "$PEER_BIN $unpair_addr --service $service --unpair > $peer_dir/unpair.log 2>&1"
