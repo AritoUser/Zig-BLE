@@ -86,14 +86,9 @@ pub const ConnectionState = enum(u8) {
     disconnecting = 3,
 };
 
-/// IO Capabilities for BLE Security Manager (SMP) pairing.
-pub const IoCapability = enum(u8) {
-    display_only = 0,
-    display_yes_no = 1,
-    keyboard_only = 2,
-    no_input_no_output = 3,
-    keyboard_display = 4,
-};
+/// IO Capabilities for BLE Security Manager (SMP) pairing. The same type as `crypto.IoCapability`,
+/// so `ble.IoCapability` works with `pair` and with the SMP API alike.
+pub const IoCapability = @import("../crypto/smp/types.zig").IoCapability;
 
 /// Callback invoked for Numeric Comparison (when `numeric_value != null`) or Just Works confirmation (`numeric_value == null`).
 /// Return `true` to accept pairing, `false` to reject.

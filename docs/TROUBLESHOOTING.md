@@ -79,6 +79,21 @@ backend. Error names refer to `BleError`.
 - Pair first (`pair`, with a registered `Agent`), or leave protected characteristics alone.
   BlueZ may create a bond while doing this, so do not probe devices you do not want bonded.
 
+**After pairing, a phone or PC cannot be connected again**
+- BlueZ keeps the device object of a peer that used a random address and changes only its
+  `Address` to the identity address. `connect` finds the device by either address.
+- A dual-mode peer (phone, PC) bonded over LE is also bonded over BR/EDR (cross-transport key
+  derivation), and `Device1.Connect` then picks the bearer it saw last, often BR/EDR
+  (`br-connection-profile-unavailable`). The backend sets `PreferredBearer = "le"`; BlueZ offers
+  that property only with `Experimental = true` in `/etc/bluetooth/main.conf`.
+- `Experimental = true` also turns on BlueZ's LE Audio services (0x1844, 0x184D, 0x184F, ...),
+  which require encryption: every unbonded central that discovers them is asked to pair, and the
+  link drops when nobody confirms. Seen with BlueZ 5.82. Weigh that before enabling it.
+- Seen with a Realtek USB adapter: the LE connect still times out, because the kernel leaves
+  the peer's random address to the controller's resolving list and the controller does not
+  resolve it. `btmon` shows `LE Extended Create Connection` to the identity address while the
+  peer advertises a resolvable address.
+
 **`bluetoothd` restarts**
 - All connections are reported as disconnected.
 - Register `setDaemonRestartCallback` and call `recoverAfterDaemonRestart`, then scan and
@@ -91,6 +106,14 @@ backend. Error names refer to `BleError`.
 - Zig-BLE opens a `GattSession` with `MaintainConnection = true` on connect. If the device
   offers no session, a warning is logged and Windows may close an idle link. Reading or
   subscribing re-establishes it.
+
+**After `disconnect` the device still shows a connection for a while**
+- Windows has no explicit disconnect either: it ends the link some time after the last object
+  of the device is released, 4 to 20 s in testing. `disconnect` returns before that, and a
+  `connect` within that time reuses the old link.
+- Windows does not end a link whose peer keeps sending indications. `disconnect` therefore
+  turns the subscriptions off on the peer first. If the application is killed instead, such a
+  link can stay up until the peer or Bluetooth is switched off.
 
 **A device disconnects after a few seconds, although others stay connected**
 - Some devices may end connections from anything but their paired owner; a tracker tag

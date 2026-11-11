@@ -111,5 +111,5 @@ produktionsreifen BLE-Bibliothek machen. Sortiert nach Priorität:
 - [x] **33. Semver mit festgelegter öffentlicher API**; interne Module nicht über `src/root.zig` nach außen sichtbar machen
 - [x] **34. Releases über Git-Tags**, CHANGELOG passend zu den Tags, Kompatibilität mit `zig fetch`
 - [x] **35. `SECURITY.md`** mit einem Meldeweg für Sicherheitslücken
-- [ ] **36. README-Beispiele in der CI kompilieren**, damit sie nicht veralten — *`tests/test_readme_examples.zig` enthält eigenen Mock-Code, nicht die Beispiele aus dem README. Offen: die README-Beispiele selbst kompilieren.*
+- [x] **36. README-Beispiele in der CI kompilieren**, damit sie nicht veralten — *`zig build check-readme` zieht die Programme aus dem README und kompiliert sie; die CI führt das unter Linux und Windows aus. Zwei der drei Beispiele waren veraltet und sind korrigiert.*
 - [x] **37. macOS**: CoreBluetooth-Backend bauen oder ausdrücklich „nicht unterstützt“ dokumentieren (derzeit wird nur der Kern getestet) — *„nicht unterstützt“ dokumentiert; Tests laufen in der CI auch unter macOS*

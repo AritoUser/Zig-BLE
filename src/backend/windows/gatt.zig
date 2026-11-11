@@ -238,6 +238,16 @@ pub fn writeCharacteristic(backend: anytype, dev: anytype, char: CharacteristicS
     const slot = dev.findCharacteristic(char) orelse return BleError.CharacteristicNotFound;
     const ch = slot.char_ptr orelse return BleError.CharacteristicNotFound;
 
+    // A peer drops a write command its characteristic does not allow, and nothing reports it.
+    if (!with_response) {
+        var props: u32 = 0;
+        if (ch.lpVtbl.get_CharacteristicProperties(ch, &props) >= 0 and props != 0 and
+            (props & bindings.GattCharacteristicProperties.WriteWithoutResponse) == 0)
+        {
+            return BleError.NotSupported;
+        }
+    }
+
     const ibuf = try helpers.createIBuffer(data);
     defer _ = ibuf.lpVtbl.Release(ibuf);
 
@@ -336,11 +346,22 @@ pub fn subscribeNotifications(
         .on_changed = value_changed_fn,
     };
 
-    if (!slot.is_subscribed) {
+    const was_subscribed = slot.is_subscribed;
+    if (!was_subscribed) {
         const add_hr = ch.lpVtbl.add_ValueChanged(ch, @ptrCast(&slot.value_changed_handler), &slot.value_changed_token);
         if (add_hr < 0) return BleError.NotificationFailed;
         slot.is_subscribed = true;
     }
+    // A subscription the peer refused must not stay registered: it would count as active.
+    errdefer if (!was_subscribed) {
+        _ = ch.lpVtbl.remove_ValueChanged(ch, slot.value_changed_token);
+        slot.is_subscribed = false;
+        slot.value_changed_token = 0;
+        backend.state_mutex.lock();
+        defer backend.state_mutex.unlock();
+        slot.notify_cb = null;
+        slot.notify_user_data = null;
+    };
 
     var props: u32 = 0;
     _ = ch.lpVtbl.get_CharacteristicProperties(ch, &props);

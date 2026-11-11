@@ -22,6 +22,9 @@ pub const RadioInfo = radio_mod.RadioInfo;
 
 const log = std.log.scoped(.zig_ble);
 
+/// Upper bound per CCCD write when subscriptions are turned off before a disconnect.
+const disconnect_write_ms = 2_000;
+
 // Core BLE types re-exports
 pub const Address = types.Address;
 pub const UUID = types.UUID;
@@ -261,6 +264,7 @@ pub fn WindowsBackendWithConfig(comptime pool_config: PoolConfig) type {
 
             for (&self.devices) |*d| {
                 if (d.in_use) {
+                    d.disableSubscriptionsOnPeer(@min(self.timeouts.write_ms, disconnect_write_ms));
                     d.releaseAll();
                     d.in_use = false;
                 }
@@ -365,6 +369,7 @@ pub fn WindowsBackendWithConfig(comptime pool_config: PoolConfig) type {
             const eff_timeout = if (timeout_ms == 0) self.timeouts.connect_ms else timeout_ms;
             var dev_slot = try self.allocateDeviceSlot(addr);
             if (dev_slot.auto_resubscribe) dev_slot.saved_subscriptions.capture(dev_slot.characteristics[0..dev_slot.characteristics_len]);
+            dev_slot.disableSubscriptionsOnPeer(@min(self.timeouts.write_ms, disconnect_write_ms));
             dev_slot.releaseAll();
             dev_slot.parent_backend = self;
             dev_slot.connection_state.store(.connecting, .release);
@@ -515,6 +520,7 @@ pub fn WindowsBackendWithConfig(comptime pool_config: PoolConfig) type {
             const dev: *DeviceContext = @ptrCast(@alignCast(dev_handle));
             dev.connection_state.store(.disconnecting, .release);
             if (dev.auto_resubscribe) dev.saved_subscriptions.capture(dev.characteristics[0..dev.characteristics_len]);
+            dev.disableSubscriptionsOnPeer(@min(self.timeouts.write_ms, disconnect_write_ms));
             dev.releaseAll();
             dev.connection_state.store(.disconnected, .release);
         }

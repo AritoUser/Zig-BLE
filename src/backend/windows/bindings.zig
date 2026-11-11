@@ -115,6 +115,7 @@ pub const IID_IGattWriteRequestedEventArgs = iids.IID_IGattWriteRequestedEventAr
 pub const IID_IGattWriteRequest = iids.IID_IGattWriteRequest;
 pub const IID_ITypedEventHandler_GattLocalCharacteristic_ReadRequested = iids.IID_ITypedEventHandler_GattLocalCharacteristic_ReadRequested;
 pub const IID_ITypedEventHandler_GattLocalCharacteristic_WriteRequested = iids.IID_ITypedEventHandler_GattLocalCharacteristic_WriteRequested;
+pub const IID_IGattLocalDescriptorParameters = iids.IID_IGattLocalDescriptorParameters;
 pub const IID_IBuffer = iids.IID_IBuffer;
 pub const IID_IBufferByteAccess = iids.IID_IBufferByteAccess;
 pub const IID_ICryptographicBufferStatics = iids.IID_ICryptographicBufferStatics;
@@ -233,6 +234,9 @@ pub const IGattLocalServiceVtbl = interfaces.IGattLocalServiceVtbl;
 pub const IGattLocalCharacteristicParameters = interfaces.IGattLocalCharacteristicParameters;
 pub const IGattLocalCharacteristicParametersVtbl = interfaces.IGattLocalCharacteristicParametersVtbl;
 pub const IGattLocalCharacteristicResult = interfaces.IGattLocalCharacteristicResult;
+pub const IGattLocalDescriptorParameters = interfaces.IGattLocalDescriptorParameters;
+pub const IGattLocalDescriptorResult = interfaces.IGattLocalDescriptorResult;
+pub const IGattLocalDescriptor = interfaces.IGattLocalDescriptor;
 pub const IGattLocalCharacteristicResultVtbl = interfaces.IGattLocalCharacteristicResultVtbl;
 pub const IGattLocalCharacteristic = interfaces.IGattLocalCharacteristic;
 pub const IGattLocalCharacteristicVtbl = interfaces.IGattLocalCharacteristicVtbl;
@@ -260,6 +264,8 @@ pub const ConnectionStatusChangedHandler = events.ConnectionStatusChangedHandler
 pub const PairingRequestedHandler = events.PairingRequestedHandler;
 pub const GattReadRequestedHandler = events.GattReadRequestedHandler;
 pub const GattWriteRequestedHandler = events.GattWriteRequestedHandler;
+pub const GattDescriptorReadRequestedHandler = events.GattDescriptorReadRequestedHandler;
+pub const GattDescriptorWriteRequestedHandler = events.GattDescriptorWriteRequestedHandler;
 
 // Re-exports from bthprops
 pub const BTH_LE_UUID = bthprops.BTH_LE_UUID;

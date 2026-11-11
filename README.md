@@ -183,16 +183,25 @@ exe.root_module.addImport("Zig_BLE", zig_ble.module("Zig_BLE"));
 
 ```zig
 const std = @import("std");
+const builtin = @import("builtin");
 const ble = @import("Zig_BLE");
 
-pub fn main() !void {
-    // 1. Initialize native platform backend
-    var backend_impl = ble.backend.windows.WindowsBackend.init(); // On Linux: use Linux backend
-    defer backend_impl.deinit();
+// The native backend of the platform this is built for.
+const Native = switch (builtin.os.tag) {
+    .windows => ble.WindowsBackend,
+    .linux => ble.BluezBackend,
+    else => @compileError("no native backend for this platform"),
+};
 
-    // 2. Wrap in UnifiedAdapter
-    var adapter = ble.UnifiedAdapter.init(backend_impl.asBackend());
-    try adapter.setPowered(true);
+pub fn main() !void {
+    // 1. Open the adapter of the native backend
+    var native = Native.init();
+    defer native.deinit();
+    const backend = native.asBackend();
+    try backend.openAdapter(0);
+
+    // 2. Wrap it in a UnifiedAdapter
+    var adapter = ble.UnifiedAdapter.init(backend);
 
     const Scanner = struct {
         fn onDevice(dev: *const ble.backend.DiscoveredDevice, _: ?*anyopaque) void {
@@ -249,93 +258,101 @@ pub fn main() !void {
 const std = @import("std");
 const ble = @import("Zig_BLE");
 
-pub fn main() !void {
-    var file = try std.fs.cwd().createFile("capture.pcap", .{});
-    defer file.close();
+pub fn main(init: std.process.Init) !void {
+    const io = init.io;
+    var file = try std.Io.Dir.cwd().createFile(io, "capture.pcap", .{});
+    defer file.close(io);
+    var buffer: [4096]u8 = undefined;
+    var file_writer = file.writer(io, &buffer);
+    const out = &file_writer.interface;
 
-    var pcap_writer = ble.pcap.PcapWriter(@TypeOf(file)).init(file);
+    var pcap_writer = ble.pcap.PcapWriter(*std.Io.Writer).init(out);
     try pcap_writer.writeHeader(); // Standard PCAP magic (DLT_BLUETOOTH_HCI_H4)
 
     // Capture an ATT Exchange MTU PDU
     try pcap_writer.writeAttPdu(0x0040, 0x0004, &[_]u8{ 0x02, 0xF7, 0x00 });
+    try out.flush();
 }
 ```
 
 ---
 
-## Architekturvergleich
+## Architecture Comparison
 
-Qualitativer Vergleich der Bauweise, keine Performance-Messung. Für die anderen Bibliotheken wurden keine Benchmarks mit denselben Daten durchgeführt, deshalb enthält diese Tabelle bewusst keine Durchsatzzahlen.
+A qualitative comparison of how the libraries are built, not a performance measurement. No benchmarks were run on the other libraries with the same data, so this table deliberately contains no throughput numbers.
 
-| Kriterium | **Zig-BLE v1.3.2** | **Rust (`btleplug`)** | **C++ (`SimpleBLE`)** | **Embedded C (`NimBLE`)** | **Python (`bleak`)** |
+| Criterion | **Zig-BLE v1.3.2** | **Rust (`btleplug`)** | **C++ (`SimpleBLE`)** | **Embedded C (`NimBLE`)** | **Python (`bleak`)** |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **Sprache** | Zig 0.17+ | Rust | C++17 | C99 | Python 3.8+ |
-| **`libc` nötig (Linux)** | Nein (eigener D-Bus-Wire-Client) | Ja (indirekt) | Ja | Teilweise | Ja (Python-Runtime) |
-| **Heap-freie Parser** | Ja (Parser nehmen keinen Allocator) | Nein | Nein | Ja (statische Pools) | Nein |
-| **`bluetoothd` nötig (Linux)** | Für Verbindungen ja; Scannen per Raw-HCI auch ohne | Ja | Ja | Nein (eigener Host-Stack) | Ja |
-| **Bare-Metal / MCU** | Experimentell (`UartBackend` H4/H5, noch nicht mit echtem Controller nutzbar) | Nein | Nein | Ja (ESP32/nRF) | Nein |
-| **Pairing unter Windows** | Ja (`DeviceInformationCustomPairing`) | Ja (über das OS) | Ja (über das OS) | – | Ja (über das OS) |
+| **Language** | Zig 0.17+ | Rust | C++17 | C99 | Python 3.8+ |
+| **Needs `libc` (Linux)** | No (own D-Bus wire client) | Yes (indirectly) | Yes | Partly | Yes (Python runtime) |
+| **Heap-free parsers** | Yes (parsers take no allocator) | No | No | Yes (static pools) | No |
+| **Needs `bluetoothd` (Linux)** | For connections yes; scanning also works over raw HCI | Yes | Yes | No (own host stack) | Yes |
+| **Bare metal / MCU** | Experimental (`UartBackend` H4/H5, not usable with a real controller yet) | No | No | Yes (ESP32/nRF) | No |
+| **Pairing on Windows** | Yes (`DeviceInformationCustomPairing`) | Yes (through the OS) | Yes (through the OS) | – | Yes (through the OS) |
 
 ---
 
 ## Microbenchmarks
 
-`zig build run-bench` (`ReleaseFast`, ein Thread). Gemessen auf einem AMD Ryzen 9 9950X3D unter Windows 11, drei Läufe; angegeben ist der Median und die Spanne der drei Läufe in Nanosekunden pro Operation.
+`zig build run-bench` (`ReleaseFast`, one thread). Measured on an AMD Ryzen 9 9950X3D under Windows 11, three runs; the table shows the median and the range of the three runs in nanoseconds per operation.
 
-| Operation | Median | Spanne (3 Läufe) |
+| Operation | Median | Range (3 runs) |
 | :--- | ---: | ---: |
-| `AdvertisingReport.parse` (komplettes Paket, 31 Byte) | 5,5 ns | 5,4 – 5,6 ns |
-| `AdIterator.next` (TLV-Walk, 4 Elemente) | 19,7 ns | 19,6 – 21,1 ns |
-| `UUID.parse` (128 Bit, mit Bindestrichen) | 11,4 ns | 11,3 – 11,5 ns |
-| `UUID.parse` (128 Bit, 32 Zeichen ohne Bindestriche) | 11,0 ns | 11,0 – 11,2 ns |
-| `AdStructure.asServiceData16` | 0,50 ns | 0,48 – 0,53 ns |
-| `UUID.toString` (128 Bit) | 1,2 ns | 1,2 – 1,2 ns |
-| `Address.parse` + `classifyRandom` | 0,75 ns | 0,71 – 0,80 ns |
-| `Cccd.encode` + `Cccd.decode` | 0,58 ns | 0,58 – 0,59 ns |
-| Assigned-Numbers-Lookup (Service-Name) | 0,85 ns | 0,81 – 0,87 ns |
-| D-Bus `Message.finalize` | 2,6 ns | 2,5 – 2,9 ns |
-| D-Bus `MessageIter` | 2,0 ns | 1,9 – 2,1 ns |
-| `H4StreamParser.feed` (UART-Frame) | 5,1 ns | 5,1 – 6,0 ns |
-| `AclReassembler.processFragment` | 0,88 ns | 0,86 – 0,90 ns |
-| GATT Long Write (60 Byte zerlegen + Server-Queue zusammensetzen) | 8,1 ns | 8,0 – 8,6 ns |
-| `BondStore.deserialize` (NVS-Image mit AES-128-CTR + AES-CMAC) | 100,5 ns | 99,5 – 101,8 ns |
+| `AdvertisingReport.parse` (complete packet, 31 bytes) | 5.5 ns | 5.4 – 5.6 ns |
+| `AdIterator.next` (TLV walk, 4 elements) | 19.7 ns | 19.6 – 21.1 ns |
+| `UUID.parse` (128 bit, with hyphens) | 11.4 ns | 11.3 – 11.5 ns |
+| `UUID.parse` (128 bit, 32 characters without hyphens) | 11.0 ns | 11.0 – 11.2 ns |
+| `AdStructure.asServiceData16` | 0.50 ns | 0.48 – 0.53 ns |
+| `UUID.toString` (128 bit) | 1.2 ns | 1.2 – 1.2 ns |
+| `Address.parse` + `classifyRandom` | 0.75 ns | 0.71 – 0.80 ns |
+| `Cccd.encode` + `Cccd.decode` | 0.58 ns | 0.58 – 0.59 ns |
+| Assigned numbers lookup (service name) | 0.85 ns | 0.81 – 0.87 ns |
+| D-Bus `Message.finalize` | 2.6 ns | 2.5 – 2.9 ns |
+| D-Bus `MessageIter` | 2.0 ns | 1.9 – 2.1 ns |
+| `H4StreamParser.feed` (UART frame) | 5.1 ns | 5.1 – 6.0 ns |
+| `AclReassembler.processFragment` | 0.88 ns | 0.86 – 0.90 ns |
+| GATT long write (split 60 bytes + reassemble in the server queue) | 8.1 ns | 8.0 – 8.6 ns |
+| `BondStore.deserialize` (NVS image with AES-128-CTR + AES-CMAC) | 100.5 ns | 99.5 – 101.8 ns |
 
-**Einordnung:**
+**How to read these numbers:**
 
-- Werte unter ~1 ns entsprechen wenigen CPU-Takten. Sie zeigen, dass die Operation praktisch nichts kostet, eignen sich aber nicht für Vergleiche untereinander; dort dominieren Messrauschen und Compiler-Optimierung.
-- Bei echtem BLE-Betrieb begrenzt der Funk, nicht die CPU: Ein Verbindungsintervall dauert mindestens 7,5 ms, ein Scanner in voller Umgebung sieht einige tausend Advertising-Pakete pro Sekunde. Bei ~5,5 ns pro Paket entspricht das weit unter 0,01 % eines CPU-Kerns.
-- Die Werte hängen stark von CPU, Betriebssystem und Taktverhalten ab. Für eigene Zahlen `zig build run-bench` mehrmals ausführen.
+- Values below about 1 ns are a few CPU cycles. They show that the operation costs practically nothing, but they are not suited for comparing operations with each other; measurement noise and compiler optimization dominate there.
+- In real BLE use the radio is the limit, not the CPU: a connection interval lasts at least 7.5 ms, and a scanner in a busy environment sees a few thousand advertising packets per second. At about 5.5 ns per packet that is far below 0.01 % of one CPU core.
+- The values depend strongly on CPU, operating system and frequency scaling. Run `zig build run-bench` several times for your own numbers.
 
 ---
 
-## Test- & Build-Befehle
+## Test & Build Commands
 
 ```sh
-# Führt alle Unit-, E2E-Pipeline- und Edge-Case-Tests aus
+# Run all unit, end-to-end pipeline and edge-case tests
 zig build test
 
-# Startet die Live-Demo (Protokoll-Toolkit und Scan)
+# Compile the programs shown in this README
+zig build check-readme
+
+# Start the live demo (protocol toolkit and scan)
 zig build run-v1-live
 
-# Startet den nativen Windows-Hardware-Scanner
+# Start the native Windows hardware scanner
 zig build run-windows-scanner
 
-# Führt die Microbenchmark-Suite aus
+# Run the microbenchmark suite
 zig build run-bench
 
-# Führt Fuzz-Tests gegen manipulierte Werbepakete aus (500k Iterationen)
+# Fuzz the advertising parser with malformed packets (500k iterations)
 zig build fuzz
 
-# Führt D-Bus Wire Protocol Fuzzing aus (200k Iterationen)
+# Fuzz the D-Bus wire protocol (200k iterations)
 zig build fuzz-dbus
 
-# Generiert die interaktive HTML-Dokumentation
+# Generate the HTML documentation
 zig build docs
 
-# Cross-Kompilierung für Linux ohne C-Compiler
+# Cross-compile for Linux without a C compiler
 zig build -Dtarget=x86_64-linux
 
-# Optional: Linkt system libdbus-1 (Legacy C-Fallback; Standard ist Pure-Zig Wire)
+# Optional: link the system libdbus-1 (legacy C fallback; the default is the pure-Zig wire client)
 zig build -Dlink-dbus=true
 ```
 

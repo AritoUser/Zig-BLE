@@ -84,6 +84,9 @@ pub const IID_IGattWriteRequestedEventArgs = GUID.parse("2dec8bbe-a73a-471a-94d5
 pub const IID_IGattWriteRequest = GUID.parse("aeb6a9ed-de2f-4fc2-a9a8-94ea7844f13d");
 pub const IID_ITypedEventHandler_GattLocalCharacteristic_ReadRequested = GUID.parse("218a3e4a-aa9d-500e-bca7-047751bb10a3");
 pub const IID_ITypedEventHandler_GattLocalCharacteristic_WriteRequested = GUID.parse("ed61a2fb-7d2a-5ba3-8ebf-8ad878e539a9");
+pub const IID_IGattLocalDescriptorParameters = GUID.parse("5fdede6a-f3c1-4b66-8c4b-e3d2293b40e9");
+pub const IID_ITypedEventHandler_GattLocalDescriptor_ReadRequested = GUID.parse("252dca5c-86e7-5be1-aeed-f78c6ed466ab");
+pub const IID_ITypedEventHandler_GattLocalDescriptor_WriteRequested = GUID.parse("6cf5b169-3731-591b-ae7c-d939faaa8a71");
 
 // Storage Streams (IBuffer & CryptographicBuffer)
 pub const IID_IBuffer = GUID.parse("905a0fe0-bc53-11df-8c49-001e4fc686da");

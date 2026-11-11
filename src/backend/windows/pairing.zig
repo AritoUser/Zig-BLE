@@ -224,6 +224,7 @@ pub fn pairBleDevice(ble_dev: *bindings.IBluetoothLEDevice, io_cap: types.IoCapa
         .display_yes_no => bindings.DevicePairingKinds.ConfirmPinMatch | bindings.DevicePairingKinds.DisplayPin | bindings.DevicePairingKinds.ConfirmOnly,
         .keyboard_only => bindings.DevicePairingKinds.ProvidePin | bindings.DevicePairingKinds.ConfirmOnly,
         .keyboard_display => bindings.DevicePairingKinds.ConfirmPinMatch | bindings.DevicePairingKinds.ProvidePin | bindings.DevicePairingKinds.DisplayPin | bindings.DevicePairingKinds.ConfirmOnly,
+        _ => return BleError.InvalidParameter,
     };
 
     var pair_op: ?*bindings.IAsyncOperationGeneric = null;

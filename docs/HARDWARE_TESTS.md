@@ -60,6 +60,7 @@ Anmerkungen:
 
 - **2, 5, 6 unter Windows:** gegen das Linux-Peripheral. Bis 2026-11-11 gelang der Verbindungsaufbau nur in etwa jedem zweiten Versuch; Ursache war der Linux-Kernel auf dem Testserver (A1). Mit dem `btusb`-Patch 20/20.
 - **4 unter Linux:** 10/10 Runden gegen das Windows-Peripheral, nach jedem Reconnect CCCD wieder `0100` und 14–15 Notifications (2026-11-11, mit dem `btusb`-Patch).
+- **4 unter Windows:** Bis 2026-11-11 trennte Windows vor dem Reconnect nicht wirklich (A4). Seit dem Fix wartet die Prüfung, bis das Peripheral wieder Advertising sendet; 10/10 im Sammellauf.
 - **9 unter Windows:** Lesen, Schreiben und Notifications gehen, 10/10 Runden mit 28–29 Notifications in 30 s. Die früheren Hänger kamen vom Linux-Kernel, nicht von Windows (siehe A1/A2 in `V2_BLOCKERS.md`).
 - **7, 8, 10:** Windows koppelte zweimal mit dem Linux-Peripheral, per Numeric Comparison; beide
   Seiten zeigten denselben Code, der Linux-Agent bestätigte. Passkey und Just Works sind noch
@@ -69,6 +70,43 @@ Anmerkungen:
   das Gerät über Classic zu erreichen). Die Gegenstelle behält ihre Schlüssel; unter BlueZ
   entfernt `Adapter1.RemoveDevice` sie.
 - **12** braucht Root auf dem Rechner mit `bluetoothd`.
+
+## Sammellauf
+
+Ein Rechner läuft als Peripheral, der andere fährt alle Prüfungen ohne Abfrage zehnmal:
+
+```bash
+ble-hardware-check --peripheral 20000                       # Gegenstelle
+ble-hardware-check <addr> --service 5a1e0001-6f3b-4c52-9d27-1e8b7c4a2f10 --suite
+```
+
+Ein Windows-Peripheral wechselt seine Adresse alle paar Minuten; nimm dafür `auto` statt der
+Adresse. Am Ende steht je Prüfung, wie viele Runden bestanden sind, und der Exit-Code ist nur
+bei „10/10“ überall 0. Stand 2026-11-11 (Tag 1), W = Windows als Central gegen das
+Linux-Peripheral, L = Linux als Central gegen das Windows-Peripheral:
+
+| Prüfung | W | L |
+| :--- | :---: | :---: |
+| Verbinden, Lesen, Notifications, 30 s halten | 10/10 | 10/10 |
+| Indications | 10/10 | 10/10 |
+| Langen Wert lesen (200+ Byte) | 10/10 | 10/10 |
+| Schreiben mit Antwort | 10/10 | 10/10 |
+| Schreiben ohne Antwort | 10/10 | 10/10 |
+| 512 Byte mit Antwort schreiben | 10/10 | 10/10 |
+| 200 Byte ohne Antwort schreiben | 10/10 | 10/10 |
+| Descriptor schreiben | 10/10 | 10/10 |
+| Auto-Resubscribe nach Reconnect | 10/10 | 10/10 |
+| Disconnect beendet die Verbindung | 10/10 | 10/10 (ohne Aussage, siehe unten) |
+
+- **Disconnect:** Ein BlueZ-Peripheral sendet erst wieder Advertising, wenn die Verbindung weg
+  ist; daran misst die Prüfung. Windows brauchte dafür 3–20 s. Ein Windows-Peripheral sendet
+  immer, die Prüfung sagt dort nichts aus; BlueZ trennt ohnehin ausdrücklich.
+- **L:** Im ersten Lauf lief eine von 89 Verbindungen in den Timeout (A6 in `V2_BLOCKERS.md`),
+  im Wiederholungslauf keine von 90. Gewertet ist der Wiederholungslauf.
+- Die Kriterien verlangen einen zweiten vollständig grünen Lauf an einem anderen Tag.
+
+Die Pairing-Prüfungen steuert `scripts/hardware_pairing.sh` von einem der beiden Rechner aus;
+der zweite wird über ssh bedient. Die Abfragen beantwortet das Skript über `--answers`.
 
 ## Außerhalb der v2-Bedingung
 

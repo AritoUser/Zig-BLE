@@ -37,6 +37,10 @@ jobs:
       - name: Compile every public function, used or not
         run: zig build check-api
 
+      - name: Compile the programs shown in README.md
+        if: runner.os != 'macOS'
+        run: zig build check-readme
+
       - name: Run Unit & Integration Test Suite with libc linked
         if: runner.os == 'Linux'
         run: zig build test -Dlink-libc=true

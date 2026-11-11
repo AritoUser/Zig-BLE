@@ -382,14 +382,11 @@ pub fn parseGattCharProps(obj_path: [:0]const u8, props_iter: anytype) GattChara
                     } else if (std.mem.eql(u8, key, BlueZ.GattCharacteristic1.Properties.MTU)) {
                         if (v.getUInt16()) |u| info.mtu = u;
                     } else if (std.mem.eql(u8, key, BlueZ.GattCharacteristic1.Properties.Flags)) {
-                        if (v.recurse()) |*flags_array| {
-                            var fa = flags_array.*;
-                            while (fa.hasMore()) {
-                                if (fa.getString()) |flag_str| {
-                                    info.flags.parseBluezFlag(flag_str);
-                                }
-                                _ = fa.next();
-                            }
+                        if (v.recurse()) |flags_array| {
+                            // `getString` already moves to the next element; a `next` on top
+                            // skipped every second flag.
+                            var fa = flags_array;
+                            while (fa.getString()) |flag_str| info.flags.parseBluezFlag(flag_str);
                         }
                     }
                 }
@@ -659,4 +656,69 @@ test "parseManagedObjects correctly decodes adapters and devices without skippin
     try std.testing.expect(handler.device_found);
     try std.testing.expectEqual(@as(?i16, -55), handler.device_rssi);
     try std.testing.expect(handler.device_name_match);
+}
+
+test "parseManagedObjects reads every characteristic flag" {
+    var body_buf = wire.ByteBuffer.init(std.testing.allocator);
+    defer body_buf.deinit();
+    var sig_buf = wire.ByteBuffer.init(std.testing.allocator);
+    defer sig_buf.deinit();
+
+    var builder = wire.MessageBuilder.init(&body_buf, &sig_buf);
+    var root_array = try builder.openArray("{oa{sa{sv}}}");
+    {
+        var obj = try root_array.openDictEntry();
+        try obj.appendObjectPath("/org/bluez/hci0/dev_11_22_33_44_55_66/service0010/char0011");
+        var ifaces = try obj.openArray("{sa{sv}}");
+        {
+            var iface = try ifaces.openDictEntry();
+            try iface.appendString("org.bluez.GattCharacteristic1");
+            var props = try iface.openArray("{sv}");
+            {
+                var p1 = try props.openDictEntry();
+                try p1.appendString("UUID");
+                var v1 = try p1.openVariant("s");
+                try v1.appendString("00002a37-0000-1000-8000-00805f9b34fb");
+                try p1.closeContainer(&v1);
+                try props.closeContainer(&p1);
+
+                // The order BlueZ reports for a characteristic of a Windows GATT server.
+                var p2 = try props.openDictEntry();
+                try p2.appendString("Flags");
+                var v2 = try p2.openVariant("as");
+                var flags = try v2.openArray("s");
+                try flags.appendString("read");
+                try flags.appendString("write-without-response");
+                try flags.appendString("write");
+                try flags.appendString("notify");
+                try v2.closeContainer(&flags);
+                try p2.closeContainer(&v2);
+                try props.closeContainer(&p2);
+            }
+            try iface.closeContainer(&props);
+            try ifaces.closeContainer(&iface);
+        }
+        try obj.closeContainer(&ifaces);
+        try root_array.closeContainer(&obj);
+    }
+    try builder.closeContainer(&root_array);
+
+    const Handler = struct {
+        flags: ?core.CharacteristicProperties = null,
+
+        pub fn onGattCharacteristic(self: *@This(), c: GattCharacteristicInfo) void {
+            self.flags = c.flags;
+        }
+    };
+
+    var handler = Handler{};
+    var iter = wire.MessageIter.init(body_buf.getSlice(), 0, body_buf.len, sig_buf.getSlice());
+    parseManagedObjects(&iter, Handler, &handler);
+
+    const flags = handler.flags orelse return error.TestExpectedCharacteristic;
+    try std.testing.expect(flags.read);
+    try std.testing.expect(flags.write_without_response);
+    try std.testing.expect(flags.write);
+    try std.testing.expect(flags.notify);
+    try std.testing.expect(!flags.indicate);
 }

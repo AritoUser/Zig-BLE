@@ -505,6 +505,39 @@ pub fn build(b: *std.Build) void {
     check_api_step.dependOn(&analyze_api.step);
 
     // ========================================================================
+    // Compile the programs shown in README.md (check-readme)
+    // ========================================================================
+    const readme_tool = b.addExecutable(.{
+        .name = "readme-examples",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("scripts/readme_examples.zig"),
+            .target = b.graph.host,
+        }),
+    });
+    const check_readme_step = b.step("check-readme", "Compile the Zig programs shown in README.md for the target");
+    // The extractor fails when README.md shows a different number of programs.
+    const readme_example_count = 3;
+    for (0..readme_example_count) |i| {
+        const extract = b.addRunArtifact(readme_tool);
+        extract.addFileArg(b.path("README.md"));
+        extract.addArg(b.fmt("{d}", .{i}));
+        extract.addArg(b.fmt("{d}", .{readme_example_count}));
+        const source = extract.addOutputFileArg(b.fmt("readme_example_{d}.zig", .{i + 1}));
+        const example = b.addExecutable(.{
+            .name = b.fmt("readme-example-{d}", .{i + 1}),
+            .root_module = b.createModule(.{
+                .root_source_file = source,
+                .target = target,
+                .optimize = optimize,
+                .imports = &.{
+                    .{ .name = "Zig_BLE", .module = mod },
+                },
+            }),
+        });
+        check_readme_step.dependOn(&example.step);
+    }
+
+    // ========================================================================
     // Fuzz Testing Suite (zig build fuzz / test-fuzz)
     // ========================================================================
     const fuzz_exe = b.addExecutable(.{

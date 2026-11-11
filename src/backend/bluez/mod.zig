@@ -161,6 +161,40 @@ pub const BluezBackend = struct {
         return null;
     }
 
+    /// Object path of the device with `addr` on this adapter, found by its `Address` property.
+    /// After pairing a device that used a random address, BlueZ keeps its object but changes
+    /// `Address` to the identity address, so the path no longer spells the address.
+    fn findDevicePath(self: *BluezBackend, conn_ptr: *dbus.Connection, addr: Address, out: *[96]u8) ?[]const u8 {
+        var msg = dbus.Connection.createMethodCall(
+            BlueZ.service_name,
+            BlueZ.root_path,
+            BlueZ.ObjectManager.interface_name,
+            BlueZ.ObjectManager.Methods.GetManagedObjects,
+        ) catch return null;
+        defer msg.deinit();
+        var reply = conn_ptr.sendMessage(&msg, std.math.lossyCast(i32, self.timeouts.discovery_ms)) catch return null;
+        defer reply.deinit();
+
+        const Visitor = struct {
+            backend: *const BluezBackend,
+            addr: Address,
+            out: *[96]u8,
+            len: usize = 0,
+
+            pub fn onDevice(v: *@This(), info: object_manager.DeviceInfo) void {
+                if (v.len > 0 or !info.address.eql(v.addr)) return;
+                const path = info.getObjectPath();
+                if (!signals.isDevicePathOnAdapter(v.backend, path) or path.len > v.out.len) return;
+                @memcpy(v.out[0..path.len], path);
+                v.len = path.len;
+            }
+        };
+        var visitor = Visitor{ .backend = self, .addr = addr, .out = out };
+        var it = reply.iterator();
+        object_manager.parseManagedObjects(&it, Visitor, &visitor);
+        return if (visitor.len > 0) out[0..visitor.len] else null;
+    }
+
     pub fn findDeviceByPath(self: *BluezBackend, path: []const u8) ?*BluezDeviceContext {
         for (&self.devices) |*d| {
             if (d.in_use and std.mem.eql(u8, d.getPath(), path)) return d;
@@ -388,16 +422,25 @@ pub const BluezBackend = struct {
         const eff_timeout = if (timeout_ms == 0) self.timeouts.connect_ms else timeout_ms;
         const deadline = wire.getMonotonicMs() + eff_timeout;
 
-        var dev_slot = self.allocateDeviceSlot(addr) orelse return BleError.PoolExhausted;
-        dev_slot.connection_state.store(.connecting, .release);
-
         var path_buf: [96]u8 = undefined;
-        const d_path = BlueZ.buildDevicePath(&path_buf, self.getAdapterPath(), addr);
+        const d_path = self.findDevicePath(conn_ptr, addr, &path_buf) orelse
+            BlueZ.buildDevicePath(&path_buf, self.getAdapterPath(), addr);
+
+        var dev_slot = self.findDeviceByPath(d_path) orelse
+            self.allocateDeviceSlot(addr) orelse return BleError.PoolExhausted;
+        dev_slot.connection_state.store(.connecting, .release);
         dev_slot.setPath(d_path);
 
         var dev = device_mod.Device.init(conn_ptr, dev_slot.getPath());
+        // A dual-mode device bonded over LE is also bonded over BR/EDR (cross-transport key
+        // derivation), and BlueZ then connects whichever bearer it saw last. Ask for LE where
+        // BlueZ supports it (experimental features only).
+        dev.setPreferredBearer("le") catch {};
         dev.connectWithTimeout(eff_timeout) catch |err| {
             log.err("BlueZ Device1.Connect failed for {s}: {s}", .{ dev_slot.getPath(), @errorName(err) });
+            if (err == error.Failed and (dev.isPaired() catch false)) {
+                log.warn("A bonded dual-mode device may have been connected over BR/EDR; see docs/TROUBLESHOOTING.md", .{});
+            }
             dev_slot.connection_state.store(.disconnected, .release);
             dev_slot.in_use = false;
             return switch (err) {
@@ -576,7 +619,7 @@ pub const BluezBackend = struct {
 
             pub fn onGattCharacteristic(v_self: *@This(), info: object_manager.GattCharacteristicInfo) void {
                 if (!v_self.ownsPath(info.getObjectPath())) return;
-                v_self.slot.addCharacteristic(info.uuid, info.getObjectPath()) catch {
+                v_self.slot.addCharacteristic(info.uuid, info.getObjectPath(), info.flags) catch {
                     v_self.overflow_error = true;
                 };
             }
@@ -745,6 +788,10 @@ pub const BluezBackend = struct {
         }
 
         const ch_slot = dev_slot.findCharacteristic(char) orelse return BleError.CharacteristicNotFound;
+        // A peer drops a write command its characteristic does not allow, and nothing reports it.
+        if (!with_response and @as(u8, @bitCast(ch_slot.properties)) != 0 and !ch_slot.properties.write_without_response) {
+            return BleError.NotSupported;
+        }
         var ch = gatt_client.GattCharacteristic.init(conn_ptr, ch_slot.getPath());
         const w_type: core.WriteType = if (with_response) .with_response else .without_response;
         if (self.pcap_hook) |hook| {

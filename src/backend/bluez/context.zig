@@ -7,6 +7,7 @@ const UUID = types.UUID;
 const BleError = types.BleError;
 const NotificationCallback = types.NotificationCallback;
 const CharacteristicSelector = types.CharacteristicSelector;
+const CharacteristicProperties = @import("../../core/mod.zig").CharacteristicProperties;
 
 pub const DaemonRestartCallback = *const fn (user_data: ?*anyopaque) void;
 
@@ -20,6 +21,8 @@ pub const BluezCharacteristicSlot = struct {
     is_notifying: bool = false,
     notify_cb: ?NotificationCallback = null,
     notify_user_data: ?*anyopaque = null,
+    /// From the `Flags` property; all false when BlueZ did not report any.
+    properties: CharacteristicProperties = .{},
 
     pub fn getPath(self: *const BluezCharacteristicSlot) [:0]const u8 {
         return self.object_path[0..self.object_path_len :0];
@@ -113,16 +116,17 @@ pub const BluezDeviceContext = struct {
     /// Adds a characteristic, keyed by its object path: characteristics with the same UUID
     /// (e.g. several HID reports) each get their own slot, and rediscovery keeps existing
     /// slots and their subscriptions.
-    pub fn addCharacteristic(self: *BluezDeviceContext, uuid: UUID, path: []const u8) BleError!void {
+    pub fn addCharacteristic(self: *BluezDeviceContext, uuid: UUID, path: []const u8, properties: CharacteristicProperties) BleError!void {
         if (self.findCharacteristicByPath(path)) |existing| {
             existing.uuid = uuid;
+            existing.properties = properties;
             return;
         }
         if (self.characteristics_len >= self.characteristics.len) {
             return BleError.PoolExhausted;
         }
         var slot = &self.characteristics[self.characteristics_len];
-        slot.* = .{ .uuid = uuid };
+        slot.* = .{ .uuid = uuid, .properties = properties };
         slot.setPath(path);
         self.characteristics_len += 1;
     }

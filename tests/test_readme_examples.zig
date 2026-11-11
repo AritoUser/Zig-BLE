@@ -1,7 +1,7 @@
 //! # Zig-BLE API usage tests in the style of the README
 //!
-//! Runs the API flows the README shows against the mock backend. These are copies, not the
-//! README's code blocks themselves, so a README example can still go stale.
+//! Runs the API flows the README shows against the mock backend. These are copies; the README's
+//! own programs are compiled by `zig build check-readme`.
 
 const std = @import("std");
 const ble = @import("Zig_BLE");

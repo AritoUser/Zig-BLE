@@ -12,6 +12,8 @@ const HSTRING = bindings.HSTRING;
 const HRESULT = bindings.HRESULT;
 const Combase = bindings.Combase;
 
+const log = std.log.scoped(.zig_ble);
+
 // ============================================================================
 // Conversion Helpers: Zig-BLE <-> WinRT Types
 // ============================================================================
@@ -137,6 +139,7 @@ pub fn awaitAsync(op: *bindings.IAsyncOperationGeneric, timeout_ms: u32) BleErro
             .Error => {
                 var err_code: HRESULT = 0;
                 _ = info.lpVtbl.get_ErrorCode(info, &err_code);
+                log.debug("WinRT async operation failed with HRESULT 0x{X:0>8}", .{@as(u32, @bitCast(err_code))});
                 return BleError.GattError;
             },
         }

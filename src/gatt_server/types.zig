@@ -88,6 +88,31 @@ pub const ServerDescriptor = struct {
     write_handler: ?WriteFn = null,
     user_data: ?*anyopaque = null,
 
+    // Windows WinRT local descriptor state
+    win_desc: if (builtin.os.tag == .windows) ?*win_bindings.IGattLocalDescriptor else void =
+        if (builtin.os.tag == .windows) null else {},
+    win_read_token: if (builtin.os.tag == .windows) win_bindings.EventRegistrationToken else void =
+        if (builtin.os.tag == .windows) 0 else {},
+    win_write_token: if (builtin.os.tag == .windows) win_bindings.EventRegistrationToken else void =
+        if (builtin.os.tag == .windows) 0 else {},
+    win_read_handler: if (builtin.os.tag == .windows) win_bindings.GattDescriptorReadRequestedHandler else void =
+        if (builtin.os.tag == .windows) undefined else {},
+    win_write_handler: if (builtin.os.tag == .windows) win_bindings.GattDescriptorWriteRequestedHandler else void =
+        if (builtin.os.tag == .windows) undefined else {},
+
+    pub fn releaseWindows(self: *ServerDescriptor) void {
+        if (builtin.os.tag != .windows) return;
+        const ld = self.win_desc orelse return;
+        self.win_read_handler.deactivate();
+        self.win_write_handler.deactivate();
+        if (self.win_read_token != 0) _ = ld.lpVtbl.remove_ReadRequested(ld, self.win_read_token);
+        if (self.win_write_token != 0) _ = ld.lpVtbl.remove_WriteRequested(ld, self.win_write_token);
+        self.win_read_token = 0;
+        self.win_write_token = 0;
+        _ = ld.lpVtbl.Release(ld);
+        self.win_desc = null;
+    }
+
     pub fn getObjectPath(self: *const ServerDescriptor) [:0]const u8 {
         if (self.object_path_len == 0) return "";
         return self.object_path[0..self.object_path_len :0];
@@ -237,8 +262,9 @@ pub const ServerCharacteristic = struct {
     service_path_len: u8 = 0,
     flags: ServerCharacteristicFlags = .{},
 
-    value: [128]u8 = undefined,
-    value_len: u8 = 0,
+    /// Up to the ATT maximum of 512 bytes; clients read longer values in parts.
+    value: [512]u8 = undefined,
+    value_len: u16 = 0,
     is_notifying: bool = false,
 
     read_handler: ?ReadFn = null,
@@ -295,6 +321,7 @@ pub const ServerCharacteristic = struct {
         d.read_handler = null;
         d.write_handler = null;
         d.user_data = null;
+        if (builtin.os.tag == .windows) d.win_desc = null;
 
         const cp_len = self.object_path_len;
         @memcpy(d.char_path[0..cp_len], self.object_path[0..cp_len]);
@@ -491,6 +518,7 @@ pub const ServerCharacteristic = struct {
 
     pub fn releaseWindows(self: *ServerCharacteristic) void {
         if (builtin.os.tag == .windows) {
+            for (self.descriptors[0..self.desc_count]) |*d| d.releaseWindows();
             self.win_read_handler.deactivate();
             self.win_write_handler.deactivate();
             if (self.win_char) |wc| {
