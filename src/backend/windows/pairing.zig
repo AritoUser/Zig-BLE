@@ -141,6 +141,20 @@ pub fn pairDevice(backend: anytype, dev: anytype, io_cap: types.IoCapability) Bl
     if (builtin.os.tag != .windows) return BleError.NotSupported;
     const ble_dev = dev.ble_device orelse return BleError.NotConnected;
 
+    dev.bond_state = .bonding;
+    pairBleDevice(ble_dev, io_cap, backend.pairing_callbacks, backend.timeouts.pair_ms) catch |err| {
+        dev.bond_state = .not_bonded;
+        return err;
+    };
+    dev.bond_state = .bonded;
+    dev.bond_changed = true;
+}
+
+/// Pairs with `ble_dev` through `DeviceInformationCustomPairing`, asking `callbacks`. Works for a
+/// device this computer connected to and for a client connected to its GATT server.
+pub fn pairBleDevice(ble_dev: *bindings.IBluetoothLEDevice, io_cap: types.IoCapability, callbacks: PairingCallbacks, timeout_ms: u32) BleError!void {
+    if (builtin.os.tag != .windows) return BleError.NotSupported;
+
     var dev2: ?*bindings.IBluetoothLEDevice2 = null;
     if (ble_dev.lpVtbl.QueryInterface(ble_dev, &bindings.IID_IBluetoothLEDevice2, @ptrCast(&dev2)) < 0 or dev2 == null) {
         return BleError.PairingFailed;
@@ -170,10 +184,7 @@ pub fn pairDevice(backend: anytype, dev: anytype, io_cap: types.IoCapability) Bl
     defer _ = p.lpVtbl.Release(p);
 
     var is_paired: u8 = 0;
-    if (p.lpVtbl.get_IsPaired(p, &is_paired) >= 0 and is_paired != 0) {
-        dev.bond_state = .bonded;
-        return;
-    }
+    if (p.lpVtbl.get_IsPaired(p, &is_paired) >= 0 and is_paired != 0) return;
 
     var pairing2: ?*bindings.IDeviceInformationPairing2 = null;
     if (p.lpVtbl.QueryInterface(p, &bindings.IID_IDeviceInformationPairing2, @ptrCast(&pairing2)) < 0 or pairing2 == null) {
@@ -191,7 +202,7 @@ pub fn pairDevice(backend: anytype, dev: anytype, io_cap: types.IoCapability) Bl
 
     var session_ctx = PairingSessionContext{
         .io_cap = io_cap,
-        .callbacks = backend.pairing_callbacks,
+        .callbacks = callbacks,
     };
 
     var handler = bindings.PairingRequestedHandler{
@@ -215,38 +226,16 @@ pub fn pairDevice(backend: anytype, dev: anytype, io_cap: types.IoCapability) Bl
         .keyboard_display => bindings.DevicePairingKinds.ConfirmPinMatch | bindings.DevicePairingKinds.ProvidePin | bindings.DevicePairingKinds.DisplayPin | bindings.DevicePairingKinds.ConfirmOnly,
     };
 
-    dev.bond_state = .bonding;
     var pair_op: ?*bindings.IAsyncOperationGeneric = null;
-    if (cp.lpVtbl.PairAsync(cp, supported_kinds, &pair_op) < 0 or pair_op == null) {
-        dev.bond_state = .not_bonded;
-        return BleError.PairingFailed;
-    }
-
-    const res_raw = (helpers.awaitAsync(pair_op.?, backend.timeouts.pair_ms) catch |err| {
-        dev.bond_state = .not_bonded;
-        return err;
-    }) orelse {
-        dev.bond_state = .not_bonded;
-        return BleError.PairingFailed;
-    };
+    if (cp.lpVtbl.PairAsync(cp, supported_kinds, &pair_op) < 0 or pair_op == null) return BleError.PairingFailed;
+    const res_raw = (try helpers.awaitAsync(pair_op.?, timeout_ms)) orelse return BleError.PairingFailed;
 
     const pair_res: *bindings.IDevicePairingResult = @ptrCast(@alignCast(res_raw));
     defer _ = pair_res.lpVtbl.Release(pair_res);
 
     var status: bindings.DevicePairingResultStatus = .Failed;
-    if (pair_res.lpVtbl.get_Status(pair_res, &status) < 0) {
-        dev.bond_state = .not_bonded;
-        return BleError.PairingFailed;
-    }
-
-    if (status == .Paired or status == .AlreadyPaired) {
-        dev.bond_state = .bonded;
-        dev.bond_changed = true;
-        return;
-    }
-
-    dev.bond_state = .not_bonded;
-    return BleError.PairingFailed;
+    if (pair_res.lpVtbl.get_Status(pair_res, &status) < 0) return BleError.PairingFailed;
+    if (status != .Paired and status != .AlreadyPaired) return BleError.PairingFailed;
 }
 
 pub fn unpairDevice(backend: anytype, dev: anytype) BleError!void {

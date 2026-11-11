@@ -31,7 +31,7 @@ A Bluetooth Low Energy (BLE) library written entirely in Zig (0.17.0+). It works
 | GATT write | ✅ | ✅ | 🚧 | 🚧 | ❌ |
 | Pairing and bonding | ✅ (`DeviceInformationCustomPairing`) | 🧪 (via BlueZ + pairing agent; verified as peripheral) | 🚧 | 🚧 | ❌ |
 | Negotiated MTU query | ✅ (`GattSession.MaxPduSize`) | ✅ (`GattCharacteristic1.MTU`) | 🚧 | 🚧 | ❌ |
-| Peripheral: GATT server, advertising | 🧪 (`GattServiceProvider` / `Publisher`), notifications unreliable | ✅ (BlueZ GATT + Adv) | ❌ | ❌ | ❌ |
+| Peripheral: GATT server, advertising | ✅ (`GattServiceProvider` / `Publisher`) | ✅ (BlueZ GATT + Adv) | ❌ | ❌ | ❌ |
 
 ✅ implemented and verified on hardware · 🧪 implemented, not yet verified on hardware · 🚧 experimental, not usable on real hardware yet · ❌ not available
 
@@ -41,7 +41,7 @@ A Bluetooth Low Energy (BLE) library written entirely in Zig (0.17.0+). It works
 
 **BlueZ through `BluezBackend` / `UnifiedAdapter`:** before this release the backend never read D-Bus signals, so scan results, notifications and disconnects did not reach the callbacks. That is fixed (call `processEvents` regularly). Verified on 2026-11-10 against BlueZ 5.82 with a Realtek USB adapter, with a Windows 11 PC as the other side: scanning, connecting, filtered discovery, reads, writes with and without response, notifications, descriptors, MTU, and the peripheral role (GATT server and advertising, read, write and notify from a Windows central). Pairing with the pairing agent works as peripheral (a Windows central paired by Numeric Comparison); pairing as central and the recovery after a `bluetoothd` restart are not verified yet.
 
-**Windows as peripheral:** advertising, reads and writes work against a BlueZ central, but notifications often stall: `NotifyValueAsync` does not complete within 5 s and the link drops, also with a single, connected subscriber. Treat the Windows peripheral role as unreliable for notifications.
+**Windows as peripheral:** advertising, reads, writes and notifications verified against a BlueZ central (10/10 runs). Pairing that the client starts is handled by Windows itself; call `ServerCharacteristic.pairSubscribers` to pair from the peripheral side through `PairingCallbacks` (10/10 runs). The connection problems seen earlier came from the Linux kernel on the test machine; see `docs/TROUBLESHOOTING.md`.
 
 The open hardware tests and their commands are listed in [`docs/HARDWARE_TESTS.md`](docs/HARDWARE_TESTS.md).
 

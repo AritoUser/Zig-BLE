@@ -46,29 +46,21 @@ Linux: BlueZ 5.82, Realtek-USB-Adapter; Gegenstelle der jeweils andere Rechner.
 | 1 | Scan | `ble-hardware-check` | Geräte mit Name, Herstellerdaten und UUIDs erscheinen | ✅ | ✅ |
 | 2 | Verbinden, Lesen, Notifications, MTU, 30 s halten | `… <addr> --service <uuid>` | `connected = true` nach 30 s, Notifications kommen | ✅ | ✅ |
 | 3 | Service-Filter | `… <addr> --service <uuid>` | nur dieser Service wird gelistet und gescannt | ✅ | ✅ |
-| 4 | Auto-Resubscribe | `… <addr> --service <uuid> --resubscribe` | CCCD der Gegenstelle nach dem Reconnect wieder `0100`, Notifications kommen | ✅ | ⚠️ |
+| 4 | Auto-Resubscribe | `… <addr> --service <uuid> --resubscribe` | CCCD der Gegenstelle nach dem Reconnect wieder `0100`, Notifications kommen | ✅ | ✅ |
 | 5 | Schreiben mit Antwort | `… <addr> --write 5a1e0002-… 0102` | `After: 0102 (matches)` | ✅ | ✅ |
 | 6 | Schreiben ohne Antwort | `… --write 5a1e0002-… 0304 --no-response` | `After: 0304 (matches)` | ✅ | ✅ |
 | 7 | Pairing | `… <addr> --service <uuid> --pair` | Bond-Status `bonded`, auch nach dem Reconnect; protected liefert `paired` | ✅ | |
 | 8 | Bond entfernen | `… <addr> --service <uuid> --unpair` | beim nächsten Verbinden `not_bonded`, Windows führt das Gerät nicht mehr | ✅ | |
-| 9 | Peripheral: Client verbindet sich | `… --peripheral` | echo les- und schreibbar, counter zählt | ⚠️ | ✅ |
-| 10 | Peripheral: Pairing | `… --peripheral --secure` | protected fordert Pairing an und liefert `paired` | | ✅ |
+| 9 | Peripheral: Client verbindet sich | `… --peripheral` | echo les- und schreibbar, counter zählt | ✅ | ✅ |
+| 10 | Peripheral: Pairing | `… --peripheral --secure` | Windows koppelt den Abonnenten selbst (gleicher Code auf beiden Seiten), danach liefert protected `paired` | ✅ | ✅ |
 | 11 | Langzeit: Scannen, Verbinden, Slots | `… <addr> --soak 240` | 0 Fehler, Handles steigen nicht (nur Windows zeigt sie) | | |
 | 12 | Neustart von `bluetoothd` | während 11: `sudo systemctl restart bluetooth` | `Recovered.`, danach laufen die Zyklen weiter | – | |
 
 Anmerkungen:
 
-- **2, 5, 6 unter Windows:** gegen das Linux-Peripheral. Der Verbindungsaufbau von Windows zum
-  Linux-Peripheral gelang nur in etwa der Hälfte der Versuche: Die Funkverbindung steht, aber
-  Windows' GATT-Discovery antwortet nicht innerhalb von 30 s. Gegen Fitnessband und Tracker trat
-  das nicht auf.
-- **4 unter Linux:** Das Backend richtet das Abo nach dem Reconnect wieder ein (CCCD der
-  Gegenstelle `0100`). Notifications kamen danach nicht an, weil das Windows-Peripheral sie nicht
-  sendet (siehe 9). Gegen eine verlässliche Gegenstelle noch einmal prüfen.
-- **9 unter Windows:** Lesen und Schreiben gehen. Notifications an den BlueZ-Client blieben in
-  den meisten Läufen hängen (`NotifyValueAsync` ohne Abschluss nach 5 s), danach brach die
-  Verbindung ab, auch mit genau einem verbundenen Abonnenten. In einem von etwa fünf Läufen kamen
-  alle Notifications an.
+- **2, 5, 6 unter Windows:** gegen das Linux-Peripheral. Bis 2026-11-11 gelang der Verbindungsaufbau nur in etwa jedem zweiten Versuch; Ursache war der Linux-Kernel auf dem Testserver (A1). Mit dem `btusb`-Patch 20/20.
+- **4 unter Linux:** 10/10 Runden gegen das Windows-Peripheral, nach jedem Reconnect CCCD wieder `0100` und 14–15 Notifications (2026-11-11, mit dem `btusb`-Patch).
+- **9 unter Windows:** Lesen, Schreiben und Notifications gehen, 10/10 Runden mit 28–29 Notifications in 30 s. Die früheren Hänger kamen vom Linux-Kernel, nicht von Windows (siehe A1/A2 in `V2_BLOCKERS.md`).
 - **7, 8, 10:** Windows koppelte zweimal mit dem Linux-Peripheral, per Numeric Comparison; beide
   Seiten zeigten denselben Code, der Linux-Agent bestätigte. Passkey und Just Works sind noch
   offen, ebenso Linux als koppelnder Central (7 L).

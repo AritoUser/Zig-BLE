@@ -1,0 +1,92 @@
+diff --git a/drivers/bluetooth/btusb.c b/drivers/bluetooth/btusb.c
+index a5143eb..ecd7c6c 100644
+--- a/drivers/bluetooth/btusb.c
++++ b/drivers/bluetooth/btusb.c
+@@ -36,6 +36,13 @@ static bool enable_autosuspend = IS_ENABLED(CONFIG_BT_HCIBTUSB_AUTOSUSPEND);
+ static bool enable_poll_sync = IS_ENABLED(CONFIG_BT_HCIBTUSB_POLL_SYNC);
+ static bool reset = true;
+ 
++/* USB delivers events and ACL data on separate endpoints, so the first data of
++ * a new LE connection can arrive before its Connection Complete event, and the
++ * core would drop it for an unknown handle. Hold such data for at most this
++ * many milliseconds until the core knows the connection. 0 disables it.
++ */
++static unsigned int hold_unknown_acl_ms = 100;
++
+ static struct usb_driver btusb_driver;
+ 
+ #define BTUSB_IGNORE			BIT(0)
+@@ -1266,14 +1273,28 @@ static int btusb_recv_intr(struct btusb_data *data, void *buffer, int count)
+ 	return err;
+ }
+ 
++static bool btusb_acl_handle_unknown(struct btusb_data *data,
++				     struct sk_buff *skb)
++{
++	__u16 handle;
++
++	if (skb->len < HCI_ACL_HDR_SIZE)
++		return false;
++
++	handle = hci_handle(__le16_to_cpu(hci_acl_hdr(skb)->handle));
++	return !hci_conn_hash_lookup_handle(data->hdev, handle);
++}
++
+ static int btusb_recv_acl(struct btusb_data *data, struct sk_buff *skb)
+ {
+ 	/* Only queue ACL packet if intr_interval is set as it means
+-	 * force_poll_sync has been enabled.
++	 * force_poll_sync has been enabled, or if data for unknown handles is
++	 * held; then all ACL data goes through the queue to keep its order.
+ 	 */
+-	if (!data->intr_interval)
++	if (!data->intr_interval && !hold_unknown_acl_ms)
+ 		return data->recv_acl(data->hdev, skb);
+ 
++	skb->tstamp = ktime_get();
+ 	skb_queue_tail(&data->acl_q, skb);
+ 	schedule_delayed_work(&data->rx_work, data->intr_interval);
+ 
+@@ -2434,10 +2455,30 @@ static void btusb_rx_work(struct work_struct *work)
+ 	struct btusb_data *data = container_of(work, struct btusb_data,
+ 					       rx_work.work);
+ 	struct sk_buff *skb;
++	unsigned long flags;
+ 
+-	/* Dequeue ACL data received during the interval */
+-	while ((skb = skb_dequeue(&data->acl_q)))
++	/* Dequeue ACL data received during the interval. Only this work removes
++	 * entries, so the head stays valid after the lock is released.
++	 */
++	for (;;) {
++		spin_lock_irqsave(&data->acl_q.lock, flags);
++		skb = skb_peek(&data->acl_q);
++		spin_unlock_irqrestore(&data->acl_q.lock, flags);
++		if (!skb)
++			break;
++
++		if (hold_unknown_acl_ms && btusb_acl_handle_unknown(data, skb) &&
++		    ktime_ms_delta(ktime_get(), skb->tstamp) < hold_unknown_acl_ms) {
++			/* Its Connection Complete event has not been processed
++			 * yet; keep the order and look again.
++			 */
++			schedule_delayed_work(&data->rx_work, 1);
++			return;
++		}
++
++		skb_unlink(skb, &data->acl_q);
+ 		data->recv_acl(data->hdev, skb);
++	}
+ }
+ 
+ static int btusb_setup_bcm92035(struct hci_dev *hdev)
+@@ -4675,6 +4716,9 @@ MODULE_PARM_DESC(enable_autosuspend, "Enable USB autosuspend by default");
+ module_param(reset, bool, 0644);
+ MODULE_PARM_DESC(reset, "Send HCI reset command on initialization");
+ 
++module_param(hold_unknown_acl_ms, uint, 0644);
++MODULE_PARM_DESC(hold_unknown_acl_ms, "Hold ACL data for a handle without Connection Complete for up to this many ms (0 = off)");
++
+ MODULE_AUTHOR("Marcel Holtmann <marcel@holtmann.org>");
+ MODULE_DESCRIPTION("Generic Bluetooth USB driver ver " VERSION);
+ MODULE_VERSION(VERSION);

@@ -56,6 +56,22 @@ backend. Error names refer to `BleError`.
   A device that puts its service UUID only in the scan response is reported once the scan
   response has arrived.
 
+**Peripheral on Linux: centrals connect, but their first request never gets an answer**
+- Symptom: a central (seen with Windows) connects in about half of the attempts; otherwise its
+  service discovery hangs for 30 s and the link is useless. On Windows `MaxPduSize` stays 23.
+- Cause, in the Linux kernel, not in BlueZ or Zig-BLE: USB Bluetooth adapters deliver events
+  and ACL data on separate USB endpoints. The central's first packet (its MTU request) can reach
+  the kernel a few milliseconds before the `LE Connection Complete` event, and the kernel drops
+  data for a connection it does not know yet. `btmon` shows the `ATT: Exchange MTU Request`
+  before `LE Enhanced Connection Complete`.
+- `force_poll_sync` (debugfs) holds ACL data for one kernel tick only, 1 ms on kernels built
+  with `CONFIG_HZ=1000`, which is too short for some adapters (Realtek: 2–3 ms). See the report
+  at https://lkml.iu.edu/2607.2/06216.html.
+- Fix: `tools/linux-btusb-hold-acl/` patches `btusb` to hold ACL data for an unknown connection
+  until the kernel knows it (up to `hold_unknown_acl_ms`, default 100). Run `install.sh` as root;
+  it downloads the matching `btusb.c` from kernel.org, patches and builds it. A kernel update
+  restores the stock module; `uninstall.sh` does that at once.
+
 **A read or write takes long, returns `Timeout`, and the device disconnects**
 - BlueZ answers "insufficient authentication" or "insufficient encryption" from the device by
   pairing on its own, then repeats the request. Without an agent that can answer, this runs into
@@ -103,10 +119,18 @@ backend. Error names refer to `BleError`.
   device.
 - Only the first manufacturer data entry is kept.
 
-**Peripheral role: notifications stall**
-- Against a BlueZ central, `NotifyValueAsync` often did not complete within 5 s and the link
-  dropped afterwards, even with a single connected subscriber; reads and writes worked. The
-  cause is not known yet. `ServerCharacteristic.notify` returns the timeout.
+**Peripheral role: notifications stall against a Linux central**
+- `NotifyValueAsync` did not complete within 5 s and the link dropped. Cause: the Linux central
+  dropped Windows' first ATT packet (see "Peripheral on Linux: centrals connect, but their first
+  request never gets an answer"); Windows then held back everything else it had to send. With
+  the `btusb` patch on the Linux side, notifications go through.
+
+**Peripheral role: pairing**
+- When a client starts pairing itself, Windows handles it on its own: it shows its dialog or
+  accepts without asking the application.
+- To keep pairing in the application, call `ServerCharacteristic.pairSubscribers` once a client
+  subscribed: Windows starts the pairing and asks `PairingCallbacks`. Call it before the client
+  touches an encrypted characteristic, or the client starts pairing first.
 
 **Removing a bond with a dual-mode device**
 - Pairing over LE with a device that also speaks Classic Bluetooth creates a Classic bond as well

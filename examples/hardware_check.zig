@@ -36,6 +36,8 @@ const Native = switch (builtin.os.tag) {
 const Queue = ble.EventQueue(.{ .capacity = 256 });
 const scan_seconds = 15;
 const idle_seconds = 30;
+/// Room for one stalled attempt: Windows keeps such a link until its 30 s ATT timeout.
+const connect_timeout_ms = 60_000;
 const resubscribe_seconds = 15;
 const soak_hold_seconds = 10;
 const default_peripheral_seconds = 300;
@@ -178,9 +180,11 @@ fn scanFor(adapter: *ble.UnifiedAdapter, addr: ble.Address) !void {
 
 fn connect(adapter: *ble.UnifiedAdapter, addr: ble.Address) !ble.UnifiedDevice {
     print("\nConnecting to {f} ...", .{addr});
-    var dev = try adapter.connect(addr, 30_000);
+    const started = std.Io.Timestamp.now(io, .awake);
+    var dev = try adapter.connect(addr, connect_timeout_ms);
     errdefer dev.disconnect() catch {};
-    print("Connected, bond state: {t}", .{dev.getBondState()});
+    const took_ms = started.durationTo(std.Io.Timestamp.now(io, .awake)).toMilliseconds();
+    print("Connected after {d} ms, bond state: {t}", .{ took_ms, dev.getBondState() });
     if (service_filter) |uuid| try dev.discoverServicesFiltered(&.{uuid});
     return dev;
 }
@@ -292,7 +296,7 @@ fn handleCount() ?u32 {
 
 fn soakCycle(adapter: *ble.UnifiedAdapter, addr: ble.Address) !usize {
     try scanFor(adapter, addr);
-    var dev = try adapter.connect(addr, 30_000);
+    var dev = try adapter.connect(addr, connect_timeout_ms);
     defer dev.disconnect() catch {};
     if (service_filter) |uuid| try dev.discoverServicesFiltered(&.{uuid});
     _ = try visitCharacteristics(&dev, true);
@@ -571,6 +575,17 @@ fn runPeripheral(seconds: u32, secure: bool) !void {
         const subs = counter.subscribers();
         if (subs.total != last_subs.total or subs.active != last_subs.active) {
             print("  counter subscribers: {d}, {d} connected", .{ subs.total, subs.active });
+            // Windows: pair from here so the prompts reach this program, not a system dialog.
+            if (builtin.os.tag == .windows and secure and subs.active > last_subs.active) {
+                const callbacks: ble.PairingCallbacks = .{
+                    .on_confirm = promptConfirm,
+                    .on_request_passkey = promptPasskey,
+                    .on_display_passkey = showPasskey,
+                };
+                if (counter.pairSubscribers(.keyboard_display, callbacks, 30_000)) |n| {
+                    print("  paired with {d} subscriber(s)", .{n});
+                } else |err| print("  pairing with the subscriber failed: {s}", .{@errorName(err)});
+            }
             last_subs = subs;
         }
         if (count % 10 == 0) print("  {d} s, echo = {x}", .{ count, echo.getValue() });

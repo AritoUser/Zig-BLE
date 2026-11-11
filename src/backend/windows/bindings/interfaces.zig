@@ -62,6 +62,7 @@ pub const IGattDeviceService = device.IGattDeviceService;
 pub const IBluetoothLEDeviceStatics = device.IBluetoothLEDeviceStatics;
 pub const IBluetoothDeviceStatics = device.IBluetoothDeviceStatics;
 pub const IBluetoothDevice2 = device.IBluetoothDevice2;
+pub const IBluetoothDeviceId = device.IBluetoothDeviceId;
 pub const IBluetoothLEDeviceStatics2 = device.IBluetoothLEDeviceStatics2;
 pub const BluetoothAddressType = device.BluetoothAddressType;
 pub const IBluetoothLEDeviceStaticsVtbl = device.IBluetoothLEDeviceStaticsVtbl;

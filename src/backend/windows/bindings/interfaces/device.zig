@@ -52,6 +52,23 @@ pub const IBluetoothLEDeviceStaticsVtbl = extern struct {
     GetDeviceSelector: *const fn (self: *anyopaque, deviceSelector: *HSTRING) callconv(WINAPI) HRESULT,
 };
 
+pub const IBluetoothDeviceId = extern struct {
+    lpVtbl: *const IBluetoothDeviceIdVtbl,
+};
+
+pub const IBluetoothDeviceIdVtbl = extern struct {
+    QueryInterface: *const fn (self: *anyopaque, riid: *const GUID, ppvObject: *?*anyopaque) callconv(WINAPI) HRESULT,
+    AddRef: *const fn (self: *anyopaque) callconv(WINAPI) ULONG,
+    Release: *const fn (self: *anyopaque) callconv(WINAPI) ULONG,
+    GetIids: *const anyopaque,
+    GetRuntimeClassName: *const anyopaque,
+    GetTrustLevel: *const anyopaque,
+
+    get_Id: *const fn (self: *anyopaque, value: *HSTRING) callconv(WINAPI) HRESULT,
+    get_IsClassicDevice: *const anyopaque,
+    get_IsLowEnergyDevice: *const anyopaque,
+};
+
 /// Classic (BR/EDR) device, `Windows.Devices.Bluetooth.BluetoothDevice`.
 pub const IBluetoothDeviceStatics = extern struct {
     lpVtbl: *const IBluetoothDeviceStaticsVtbl,

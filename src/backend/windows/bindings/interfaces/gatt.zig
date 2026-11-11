@@ -30,6 +30,7 @@ pub const IVectorViewGeneric = core_ifaces.IVectorViewGeneric;
 pub const IBuffer = core_ifaces.IBuffer;
 pub const IInspectable = core_ifaces.IInspectable;
 pub const IDeferral = core_ifaces.IDeferral;
+const IBluetoothDeviceId = @import("device.zig").IBluetoothDeviceId;
 
 
 pub const IGattSession = extern struct {
@@ -44,7 +45,7 @@ pub const IGattSessionVtbl = extern struct {
     GetRuntimeClassName: *const anyopaque,
     GetTrustLevel: *const anyopaque,
 
-    get_DeviceId: *const fn (self: *anyopaque, value: *?*anyopaque) callconv(WINAPI) HRESULT,
+    get_DeviceId: *const fn (self: *anyopaque, value: *?*IBluetoothDeviceId) callconv(WINAPI) HRESULT,
     get_CanMaintainConnection: *const fn (self: *anyopaque, value: *u8) callconv(WINAPI) HRESULT,
     put_MaintainConnection: *const fn (self: *anyopaque, value: u8) callconv(WINAPI) HRESULT,
     get_MaintainConnection: *const fn (self: *anyopaque, value: *u8) callconv(WINAPI) HRESULT,

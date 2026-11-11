@@ -171,6 +171,7 @@ pub const IBluetoothLEAdvertisementPublisherFactoryVtbl = interfaces.IBluetoothL
 pub const IBluetoothLEDeviceStatics = interfaces.IBluetoothLEDeviceStatics;
 pub const IBluetoothDeviceStatics = interfaces.IBluetoothDeviceStatics;
 pub const IBluetoothDevice2 = interfaces.IBluetoothDevice2;
+pub const IBluetoothDeviceId = interfaces.IBluetoothDeviceId;
 pub const IBluetoothLEDeviceStatics2 = interfaces.IBluetoothLEDeviceStatics2;
 pub const BluetoothAddressType = interfaces.BluetoothAddressType;
 pub const IBluetoothLEDeviceStaticsVtbl = interfaces.IBluetoothLEDeviceStaticsVtbl;

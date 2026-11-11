@@ -10,6 +10,8 @@ const wire = @import("../dbus/wire/mod.zig");
 const dbus = if (builtin.os.tag == .linux) @import("../dbus/mod.zig") else struct {};
 const win_bindings = if (builtin.os.tag == .windows) @import("../backend/windows/bindings.zig") else struct {};
 const win_mod = if (builtin.os.tag == .windows) @import("../backend/windows/mod.zig") else struct {};
+const win_pairing = if (builtin.os.tag == .windows) @import("../backend/windows/pairing.zig") else struct {};
+const backend_types = @import("../backend/types.zig");
 
 pub const Connection = if (builtin.os.tag == .linux) dbus.Connection else wire.NonLinuxConnection;
 pub const Message = if (builtin.os.tag == .linux) dbus.Message else wire.Message;
@@ -381,6 +383,60 @@ pub const ServerCharacteristic = struct {
         }
         const n: usize = @intFromBool(self.is_notifying);
         return .{ .total = n, .active = n };
+    }
+
+    /// Windows: pairs with every connected client subscribed to this characteristic, asking
+    /// `callbacks` for confirmation or a passkey, and returns how many are paired. Pairing that
+    /// a client starts itself shows Windows' own dialog instead, so call this before a client
+    /// touches an encrypted characteristic, e.g. once it subscribed (see `subscribers`).
+    /// Linux: returns `NotSupported`; BlueZ asks the registered `Agent`.
+    pub fn pairSubscribers(self: *const ServerCharacteristic, io_cap: backend_types.IoCapability, callbacks: backend_types.PairingCallbacks, timeout_ms: u32) !usize {
+        if (builtin.os.tag != .windows) return error.NotSupported;
+        const list = try self.windowsSubscribedClients();
+        defer _ = list.lpVtbl.Release(list);
+        var count: u32 = 0;
+        _ = list.lpVtbl.get_Size(list, &count);
+        var paired: usize = 0;
+        for (0..count) |i| {
+            const client = windowsClientAt(list, @intCast(i)) orelse continue;
+            defer _ = client.lpVtbl.Release(client);
+            if (!windowsSessionActive(client)) continue;
+            const ble_dev = try windowsClientDevice(client, timeout_ms);
+            defer _ = ble_dev.lpVtbl.Release(ble_dev);
+            try win_pairing.pairBleDevice(ble_dev, io_cap, callbacks, timeout_ms);
+            paired += 1;
+        }
+        return paired;
+    }
+
+    /// Opens the `BluetoothLEDevice` behind a subscribed client's GATT session.
+    fn windowsClientDevice(client: *win_bindings.IGattSubscribedClient, timeout_ms: u32) !*win_bindings.IBluetoothLEDevice {
+        var session: ?*win_bindings.IGattSession = null;
+        if (client.lpVtbl.get_Session(client, &session) < 0) return error.PairingFailed;
+        const s = session orelse return error.PairingFailed;
+        defer _ = s.lpVtbl.Release(s);
+
+        var device_id: ?*win_bindings.IBluetoothDeviceId = null;
+        if (s.lpVtbl.get_DeviceId(s, &device_id) < 0) return error.PairingFailed;
+        const id = device_id orelse return error.PairingFailed;
+        defer _ = id.lpVtbl.Release(id);
+        var id_str: win_bindings.HSTRING = null;
+        if (id.lpVtbl.get_Id(id, &id_str) < 0) return error.PairingFailed;
+        defer win_mod.deleteHString(id_str);
+
+        const class_name = try win_mod.createHStringComptime("Windows.Devices.Bluetooth.BluetoothLEDevice");
+        defer win_mod.deleteHString(class_name);
+        var statics: ?*win_bindings.IBluetoothLEDeviceStatics = null;
+        if (win_bindings.Combase.RoGetActivationFactory(class_name, &win_bindings.IID_IBluetoothLEDeviceStatics, @ptrCast(&statics)) < 0) {
+            return error.PairingFailed;
+        }
+        const st = statics orelse return error.PairingFailed;
+        defer _ = st.lpVtbl.Release(st);
+
+        var op: ?*win_bindings.IAsyncOperationGeneric = null;
+        if (st.lpVtbl.FromIdAsync(st, id_str, &op) < 0) return error.PairingFailed;
+        const raw = (try win_mod.awaitAsync(op orelse return error.PairingFailed, timeout_ms)) orelse return error.PairingFailed;
+        return @ptrCast(@alignCast(raw));
     }
 
     fn windowsSubscribedClients(self: *const ServerCharacteristic) !*win_bindings.IVectorViewGeneric {
