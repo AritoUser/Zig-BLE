@@ -29,6 +29,8 @@ pub const IID_ITypedEventHandler_Watcher_Received = GUID.parse("90eb4eca-d465-5e
 
 // BluetoothLEDevice & GattSession
 pub const IID_IBluetoothLEDeviceStatics = GUID.parse("c8cf1a19-f0b6-4bf0-8689-41303de2d9f4");
+pub const IID_IBluetoothDeviceStatics = GUID.parse("0991df51-57db-4725-bbd7-84f64327ec2c");
+pub const IID_IBluetoothDevice2 = GUID.parse("0133f954-b156-4dd0-b1f5-c11bc31a5163");
 pub const IID_IBluetoothLEDeviceStatics2 = GUID.parse("5f12c06b-3bac-43e8-ad16-563271bd41c2");
 pub const IID_IBluetoothLEDevice = GUID.parse("b5ee2f7b-4ad8-4642-ac48-80a0b500e887");
 pub const IID_IBluetoothLEDevice2 = GUID.parse("26f062b3-7aee-4d31-baba-b1b9775f5916");
@@ -73,6 +75,7 @@ pub const IID_IGattServiceProviderResult = GUID.parse("764696d8-c53e-428c-8a48-6
 pub const IID_IGattServiceProviderAdvertisingParameters = GUID.parse("e2ce31ab-6315-4c22-9bd7-781dbc3d8d82");
 pub const IID_IGattLocalService = GUID.parse("f513e258-f7f7-4902-b803-57fcc7d6fe83");
 pub const IID_IGattLocalCharacteristic = GUID.parse("aede376d-5412-4d74-92a8-8deb8526829c");
+pub const IID_IGattSubscribedClient = GUID.parse("736e9001-15a4-4ec2-9248-e3f20d463be9");
 pub const IID_IGattLocalCharacteristicParameters = GUID.parse("faf73db4-4cff-44c7-8445-040e6ead0063");
 pub const IID_IGattLocalCharacteristicResult = GUID.parse("7975de9b-0170-4397-9666-92f863f12ee6");
 pub const IID_IGattReadRequestedEventArgs = GUID.parse("93497243-f39c-484b-8ab6-996ba486cfa3");
@@ -81,6 +84,9 @@ pub const IID_IGattWriteRequestedEventArgs = GUID.parse("2dec8bbe-a73a-471a-94d5
 pub const IID_IGattWriteRequest = GUID.parse("aeb6a9ed-de2f-4fc2-a9a8-94ea7844f13d");
 pub const IID_ITypedEventHandler_GattLocalCharacteristic_ReadRequested = GUID.parse("218a3e4a-aa9d-500e-bca7-047751bb10a3");
 pub const IID_ITypedEventHandler_GattLocalCharacteristic_WriteRequested = GUID.parse("ed61a2fb-7d2a-5ba3-8ebf-8ad878e539a9");
+pub const IID_IGattLocalDescriptorParameters = GUID.parse("5fdede6a-f3c1-4b66-8c4b-e3d2293b40e9");
+pub const IID_ITypedEventHandler_GattLocalDescriptor_ReadRequested = GUID.parse("252dca5c-86e7-5be1-aeed-f78c6ed466ab");
+pub const IID_ITypedEventHandler_GattLocalDescriptor_WriteRequested = GUID.parse("6cf5b169-3731-591b-ae7c-d939faaa8a71");
 
 // Storage Streams (IBuffer & CryptographicBuffer)
 pub const IID_IBuffer = GUID.parse("905a0fe0-bc53-11df-8c49-001e4fc686da");

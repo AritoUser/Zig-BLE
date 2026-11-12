@@ -12,6 +12,8 @@ const HSTRING = bindings.HSTRING;
 const HRESULT = bindings.HRESULT;
 const Combase = bindings.Combase;
 
+const log = std.log.scoped(.zig_ble);
+
 // ============================================================================
 // Conversion Helpers: Zig-BLE <-> WinRT Types
 // ============================================================================
@@ -114,10 +116,11 @@ pub fn awaitAsync(op: *bindings.IAsyncOperationGeneric, timeout_ms: u32) BleErro
     }
 
     const eff_timeout: u32 = if (timeout_ms == 0) 10_000 else timeout_ms;
-    var elapsed_ms: u32 = 0;
+    // Sleep(2) usually lasts a whole timer tick (about 15 ms), so count real time.
+    const deadline = Kernel32.GetTickCount64() + eff_timeout;
     const poll_step_ms: u32 = 2;
 
-    while (elapsed_ms < eff_timeout) {
+    while (Kernel32.GetTickCount64() < deadline) {
         var status: bindings.AsyncStatus = .Started;
         const st_hr = info.lpVtbl.get_Status(info, &status);
         if (st_hr < 0) return BleError.IoError;
@@ -125,7 +128,6 @@ pub fn awaitAsync(op: *bindings.IAsyncOperationGeneric, timeout_ms: u32) BleErro
         switch (status) {
             .Started => {
                 Kernel32.Sleep(poll_step_ms);
-                elapsed_ms += poll_step_ms;
             },
             .Completed => {
                 var result: ?*anyopaque = null;
@@ -137,6 +139,7 @@ pub fn awaitAsync(op: *bindings.IAsyncOperationGeneric, timeout_ms: u32) BleErro
             .Error => {
                 var err_code: HRESULT = 0;
                 _ = info.lpVtbl.get_ErrorCode(info, &err_code);
+                log.debug("WinRT async operation failed with HRESULT 0x{X:0>8}", .{@as(u32, @bitCast(err_code))});
                 return BleError.GattError;
             },
         }

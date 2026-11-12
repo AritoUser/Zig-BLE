@@ -30,6 +30,7 @@ pub const IVectorViewGeneric = core_ifaces.IVectorViewGeneric;
 pub const IBuffer = core_ifaces.IBuffer;
 pub const IInspectable = core_ifaces.IInspectable;
 pub const IDeferral = core_ifaces.IDeferral;
+const IBluetoothDeviceId = @import("device.zig").IBluetoothDeviceId;
 
 
 pub const IGattSession = extern struct {
@@ -44,7 +45,7 @@ pub const IGattSessionVtbl = extern struct {
     GetRuntimeClassName: *const anyopaque,
     GetTrustLevel: *const anyopaque,
 
-    get_DeviceId: *const fn (self: *anyopaque, value: *?*anyopaque) callconv(WINAPI) HRESULT,
+    get_DeviceId: *const fn (self: *anyopaque, value: *?*IBluetoothDeviceId) callconv(WINAPI) HRESULT,
     get_CanMaintainConnection: *const fn (self: *anyopaque, value: *u8) callconv(WINAPI) HRESULT,
     put_MaintainConnection: *const fn (self: *anyopaque, value: u8) callconv(WINAPI) HRESULT,
     get_MaintainConnection: *const fn (self: *anyopaque, value: *u8) callconv(WINAPI) HRESULT,
@@ -416,6 +417,64 @@ pub const IGattLocalCharacteristicResultVtbl = extern struct {
     get_Error: *const fn (self: *anyopaque, value: *BluetoothError) callconv(WINAPI) HRESULT,
 };
 
+pub const IGattLocalDescriptorParameters = extern struct {
+    lpVtbl: *const IGattLocalDescriptorParametersVtbl,
+};
+
+pub const IGattLocalDescriptorParametersVtbl = extern struct {
+    QueryInterface: *const fn (self: *anyopaque, riid: *const GUID, ppvObject: *?*anyopaque) callconv(WINAPI) HRESULT,
+    AddRef: *const fn (self: *anyopaque) callconv(WINAPI) ULONG,
+    Release: *const fn (self: *anyopaque) callconv(WINAPI) ULONG,
+    GetIids: *const anyopaque,
+    GetRuntimeClassName: *const anyopaque,
+    GetTrustLevel: *const anyopaque,
+
+    put_StaticValue: *const fn (self: *anyopaque, value: *IBuffer) callconv(WINAPI) HRESULT,
+    get_StaticValue: *const fn (self: *anyopaque, value: *?*IBuffer) callconv(WINAPI) HRESULT,
+    put_ReadProtectionLevel: *const fn (self: *anyopaque, value: GattProtectionLevel) callconv(WINAPI) HRESULT,
+    get_ReadProtectionLevel: *const fn (self: *anyopaque, value: *GattProtectionLevel) callconv(WINAPI) HRESULT,
+    put_WriteProtectionLevel: *const fn (self: *anyopaque, value: GattProtectionLevel) callconv(WINAPI) HRESULT,
+    get_WriteProtectionLevel: *const fn (self: *anyopaque, value: *GattProtectionLevel) callconv(WINAPI) HRESULT,
+};
+
+pub const IGattLocalDescriptorResult = extern struct {
+    lpVtbl: *const IGattLocalDescriptorResultVtbl,
+};
+
+pub const IGattLocalDescriptorResultVtbl = extern struct {
+    QueryInterface: *const fn (self: *anyopaque, riid: *const GUID, ppvObject: *?*anyopaque) callconv(WINAPI) HRESULT,
+    AddRef: *const fn (self: *anyopaque) callconv(WINAPI) ULONG,
+    Release: *const fn (self: *anyopaque) callconv(WINAPI) ULONG,
+    GetIids: *const anyopaque,
+    GetRuntimeClassName: *const anyopaque,
+    GetTrustLevel: *const anyopaque,
+
+    get_Descriptor: *const fn (self: *anyopaque, value: *?*IGattLocalDescriptor) callconv(WINAPI) HRESULT,
+    get_Error: *const fn (self: *anyopaque, value: *BluetoothError) callconv(WINAPI) HRESULT,
+};
+
+pub const IGattLocalDescriptor = extern struct {
+    lpVtbl: *const IGattLocalDescriptorVtbl,
+};
+
+pub const IGattLocalDescriptorVtbl = extern struct {
+    QueryInterface: *const fn (self: *anyopaque, riid: *const GUID, ppvObject: *?*anyopaque) callconv(WINAPI) HRESULT,
+    AddRef: *const fn (self: *anyopaque) callconv(WINAPI) ULONG,
+    Release: *const fn (self: *anyopaque) callconv(WINAPI) ULONG,
+    GetIids: *const anyopaque,
+    GetRuntimeClassName: *const anyopaque,
+    GetTrustLevel: *const anyopaque,
+
+    get_Uuid: *const fn (self: *anyopaque, value: *GUID) callconv(WINAPI) HRESULT,
+    get_StaticValue: *const anyopaque,
+    get_ReadProtectionLevel: *const anyopaque,
+    get_WriteProtectionLevel: *const anyopaque,
+    add_ReadRequested: *const fn (self: *anyopaque, handler: *anyopaque, token: *EventRegistrationToken) callconv(WINAPI) HRESULT,
+    remove_ReadRequested: *const fn (self: *anyopaque, token: EventRegistrationToken) callconv(WINAPI) HRESULT,
+    add_WriteRequested: *const fn (self: *anyopaque, handler: *anyopaque, token: *EventRegistrationToken) callconv(WINAPI) HRESULT,
+    remove_WriteRequested: *const fn (self: *anyopaque, token: EventRegistrationToken) callconv(WINAPI) HRESULT,
+};
+
 pub const IGattLocalCharacteristic = extern struct {
     lpVtbl: *const IGattLocalCharacteristicVtbl,
 };
@@ -433,11 +492,11 @@ pub const IGattLocalCharacteristicVtbl = extern struct {
     get_CharacteristicProperties: *const fn (self: *anyopaque, value: *u32) callconv(WINAPI) HRESULT,
     get_ReadProtectionLevel: *const fn (self: *anyopaque, value: *GattProtectionLevel) callconv(WINAPI) HRESULT,
     get_WriteProtectionLevel: *const fn (self: *anyopaque, value: *GattProtectionLevel) callconv(WINAPI) HRESULT,
-    CreateDescriptorAsync: *const anyopaque,
+    CreateDescriptorAsync: *const fn (self: *anyopaque, descriptorUuid: GUID, parameters: *IGattLocalDescriptorParameters, operation: *?*IAsyncOperationGeneric) callconv(WINAPI) HRESULT,
     get_Descriptors: *const anyopaque,
     get_UserDescription: *const fn (self: *anyopaque, value: *HSTRING) callconv(WINAPI) HRESULT,
     get_PresentationFormats: *const anyopaque,
-    get_SubscribedClients: *const anyopaque,
+    get_SubscribedClients: *const fn (self: *anyopaque, value: *?*IVectorViewGeneric) callconv(WINAPI) HRESULT,
     add_SubscribedClientsChanged: *const anyopaque,
     remove_SubscribedClientsChanged: *const anyopaque,
     add_ReadRequested: *const fn (self: *anyopaque, handler: *anyopaque, token: *EventRegistrationToken) callconv(WINAPI) HRESULT,
@@ -445,7 +504,25 @@ pub const IGattLocalCharacteristicVtbl = extern struct {
     add_WriteRequested: *const fn (self: *anyopaque, handler: *anyopaque, token: *EventRegistrationToken) callconv(WINAPI) HRESULT,
     remove_WriteRequested: *const fn (self: *anyopaque, token: EventRegistrationToken) callconv(WINAPI) HRESULT,
     NotifyValueAsync: *const fn (self: *anyopaque, value: *IBuffer, operation: *?*IAsyncOperationGeneric) callconv(WINAPI) HRESULT,
-    NotifyValueForSubscribedClientAsync: *const anyopaque,
+    NotifyValueForSubscribedClientAsync: *const fn (self: *anyopaque, value: *IBuffer, client: *IGattSubscribedClient, operation: *?*IAsyncOperationGeneric) callconv(WINAPI) HRESULT,
+};
+
+pub const IGattSubscribedClient = extern struct {
+    lpVtbl: *const IGattSubscribedClientVtbl,
+};
+
+pub const IGattSubscribedClientVtbl = extern struct {
+    QueryInterface: *const fn (self: *anyopaque, riid: *const GUID, ppvObject: *?*anyopaque) callconv(WINAPI) HRESULT,
+    AddRef: *const fn (self: *anyopaque) callconv(WINAPI) ULONG,
+    Release: *const fn (self: *anyopaque) callconv(WINAPI) ULONG,
+    GetIids: *const anyopaque,
+    GetRuntimeClassName: *const anyopaque,
+    GetTrustLevel: *const anyopaque,
+
+    get_Session: *const fn (self: *anyopaque, value: *?*IGattSession) callconv(WINAPI) HRESULT,
+    get_MaxNotificationSize: *const fn (self: *anyopaque, value: *u16) callconv(WINAPI) HRESULT,
+    add_MaxNotificationSizeChanged: *const anyopaque,
+    remove_MaxNotificationSizeChanged: *const anyopaque,
 };
 
 pub const IGattReadRequestedEventArgs = extern struct {

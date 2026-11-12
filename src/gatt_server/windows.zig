@@ -6,79 +6,142 @@ const types_mod = @import("types.zig");
 
 const UUID = core.UUID;
 const ServerCharacteristic = types_mod.ServerCharacteristic;
+const ServerDescriptor = types_mod.ServerDescriptor;
 const win_bindings = if (builtin.os.tag == .windows) @import("../backend/windows/bindings.zig") else struct {};
 const win_mod = if (builtin.os.tag == .windows) @import("../backend/windows/mod.zig") else struct {};
 
 const log = std.log.scoped(.zig_ble);
 
-pub fn onWinRtReadRequested(char_ctx: *anyopaque, args: *win_bindings.IGattReadRequestedEventArgs) callconv(.c) void {
-    if (builtin.os.tag != .windows) return;
-    const ch: *ServerCharacteristic = @ptrCast(@alignCast(char_ctx));
+/// Serves read and write requests for a local characteristic or descriptor: `T` is
+/// `ServerCharacteristic` or `ServerDescriptor`, which share the value and handler fields.
+fn RequestHandlers(comptime T: type) type {
+    return struct {
+        pub fn onRead(ctx: *anyopaque, args: *win_bindings.IGattReadRequestedEventArgs) callconv(.c) void {
+            if (builtin.os.tag != .windows) return;
+            const item: *T = @ptrCast(@alignCast(ctx));
 
-    var deferral: ?*win_bindings.IDeferral = null;
-    _ = args.lpVtbl.GetDeferral(args, &deferral);
-    defer if (deferral) |d| {
-        _ = d.lpVtbl.Complete(d);
-        _ = d.lpVtbl.Release(d);
+            var deferral: ?*win_bindings.IDeferral = null;
+            _ = args.lpVtbl.GetDeferral(args, &deferral);
+            defer if (deferral) |d| {
+                _ = d.lpVtbl.Complete(d);
+                _ = d.lpVtbl.Release(d);
+            };
+
+            var req_op: ?*win_bindings.IAsyncOperationGeneric = null;
+            if (args.lpVtbl.GetRequestAsync(args, &req_op) < 0 or req_op == null) return;
+
+            const req_raw = (win_mod.awaitAsync(req_op.?, 5000) catch null) orelse return;
+            const req: *win_bindings.IGattReadRequest = @ptrCast(@alignCast(req_raw));
+            defer _ = req.lpVtbl.Release(req);
+
+            const val = if (item.read_handler) |rf| rf(item, item.user_data) else item.getValue();
+            var offset: u32 = 0;
+            _ = req.lpVtbl.get_Offset(req, &offset);
+            const slice = if (offset < val.len) val[offset..] else &[_]u8{};
+
+            if (win_mod.createIBuffer(slice)) |ibuf| {
+                defer _ = ibuf.lpVtbl.Release(ibuf);
+                _ = req.lpVtbl.RespondWithValue(req, ibuf);
+            } else |_| {
+                _ = req.lpVtbl.RespondWithProtocolError(req, 0x06); // Request Not Supported / Read Error
+            }
+        }
+
+        pub fn onWrite(ctx: *anyopaque, args: *win_bindings.IGattWriteRequestedEventArgs) callconv(.c) void {
+            if (builtin.os.tag != .windows) return;
+            const item: *T = @ptrCast(@alignCast(ctx));
+
+            var deferral: ?*win_bindings.IDeferral = null;
+            _ = args.lpVtbl.GetDeferral(args, &deferral);
+            defer if (deferral) |d| {
+                _ = d.lpVtbl.Complete(d);
+                _ = d.lpVtbl.Release(d);
+            };
+
+            var req_op: ?*win_bindings.IAsyncOperationGeneric = null;
+            if (args.lpVtbl.GetRequestAsync(args, &req_op) < 0 or req_op == null) return;
+
+            const req_raw = (win_mod.awaitAsync(req_op.?, 5000) catch null) orelse return;
+            const req: *win_bindings.IGattWriteRequest = @ptrCast(@alignCast(req_raw));
+            defer _ = req.lpVtbl.Release(req);
+
+            var ibuf: ?*win_bindings.IBuffer = null;
+            if (req.lpVtbl.get_Value(req, &ibuf) >= 0 and ibuf != null) {
+                const b = ibuf.?;
+                defer _ = b.lpVtbl.Release(b);
+
+                var data_buf: [512]u8 = undefined;
+                if (win_mod.readIBuffer(b, &data_buf)) |n| {
+                    item.setValue(data_buf[0..n]);
+                    if (item.write_handler) |wf| {
+                        wf(item, data_buf[0..n], item.user_data);
+                    }
+                } else |_| {}
+            }
+
+            var opt: win_bindings.GattWriteOption = .WriteWithResponse;
+            _ = req.lpVtbl.get_Option(req, &opt);
+            if (opt == .WriteWithResponse) {
+                _ = req.lpVtbl.Respond(req);
+            }
+        }
     };
-
-    var req_op: ?*win_bindings.IAsyncOperationGeneric = null;
-    if (args.lpVtbl.GetRequestAsync(args, &req_op) < 0 or req_op == null) return;
-
-    const req_raw = (win_mod.awaitAsync(req_op.?, 5000) catch null) orelse return;
-    const req: *win_bindings.IGattReadRequest = @ptrCast(@alignCast(req_raw));
-    defer _ = req.lpVtbl.Release(req);
-
-    const val = if (ch.read_handler) |rf| rf(ch, ch.user_data) else ch.getValue();
-    var offset: u32 = 0;
-    _ = req.lpVtbl.get_Offset(req, &offset);
-    const slice = if (offset < val.len) val[offset..] else &[_]u8{};
-
-    if (win_mod.createIBuffer(slice)) |ibuf| {
-        defer _ = ibuf.lpVtbl.Release(ibuf);
-        _ = req.lpVtbl.RespondWithValue(req, ibuf);
-    } else |_| {
-        _ = req.lpVtbl.RespondWithProtocolError(req, 0x06); // Request Not Supported / Read Error
-    }
 }
 
-pub fn onWinRtWriteRequested(char_ctx: *anyopaque, args: *win_bindings.IGattWriteRequestedEventArgs) callconv(.c) void {
-    if (builtin.os.tag != .windows) return;
-    const ch: *ServerCharacteristic = @ptrCast(@alignCast(char_ctx));
+const characteristic_requests = RequestHandlers(ServerCharacteristic);
+const descriptor_requests = RequestHandlers(ServerDescriptor);
+pub const onWinRtReadRequested = characteristic_requests.onRead;
+pub const onWinRtWriteRequested = characteristic_requests.onWrite;
 
-    var deferral: ?*win_bindings.IDeferral = null;
-    _ = args.lpVtbl.GetDeferral(args, &deferral);
-    defer if (deferral) |d| {
-        _ = d.lpVtbl.Complete(d);
-        _ = d.lpVtbl.Release(d);
-    };
+/// Creates `d` on `lc` and routes its read and write requests to `d`.
+fn registerDescriptor(lc: *win_bindings.IGattLocalCharacteristic, d: *ServerDescriptor) !void {
+    const param_class = try win_mod.createHStringComptime("Windows.Devices.Bluetooth.GenericAttributeProfile.GattLocalDescriptorParameters");
+    defer win_mod.deleteHString(param_class);
 
-    var req_op: ?*win_bindings.IAsyncOperationGeneric = null;
-    if (args.lpVtbl.GetRequestAsync(args, &req_op) < 0 or req_op == null) return;
-
-    const req_raw = (win_mod.awaitAsync(req_op.?, 5000) catch null) orelse return;
-    const req: *win_bindings.IGattWriteRequest = @ptrCast(@alignCast(req_raw));
-    defer _ = req.lpVtbl.Release(req);
-
-    var ibuf: ?*win_bindings.IBuffer = null;
-    if (req.lpVtbl.get_Value(req, &ibuf) >= 0 and ibuf != null) {
-        const b = ibuf.?;
-        defer _ = b.lpVtbl.Release(b);
-
-        var data_buf: [512]u8 = undefined;
-        if (win_mod.readIBuffer(b, &data_buf)) |n| {
-            ch.setValue(data_buf[0..n]);
-            if (ch.write_handler) |wf| {
-                wf(ch, data_buf[0..n], ch.user_data);
-            }
-        } else |_| {}
+    var param_insp: ?*win_bindings.IInspectable = null;
+    if (win_bindings.Combase.RoActivateInstance(param_class, &param_insp) < 0 or param_insp == null) {
+        return error.GattApplicationRegistrationFailed;
     }
+    const pinsp = param_insp.?;
+    defer _ = pinsp.release();
 
-    var opt: win_bindings.GattWriteOption = .WriteWithResponse;
-    _ = req.lpVtbl.get_Option(req, &opt);
-    if (opt == .WriteWithResponse) {
-        _ = req.lpVtbl.Respond(req);
+    var params: ?*win_bindings.IGattLocalDescriptorParameters = null;
+    if (pinsp.queryInterface(&win_bindings.IID_IGattLocalDescriptorParameters, @ptrCast(&params)) < 0 or params == null) {
+        return error.GattApplicationRegistrationFailed;
     }
+    const p = params.?;
+    defer _ = p.lpVtbl.Release(p);
+
+    // GattProtectionLevel: 0 = Plain, 2 = EncryptionRequired, 3 = EncryptionAndAuthenticationRequired
+    const f = d.flags;
+    const read_level: i32 = if (f.secure_read or f.encrypt_authenticated_read) 3 else if (f.encrypt_read) 2 else 0;
+    const write_level: i32 = if (f.secure_write or f.encrypt_authenticated_write) 3 else if (f.encrypt_write) 2 else 0;
+    _ = p.lpVtbl.put_ReadProtectionLevel(p, @enumFromInt(read_level));
+    _ = p.lpVtbl.put_WriteProtectionLevel(p, @enumFromInt(write_level));
+
+    var op: ?*win_bindings.IAsyncOperationGeneric = null;
+    if (lc.lpVtbl.CreateDescriptorAsync(lc, win_mod.uuidToGuid(d.uuid), p, &op) < 0 or op == null) {
+        return error.GattApplicationRegistrationFailed;
+    }
+    const res_raw = (try win_mod.awaitAsync(op.?, 10_000)) orelse return error.GattApplicationRegistrationFailed;
+    const res: *win_bindings.IGattLocalDescriptorResult = @ptrCast(@alignCast(res_raw));
+    defer _ = res.lpVtbl.Release(res);
+
+    var err_code: win_bindings.BluetoothError = .OtherError;
+    if (res.lpVtbl.get_Error(res, &err_code) < 0 or err_code != .Success) {
+        return error.GattApplicationRegistrationFailed;
+    }
+    var local_desc: ?*win_bindings.IGattLocalDescriptor = null;
+    if (res.lpVtbl.get_Descriptor(res, &local_desc) < 0 or local_desc == null) {
+        return error.GattApplicationRegistrationFailed;
+    }
+    const ld = local_desc.?;
+    d.win_desc = ld;
+
+    d.win_read_handler = .{ .char_ctx = @ptrCast(d), .on_read_requested = descriptor_requests.onRead };
+    _ = ld.lpVtbl.add_ReadRequested(ld, @ptrCast(&d.win_read_handler), &d.win_read_token);
+    d.win_write_handler = .{ .char_ctx = @ptrCast(d), .on_write_requested = descriptor_requests.onWrite };
+    _ = ld.lpVtbl.add_WriteRequested(ld, @ptrCast(&d.win_write_handler), &d.win_write_token);
 }
 
 pub fn registerWindows(app: anytype) !void {
@@ -198,6 +261,12 @@ pub fn registerWindows(app: anytype) !void {
                 .on_write_requested = onWinRtWriteRequested,
             };
             _ = lc.lpVtbl.add_WriteRequested(lc, @ptrCast(&ch.win_write_handler), &ch.win_write_token);
+
+            // 0x2901 went in as the user description above; Windows creates the CCCD itself.
+            for (ch.descriptors[0..ch.desc_count]) |*d| {
+                if (d.uuid.eql(UUID.from16(0x2901)) or d.uuid.eql(UUID.from16(0x2902))) continue;
+                try registerDescriptor(lc, d);
+            }
         }
 
         // Start advertising the GATT service

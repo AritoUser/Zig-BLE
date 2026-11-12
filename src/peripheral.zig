@@ -131,8 +131,12 @@ pub const Peripheral = struct {
         if (!self.is_running.load(.acquire)) return;
 
         if (builtin.os.tag == .windows) {
-            // WinRT GATT & Advertising events are dispatched on the MTA thread pool via COM handlers.
-            std.atomic.spinLoopHint();
+            // WinRT GATT & Advertising events are dispatched on the MTA thread pool via COM handlers,
+            // so this only waits.
+            const kernel32 = struct {
+                extern "kernel32" fn Sleep(milliseconds: u32) callconv(.winapi) void;
+            };
+            kernel32.Sleep(@intCast(@max(timeout_ms, 0)));
             return;
         }
         if (builtin.os.tag != .linux) return error.NotSupported;

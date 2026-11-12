@@ -59,6 +59,14 @@ pub const ScanCache = context_mod.ScanCache;
 
 pub const PendingCallbacks = signals.PendingCallbacks;
 
+/// Maps a failed GATT call. A D-Bus timeout usually means BlueZ is still trying to raise the
+/// link's security for a protected attribute.
+fn gattError(err: anyerror, fallback: BleError) BleError {
+    if (err == error.AccessDenied) return BleError.PermissionDenied;
+    if (err == error.Timeout or err == error.NoReply) return BleError.Timeout;
+    return fallback;
+}
+
 pub const BluezBackend = struct {
     conn: if (builtin.os.tag == .linux) ?dbus.Connection else void = if (builtin.os.tag == .linux) null else {},
     adapter_index: u16 = 0,
@@ -151,6 +159,40 @@ pub const BluezBackend = struct {
             if (d.in_use and d.address.eql(addr)) return d;
         }
         return null;
+    }
+
+    /// Object path of the device with `addr` on this adapter, found by its `Address` property.
+    /// After pairing a device that used a random address, BlueZ keeps its object but changes
+    /// `Address` to the identity address, so the path no longer spells the address.
+    fn findDevicePath(self: *BluezBackend, conn_ptr: *dbus.Connection, addr: Address, out: *[96]u8) ?[]const u8 {
+        var msg = dbus.Connection.createMethodCall(
+            BlueZ.service_name,
+            BlueZ.root_path,
+            BlueZ.ObjectManager.interface_name,
+            BlueZ.ObjectManager.Methods.GetManagedObjects,
+        ) catch return null;
+        defer msg.deinit();
+        var reply = conn_ptr.sendMessage(&msg, std.math.lossyCast(i32, self.timeouts.discovery_ms)) catch return null;
+        defer reply.deinit();
+
+        const Visitor = struct {
+            backend: *const BluezBackend,
+            addr: Address,
+            out: *[96]u8,
+            len: usize = 0,
+
+            pub fn onDevice(v: *@This(), info: object_manager.DeviceInfo) void {
+                if (v.len > 0 or !info.address.eql(v.addr)) return;
+                const path = info.getObjectPath();
+                if (!signals.isDevicePathOnAdapter(v.backend, path) or path.len > v.out.len) return;
+                @memcpy(v.out[0..path.len], path);
+                v.len = path.len;
+            }
+        };
+        var visitor = Visitor{ .backend = self, .addr = addr, .out = out };
+        var it = reply.iterator();
+        object_manager.parseManagedObjects(&it, Visitor, &visitor);
+        return if (visitor.len > 0) out[0..visitor.len] else null;
     }
 
     pub fn findDeviceByPath(self: *BluezBackend, path: []const u8) ?*BluezDeviceContext {
@@ -380,16 +422,25 @@ pub const BluezBackend = struct {
         const eff_timeout = if (timeout_ms == 0) self.timeouts.connect_ms else timeout_ms;
         const deadline = wire.getMonotonicMs() + eff_timeout;
 
-        var dev_slot = self.allocateDeviceSlot(addr) orelse return BleError.PoolExhausted;
-        dev_slot.connection_state.store(.connecting, .release);
-
         var path_buf: [96]u8 = undefined;
-        const d_path = BlueZ.buildDevicePath(&path_buf, self.getAdapterPath(), addr);
+        const d_path = self.findDevicePath(conn_ptr, addr, &path_buf) orelse
+            BlueZ.buildDevicePath(&path_buf, self.getAdapterPath(), addr);
+
+        var dev_slot = self.findDeviceByPath(d_path) orelse
+            self.allocateDeviceSlot(addr) orelse return BleError.PoolExhausted;
+        dev_slot.connection_state.store(.connecting, .release);
         dev_slot.setPath(d_path);
 
         var dev = device_mod.Device.init(conn_ptr, dev_slot.getPath());
+        // A dual-mode device bonded over LE is also bonded over BR/EDR (cross-transport key
+        // derivation), and BlueZ then connects whichever bearer it saw last. Ask for LE where
+        // BlueZ supports it (experimental features only).
+        dev.setPreferredBearer("le") catch {};
         dev.connectWithTimeout(eff_timeout) catch |err| {
             log.err("BlueZ Device1.Connect failed for {s}: {s}", .{ dev_slot.getPath(), @errorName(err) });
+            if (err == error.Failed and (dev.isPaired() catch false)) {
+                log.warn("A bonded dual-mode device may have been connected over BR/EDR; see docs/TROUBLESHOOTING.md", .{});
+            }
             dev_slot.connection_state.store(.disconnected, .release);
             dev_slot.in_use = false;
             return switch (err) {
@@ -460,6 +511,8 @@ pub const BluezBackend = struct {
         dev_slot.is_connected = false;
         dev_slot.connection_state.store(.disconnected, .release);
         dev.disconnect() catch |err| {
+            // BlueZ removes a device it has not bonded with once the link is gone.
+            if (err == error.UnknownObject or err == error.UnknownMethod) return;
             log.warn("BlueZ Device1.Disconnect failed: {s}", .{@errorName(err)});
             return BleError.IoError;
         };
@@ -566,7 +619,7 @@ pub const BluezBackend = struct {
 
             pub fn onGattCharacteristic(v_self: *@This(), info: object_manager.GattCharacteristicInfo) void {
                 if (!v_self.ownsPath(info.getObjectPath())) return;
-                v_self.slot.addCharacteristic(info.uuid, info.getObjectPath()) catch {
+                v_self.slot.addCharacteristic(info.uuid, info.getObjectPath(), info.flags) catch {
                     v_self.overflow_error = true;
                 };
             }
@@ -627,7 +680,7 @@ pub const BluezBackend = struct {
 
         const found = try self.lookupDescriptor(ctx, dev_handle, char, descriptor);
         var d = gatt_client.GattDescriptor.init(found.conn, found.desc.getPath());
-        return d.readValue(buf) catch |err| if (err == error.AccessDenied) BleError.PermissionDenied else BleError.ReadFailed;
+        return d.readValue(buf) catch |err| gattError(err, BleError.ReadFailed);
     }
 
     pub fn writeDescriptor(ctx: *anyopaque, dev_handle: *anyopaque, char: CharacteristicSelector, descriptor: UUID, data: []const u8) BleError!void {
@@ -638,7 +691,7 @@ pub const BluezBackend = struct {
 
         const found = try self.lookupDescriptor(ctx, dev_handle, char, descriptor);
         var d = gatt_client.GattDescriptor.init(found.conn, found.desc.getPath());
-        d.writeValue(data) catch return BleError.WriteFailed;
+        d.writeValue(data) catch |err| return gattError(err, BleError.WriteFailed);
     }
 
     /// Finds a discovered descriptor, discovering services first if needed. Caller holds `mutex`.
@@ -705,7 +758,7 @@ pub const BluezBackend = struct {
             const req_pdu = [_]u8{ @intFromEnum(core.AttOpcode.read_req), 0x01, 0x00 };
             hook.emit(.host_to_controller, &req_pdu);
         }
-        const n = ch.readValue(buf) catch |err| return if (err == error.AccessDenied) BleError.PermissionDenied else BleError.ReadFailed;
+        const n = ch.readValue(buf) catch |err| return gattError(err, BleError.ReadFailed);
         if (self.pcap_hook) |hook| {
             var rsp_pdu: [517]u8 = undefined;
             rsp_pdu[0] = @intFromEnum(core.AttOpcode.read_rsp);
@@ -735,6 +788,10 @@ pub const BluezBackend = struct {
         }
 
         const ch_slot = dev_slot.findCharacteristic(char) orelse return BleError.CharacteristicNotFound;
+        // A peer drops a write command its characteristic does not allow, and nothing reports it.
+        if (!with_response and @as(u8, @bitCast(ch_slot.properties)) != 0 and !ch_slot.properties.write_without_response) {
+            return BleError.NotSupported;
+        }
         var ch = gatt_client.GattCharacteristic.init(conn_ptr, ch_slot.getPath());
         const w_type: core.WriteType = if (with_response) .with_response else .without_response;
         if (self.pcap_hook) |hook| {
@@ -746,7 +803,7 @@ pub const BluezBackend = struct {
             @memcpy(req_pdu[3 .. 3 + copy_len], data[0..copy_len]);
             hook.emit(.host_to_controller, req_pdu[0 .. 3 + copy_len]);
         }
-        ch.writeValue(data, w_type) catch return BleError.WriteFailed;
+        ch.writeValue(data, w_type) catch |err| return gattError(err, BleError.WriteFailed);
         if (with_response) {
             if (self.pcap_hook) |hook| {
                 const rsp_pdu = [_]u8{@intFromEnum(core.AttOpcode.write_rsp)};
@@ -976,4 +1033,11 @@ pub const BluezBackend = struct {
 
 test {
     _ = @import("tests.zig");
+}
+
+test "gattError reports timeouts and missing permissions" {
+    try std.testing.expectEqual(BleError.PermissionDenied, gattError(error.AccessDenied, BleError.ReadFailed));
+    try std.testing.expectEqual(BleError.Timeout, gattError(error.Timeout, BleError.ReadFailed));
+    try std.testing.expectEqual(BleError.Timeout, gattError(error.NoReply, BleError.WriteFailed));
+    try std.testing.expectEqual(BleError.WriteFailed, gattError(error.Failed, BleError.WriteFailed));
 }

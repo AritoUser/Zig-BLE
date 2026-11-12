@@ -56,6 +56,44 @@ backend. Error names refer to `BleError`.
   A device that puts its service UUID only in the scan response is reported once the scan
   response has arrived.
 
+**Peripheral on Linux: centrals connect, but their first request never gets an answer**
+- Symptom: a central (seen with Windows) connects in about half of the attempts; otherwise its
+  service discovery hangs for 30 s and the link is useless. On Windows `MaxPduSize` stays 23.
+- Cause, in the Linux kernel, not in BlueZ or Zig-BLE: USB Bluetooth adapters deliver events
+  and ACL data on separate USB endpoints. The central's first packet (its MTU request) can reach
+  the kernel a few milliseconds before the `LE Connection Complete` event, and the kernel drops
+  data for a connection it does not know yet. `btmon` shows the `ATT: Exchange MTU Request`
+  before `LE Enhanced Connection Complete`.
+- `force_poll_sync` (debugfs) holds ACL data for one kernel tick only, 1 ms on kernels built
+  with `CONFIG_HZ=1000`, which is too short for some adapters (Realtek: 2–3 ms). See the report
+  at https://lkml.iu.edu/2607.2/06216.html.
+- Fix: `tools/linux-btusb-hold-acl/` patches `btusb` to hold ACL data for an unknown connection
+  until the kernel knows it (up to `hold_unknown_acl_ms`, default 100). Run `install.sh` as root;
+  it downloads the matching `btusb.c` from kernel.org, patches and builds it. A kernel update
+  restores the stock module; `uninstall.sh` does that at once.
+
+**A read or write takes long, returns `Timeout`, and the device disconnects**
+- BlueZ answers "insufficient authentication" or "insufficient encryption" from the device by
+  pairing on its own, then repeats the request. Without an agent that can answer, this runs into
+  a timeout and the link drops.
+- Pair first (`pair`, with a registered `Agent`), or leave protected characteristics alone.
+  BlueZ may create a bond while doing this, so do not probe devices you do not want bonded.
+
+**After pairing, a phone or PC cannot be connected again**
+- BlueZ keeps the device object of a peer that used a random address and changes only its
+  `Address` to the identity address. `connect` finds the device by either address.
+- A dual-mode peer (phone, PC) bonded over LE is also bonded over BR/EDR (cross-transport key
+  derivation), and `Device1.Connect` then picks the bearer it saw last, often BR/EDR
+  (`br-connection-profile-unavailable`). The backend sets `PreferredBearer = "le"`; BlueZ offers
+  that property only with `Experimental = true` in `/etc/bluetooth/main.conf`.
+- `Experimental = true` also turns on BlueZ's LE Audio services (0x1844, 0x184D, 0x184F, ...),
+  which require encryption: every unbonded central that discovers them is asked to pair, and the
+  link drops when nobody confirms. Seen with BlueZ 5.82. Weigh that before enabling it.
+- Seen with a Realtek USB adapter: the LE connect still times out, because the kernel leaves
+  the peer's random address to the controller's resolving list and the controller does not
+  resolve it. `btmon` shows `LE Extended Create Connection` to the identity address while the
+  peer advertises a resolvable address.
+
 **`bluetoothd` restarts**
 - All connections are reported as disconnected.
 - Register `setDaemonRestartCallback` and call `recoverAfterDaemonRestart`, then scan and
@@ -68,6 +106,14 @@ backend. Error names refer to `BleError`.
 - Zig-BLE opens a `GattSession` with `MaintainConnection = true` on connect. If the device
   offers no session, a warning is logged and Windows may close an idle link. Reading or
   subscribing re-establishes it.
+
+**After `disconnect` the device still shows a connection for a while**
+- Windows has no explicit disconnect either: it ends the link some time after the last object
+  of the device is released, 4 to 20 s in testing. `disconnect` returns before that, and a
+  `connect` within that time reuses the old link.
+- Windows does not end a link whose peer keeps sending indications. `disconnect` therefore
+  turns the subscriptions off on the peer first. If the application is killed instead, such a
+  link can stay up until the peer or Bluetooth is switched off.
 
 **A device disconnects after a few seconds, although others stay connected**
 - Some devices may end connections from anything but their paired owner; a tracker tag
@@ -95,6 +141,24 @@ backend. Error names refer to `BleError`.
   device, so name, UUIDs and manufacturer data can appear in a later callback for the same
   device.
 - Only the first manufacturer data entry is kept.
+
+**Peripheral role: notifications stall against a Linux central**
+- `NotifyValueAsync` did not complete within 5 s and the link dropped. Cause: the Linux central
+  dropped Windows' first ATT packet (see "Peripheral on Linux: centrals connect, but their first
+  request never gets an answer"); Windows then held back everything else it had to send. With
+  the `btusb` patch on the Linux side, notifications go through.
+
+**Peripheral role: pairing**
+- When a client starts pairing itself, Windows handles it on its own: it shows its dialog or
+  accepts without asking the application.
+- To keep pairing in the application, call `ServerCharacteristic.pairSubscribers` once a client
+  subscribed: Windows starts the pairing and asks `PairingCallbacks`. Call it before the client
+  touches an encrypted characteristic, or the client starts pairing first.
+
+**Removing a bond with a dual-mode device**
+- Pairing over LE with a device that also speaks Classic Bluetooth creates a Classic bond as well
+  (cross-transport key derivation). `unpair` removes both.
+- The other device keeps its keys. Remove the bond there too before pairing again.
 
 **Pairing prompts**
 - `pair` uses `DeviceInformationCustomPairing` and asks through `PairingCallbacks`. Without

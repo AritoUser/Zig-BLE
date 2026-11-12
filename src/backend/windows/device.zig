@@ -3,6 +3,9 @@ const std = @import("std");
 const builtin = @import("builtin");
 const types = @import("../types.zig");
 const bindings = @import("bindings.zig");
+const helpers = @import("helpers.zig");
+
+const log = std.log.scoped(.zig_ble);
 
 const Address = types.Address;
 const UUID = types.UUID;
@@ -78,6 +81,9 @@ pub fn DeviceContext(comptime pool_config: PoolConfig, comptime BackendType: typ
 
         mtu: u16 = 23,
         bond_state: types.BondState = .not_bonded,
+        /// Set by `pair` / `unpair`: the DeviceInformation of `ble_device` is a snapshot from
+        /// when it was opened and misses a pairing done since.
+        bond_changed: bool = false,
 
         pub fn findCharacteristic(self: *Self, char: CharacteristicSelector) ?*WinCharacteristicSlot {
             const chars = self.characteristics[0..self.characteristics_len];
@@ -192,6 +198,25 @@ pub fn DeviceContext(comptime pool_config: PoolConfig, comptime BackendType: typ
             }
             if (reconnected) {
                 if (reconnect_cb) |cb| cb(self.address, reconnect_ud);
+            }
+        }
+
+        /// Turns notifications and indications off on the peer, before the link is given up.
+        /// Windows keeps a link whose peer still sends indications, even after every object
+        /// of the device is released, so a disconnect without this never reaches the air.
+        pub fn disableSubscriptionsOnPeer(self: *Self, timeout_ms: u32) void {
+            if (builtin.os.tag != .windows) return;
+            if (!self.is_connected.load(.acquire)) return;
+            for (self.characteristics[0..self.characteristics_len]) |*slot| {
+                if (!slot.is_subscribed) continue;
+                const ch = slot.char_ptr orelse continue;
+                var op: ?*bindings.IAsyncOperationGeneric = null;
+                if (ch.lpVtbl.WriteClientCharacteristicConfigurationDescriptorAsync(ch, .None, &op) < 0 or op == null) continue;
+                _ = helpers.awaitAsync(op.?, timeout_ms) catch |err| {
+                    log.debug("WinRT CCCD disable of {f} before disconnect failed: {s}", .{ slot.uuid, @errorName(err) });
+                    // On a link that is gone or stuck the remaining writes would wait as long.
+                    if (err == BleError.ConnectionTimeout) return;
+                };
             }
         }
 

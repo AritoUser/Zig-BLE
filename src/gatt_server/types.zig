@@ -10,6 +10,8 @@ const wire = @import("../dbus/wire/mod.zig");
 const dbus = if (builtin.os.tag == .linux) @import("../dbus/mod.zig") else struct {};
 const win_bindings = if (builtin.os.tag == .windows) @import("../backend/windows/bindings.zig") else struct {};
 const win_mod = if (builtin.os.tag == .windows) @import("../backend/windows/mod.zig") else struct {};
+const win_pairing = if (builtin.os.tag == .windows) @import("../backend/windows/pairing.zig") else struct {};
+const backend_types = @import("../backend/types.zig");
 
 pub const Connection = if (builtin.os.tag == .linux) dbus.Connection else wire.NonLinuxConnection;
 pub const Message = if (builtin.os.tag == .linux) dbus.Message else wire.Message;
@@ -85,6 +87,31 @@ pub const ServerDescriptor = struct {
     read_handler: ?ReadFn = null,
     write_handler: ?WriteFn = null,
     user_data: ?*anyopaque = null,
+
+    // Windows WinRT local descriptor state
+    win_desc: if (builtin.os.tag == .windows) ?*win_bindings.IGattLocalDescriptor else void =
+        if (builtin.os.tag == .windows) null else {},
+    win_read_token: if (builtin.os.tag == .windows) win_bindings.EventRegistrationToken else void =
+        if (builtin.os.tag == .windows) 0 else {},
+    win_write_token: if (builtin.os.tag == .windows) win_bindings.EventRegistrationToken else void =
+        if (builtin.os.tag == .windows) 0 else {},
+    win_read_handler: if (builtin.os.tag == .windows) win_bindings.GattDescriptorReadRequestedHandler else void =
+        if (builtin.os.tag == .windows) undefined else {},
+    win_write_handler: if (builtin.os.tag == .windows) win_bindings.GattDescriptorWriteRequestedHandler else void =
+        if (builtin.os.tag == .windows) undefined else {},
+
+    pub fn releaseWindows(self: *ServerDescriptor) void {
+        if (builtin.os.tag != .windows) return;
+        const ld = self.win_desc orelse return;
+        self.win_read_handler.deactivate();
+        self.win_write_handler.deactivate();
+        if (self.win_read_token != 0) _ = ld.lpVtbl.remove_ReadRequested(ld, self.win_read_token);
+        if (self.win_write_token != 0) _ = ld.lpVtbl.remove_WriteRequested(ld, self.win_write_token);
+        self.win_read_token = 0;
+        self.win_write_token = 0;
+        _ = ld.lpVtbl.Release(ld);
+        self.win_desc = null;
+    }
 
     pub fn getObjectPath(self: *const ServerDescriptor) [:0]const u8 {
         if (self.object_path_len == 0) return "";
@@ -235,8 +262,9 @@ pub const ServerCharacteristic = struct {
     service_path_len: u8 = 0,
     flags: ServerCharacteristicFlags = .{},
 
-    value: [128]u8 = undefined,
-    value_len: u8 = 0,
+    /// Up to the ATT maximum of 512 bytes; clients read longer values in parts.
+    value: [512]u8 = undefined,
+    value_len: u16 = 0,
     is_notifying: bool = false,
 
     read_handler: ?ReadFn = null,
@@ -293,6 +321,7 @@ pub const ServerCharacteristic = struct {
         d.read_handler = null;
         d.write_handler = null;
         d.user_data = null;
+        if (builtin.os.tag == .windows) d.win_desc = null;
 
         const cp_len = self.object_path_len;
         @memcpy(d.char_path[0..cp_len], self.object_path[0..cp_len]);
@@ -342,21 +371,122 @@ pub const ServerCharacteristic = struct {
 
             try conn.send(&sig);
         } else if (builtin.os.tag == .windows) {
-            if (self.win_char) |wc| {
-                const ibuf = try win_mod.createIBuffer(self.getValue());
-                defer _ = ibuf.lpVtbl.Release(ibuf);
+            const wc = self.win_char orelse return;
+            const ibuf = try win_mod.createIBuffer(self.getValue());
+            defer _ = ibuf.lpVtbl.Release(ibuf);
 
-                var notify_op: ?*win_bindings.IAsyncOperationGeneric = null;
-                if (wc.lpVtbl.NotifyValueAsync(wc, ibuf, &notify_op) >= 0 and notify_op != null) {
-                    if (win_mod.awaitAsync(notify_op.?, 5000) catch null) |vec_raw| {
-                        const vec_unk: *win_bindings.IUnknown = @ptrCast(@alignCast(vec_raw));
-                        _ = vec_unk.release();
-                    }
-                }
+            var notify_op: ?*win_bindings.IAsyncOperationGeneric = null;
+            if (wc.lpVtbl.NotifyValueAsync(wc, ibuf, &notify_op) < 0 or notify_op == null) return error.NotificationFailed;
+            if (try win_mod.awaitAsync(notify_op.?, 5000)) |vec_raw| {
+                const vec_unk: *win_bindings.IUnknown = @ptrCast(@alignCast(vec_raw));
+                _ = vec_unk.release();
             }
         } else {
             return error.NotSupported;
         }
+    }
+
+    pub const Subscribers = struct {
+        /// Clients that enabled notifications or indications.
+        total: usize,
+        /// Of these, the ones whose session is still open. BlueZ reports a single subscription
+        /// without telling clients apart.
+        active: usize,
+    };
+
+    pub fn subscribers(self: *const ServerCharacteristic) Subscribers {
+        if (builtin.os.tag == .windows) {
+            const list = self.windowsSubscribedClients() catch return .{ .total = 0, .active = 0 };
+            defer _ = list.lpVtbl.Release(list);
+            var count: u32 = 0;
+            _ = list.lpVtbl.get_Size(list, &count);
+            var active: usize = 0;
+            for (0..count) |i| {
+                const client = windowsClientAt(list, @intCast(i)) orelse continue;
+                defer _ = client.lpVtbl.Release(client);
+                if (windowsSessionActive(client)) active += 1;
+            }
+            return .{ .total = count, .active = active };
+        }
+        const n: usize = @intFromBool(self.is_notifying);
+        return .{ .total = n, .active = n };
+    }
+
+    /// Windows: pairs with every connected client subscribed to this characteristic, asking
+    /// `callbacks` for confirmation or a passkey, and returns how many are paired. Pairing that
+    /// a client starts itself shows Windows' own dialog instead, so call this before a client
+    /// touches an encrypted characteristic, e.g. once it subscribed (see `subscribers`).
+    /// Linux: returns `NotSupported`; BlueZ asks the registered `Agent`.
+    pub fn pairSubscribers(self: *const ServerCharacteristic, io_cap: backend_types.IoCapability, callbacks: backend_types.PairingCallbacks, timeout_ms: u32) !usize {
+        if (builtin.os.tag != .windows) return error.NotSupported;
+        const list = try self.windowsSubscribedClients();
+        defer _ = list.lpVtbl.Release(list);
+        var count: u32 = 0;
+        _ = list.lpVtbl.get_Size(list, &count);
+        var paired: usize = 0;
+        for (0..count) |i| {
+            const client = windowsClientAt(list, @intCast(i)) orelse continue;
+            defer _ = client.lpVtbl.Release(client);
+            if (!windowsSessionActive(client)) continue;
+            const ble_dev = try windowsClientDevice(client, timeout_ms);
+            defer _ = ble_dev.lpVtbl.Release(ble_dev);
+            try win_pairing.pairBleDevice(ble_dev, io_cap, callbacks, timeout_ms);
+            paired += 1;
+        }
+        return paired;
+    }
+
+    /// Opens the `BluetoothLEDevice` behind a subscribed client's GATT session.
+    fn windowsClientDevice(client: *win_bindings.IGattSubscribedClient, timeout_ms: u32) !*win_bindings.IBluetoothLEDevice {
+        var session: ?*win_bindings.IGattSession = null;
+        if (client.lpVtbl.get_Session(client, &session) < 0) return error.PairingFailed;
+        const s = session orelse return error.PairingFailed;
+        defer _ = s.lpVtbl.Release(s);
+
+        var device_id: ?*win_bindings.IBluetoothDeviceId = null;
+        if (s.lpVtbl.get_DeviceId(s, &device_id) < 0) return error.PairingFailed;
+        const id = device_id orelse return error.PairingFailed;
+        defer _ = id.lpVtbl.Release(id);
+        var id_str: win_bindings.HSTRING = null;
+        if (id.lpVtbl.get_Id(id, &id_str) < 0) return error.PairingFailed;
+        defer win_mod.deleteHString(id_str);
+
+        const class_name = try win_mod.createHStringComptime("Windows.Devices.Bluetooth.BluetoothLEDevice");
+        defer win_mod.deleteHString(class_name);
+        var statics: ?*win_bindings.IBluetoothLEDeviceStatics = null;
+        if (win_bindings.Combase.RoGetActivationFactory(class_name, &win_bindings.IID_IBluetoothLEDeviceStatics, @ptrCast(&statics)) < 0) {
+            return error.PairingFailed;
+        }
+        const st = statics orelse return error.PairingFailed;
+        defer _ = st.lpVtbl.Release(st);
+
+        var op: ?*win_bindings.IAsyncOperationGeneric = null;
+        if (st.lpVtbl.FromIdAsync(st, id_str, &op) < 0) return error.PairingFailed;
+        const raw = (try win_mod.awaitAsync(op orelse return error.PairingFailed, timeout_ms)) orelse return error.PairingFailed;
+        return @ptrCast(@alignCast(raw));
+    }
+
+    fn windowsSubscribedClients(self: *const ServerCharacteristic) !*win_bindings.IVectorViewGeneric {
+        const wc = self.win_char orelse return error.NotificationFailed;
+        var clients: ?*win_bindings.IVectorViewGeneric = null;
+        if (wc.lpVtbl.get_SubscribedClients(wc, &clients) < 0) return error.NotificationFailed;
+        return clients orelse error.NotificationFailed;
+    }
+
+    fn windowsClientAt(list: *win_bindings.IVectorViewGeneric, index: u32) ?*win_bindings.IGattSubscribedClient {
+        var raw: ?*anyopaque = null;
+        if (list.lpVtbl.GetAt(list, index, &raw) < 0) return null;
+        return @ptrCast(@alignCast(raw orelse return null));
+    }
+
+    fn windowsSessionActive(client: *win_bindings.IGattSubscribedClient) bool {
+        var session: ?*win_bindings.IGattSession = null;
+        if (client.lpVtbl.get_Session(client, &session) < 0) return false;
+        const s = session orelse return false;
+        defer _ = s.lpVtbl.Release(s);
+        var status: i32 = 0; // GattSessionStatus: 0 = Closed, 1 = Active
+        if (s.lpVtbl.get_SessionStatus(s, &status) < 0) return false;
+        return status == 1;
     }
 
     /// Sets the characteristic value by serializing a strongly-typed value.
@@ -388,6 +518,7 @@ pub const ServerCharacteristic = struct {
 
     pub fn releaseWindows(self: *ServerCharacteristic) void {
         if (builtin.os.tag == .windows) {
+            for (self.descriptors[0..self.desc_count]) |*d| d.releaseWindows();
             self.win_read_handler.deactivate();
             self.win_write_handler.deactivate();
             if (self.win_char) |wc| {

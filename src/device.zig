@@ -241,6 +241,30 @@ pub const Device = struct {
         reply.deinit();
     }
 
+    /// Asks BlueZ to connect a dual-mode device over LE (`"le"`) or BR/EDR (`"bredr"`).
+    /// `PreferredBearer` exists only with BlueZ's experimental features enabled; then this
+    /// returns `UnknownProperty` or `InvalidArgs`.
+    pub fn setPreferredBearer(self: *Device, bearer: [:0]const u8) !void {
+        if (builtin.os.tag != .linux) return error.NotSupported;
+        var msg = try Connection.createMethodCall(
+            BlueZ.service_name,
+            self.getObjectPath(),
+            BlueZ.Properties.interface_name,
+            BlueZ.Properties.Methods.Set,
+        );
+        defer msg.deinit();
+
+        var b = msg.builder();
+        try b.appendString(BlueZ.Device1.interface_name);
+        try b.appendString("PreferredBearer");
+        var v = try b.openVariant("s");
+        try v.appendString(bearer);
+        try b.closeContainer(&v);
+
+        var reply = try self.conn.sendMessage(&msg, 5000);
+        reply.deinit();
+    }
+
     /// Checks if the peripheral is marked as trusted in BlueZ.
     pub fn isTrusted(self: *Device) !bool {
         return self.getBoolProperty(BlueZ.Device1.Properties.Trusted);

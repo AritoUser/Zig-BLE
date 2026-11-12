@@ -22,6 +22,9 @@ pub const RadioInfo = radio_mod.RadioInfo;
 
 const log = std.log.scoped(.zig_ble);
 
+/// Upper bound per CCCD write when subscriptions are turned off before a disconnect.
+const disconnect_write_ms = 2_000;
+
 // Core BLE types re-exports
 pub const Address = types.Address;
 pub const UUID = types.UUID;
@@ -261,6 +264,7 @@ pub fn WindowsBackendWithConfig(comptime pool_config: PoolConfig) type {
 
             for (&self.devices) |*d| {
                 if (d.in_use) {
+                    d.disableSubscriptionsOnPeer(@min(self.timeouts.write_ms, disconnect_write_ms));
                     d.releaseAll();
                     d.in_use = false;
                 }
@@ -365,6 +369,7 @@ pub fn WindowsBackendWithConfig(comptime pool_config: PoolConfig) type {
             const eff_timeout = if (timeout_ms == 0) self.timeouts.connect_ms else timeout_ms;
             var dev_slot = try self.allocateDeviceSlot(addr);
             if (dev_slot.auto_resubscribe) dev_slot.saved_subscriptions.capture(dev_slot.characteristics[0..dev_slot.characteristics_len]);
+            dev_slot.disableSubscriptionsOnPeer(@min(self.timeouts.write_ms, disconnect_write_ms));
             dev_slot.releaseAll();
             dev_slot.parent_backend = self;
             dev_slot.connection_state.store(.connecting, .release);
@@ -378,7 +383,40 @@ pub fn WindowsBackendWithConfig(comptime pool_config: PoolConfig) type {
             const st = statics.?;
             defer _ = st.lpVtbl.Release(st);
 
-            const ble_dev = try fromBluetoothAddress(st, addr, self.knownAddressType(addr), eff_timeout);
+            const addr_type = self.knownAddressType(addr);
+            const deadline = helpers.Kernel32.GetTickCount64() + eff_timeout;
+            try self.openLink(dev_slot, st, addr, addr_type, eff_timeout);
+
+            // Windows connects lazily with the first GATT operation, which often reports
+            // `Unreachable` or takes longer than `discovery_ms` while the link is still coming
+            // up; keep trying within the connect timeout.
+            var disc_res = self.discoverUnlocked(dev_slot, deadline);
+            while (disc_res == BleError.ConnectionFailed or disc_res == BleError.ConnectionTimeout) {
+                if (helpers.Kernel32.GetTickCount64() >= deadline) break;
+                // When the peer never answers Windows' first ATT request (seen with BlueZ
+                // peripherals), that link stays unusable until Windows drops it at the 30 s ATT
+                // timeout. Release it, wait for the drop and connect again.
+                dev_slot.releaseAll();
+                waitForLinkDown(st, addr, addr_type, deadline);
+                if (helpers.Kernel32.GetTickCount64() >= deadline) break;
+                try self.openLink(dev_slot, st, addr, addr_type, eff_timeout);
+                disc_res = self.discoverUnlocked(dev_slot, deadline);
+            }
+            disc_res catch |err| {
+                dev_slot.connection_state.store(.disconnected, .release);
+                dev_slot.releaseAll();
+                return err;
+            };
+            dev_slot.resubscribe_pending.store(false, .release);
+            self.restoreSubscriptions(dev_slot);
+
+            return @ptrCast(dev_slot);
+        }
+
+        /// Opens the WinRT objects for `addr` in `dev_slot`; the link itself comes up with the
+        /// first GATT operation. Expects `self.mutex` held.
+        fn openLink(self: *Self, dev_slot: *DeviceContext, st: *bindings.IBluetoothLEDeviceStatics, addr: Address, addr_type: ?types.AddressType, timeout_ms: u32) BleError!void {
+            const ble_dev = try fromBluetoothAddress(st, addr, addr_type, timeout_ms);
             dev_slot.ble_device = ble_dev;
 
             var dev3: ?*bindings.IBluetoothLEDevice3 = null;
@@ -386,7 +424,7 @@ pub fn WindowsBackendWithConfig(comptime pool_config: PoolConfig) type {
                 dev_slot.ble_device3 = dev3;
             }
 
-            dev_slot.gatt_session = gatt_mod.openGattSession(ble_dev, eff_timeout) catch |err| blk: {
+            dev_slot.gatt_session = gatt_mod.openGattSession(ble_dev, timeout_ms) catch |err| blk: {
                 log.warn("WinRT GattSession for {f} unavailable ({s}); Windows may drop an idle connection", .{ addr, @errorName(err) });
                 break :blk null;
             };
@@ -407,26 +445,41 @@ pub fn WindowsBackendWithConfig(comptime pool_config: PoolConfig) type {
                 dev_slot.was_connected_once = true;
             }
             dev_slot.bond_state = pairing_mod.queryWinRtBondState(ble_dev);
+            dev_slot.bond_changed = false;
+        }
 
-            // Windows connects lazily with the first GATT operation, which often reports
-            // `Unreachable` while the link is still coming up; keep trying within the timeout.
-            const deadline = helpers.Kernel32.GetTickCount64() + eff_timeout;
+        /// One discovery attempt, bounded by `deadline`. Releases `self.mutex` meanwhile.
+        fn discoverUnlocked(self: *Self, dev_slot: *DeviceContext, deadline: u64) BleError!void {
             self.mutex.unlock();
-            var disc_res = discoverServices(ctx, @ptrCast(dev_slot));
-            while (disc_res == BleError.ConnectionFailed and helpers.Kernel32.GetTickCount64() < deadline) {
+            defer self.mutex.lock();
+            // `Unreachable` within the first seconds: the link is still coming up. Later it means
+            // this link is stuck, which the caller handles by connecting again.
+            const coming_up_until = @min(helpers.Kernel32.GetTickCount64() + 5_000, deadline);
+            var res = discoverServices(@ptrCast(self), @ptrCast(dev_slot));
+            while (res == BleError.ConnectionFailed and helpers.Kernel32.GetTickCount64() + 300 < coming_up_until) {
                 helpers.Kernel32.Sleep(300);
-                disc_res = discoverServices(ctx, @ptrCast(dev_slot));
+                res = discoverServices(@ptrCast(self), @ptrCast(dev_slot));
             }
-            self.mutex.lock();
-            disc_res catch |err| {
-                dev_slot.connection_state.store(.disconnected, .release);
-                dev_slot.releaseAll();
-                return err;
-            };
-            dev_slot.resubscribe_pending.store(false, .release);
-            self.restoreSubscriptions(dev_slot);
+            return res;
+        }
 
-            return @ptrCast(dev_slot);
+        /// Waits until Windows reports `addr` disconnected, or until `deadline`.
+        fn waitForLinkDown(st: *bindings.IBluetoothLEDeviceStatics, addr: Address, addr_type: ?types.AddressType, deadline: u64) void {
+            while (helpers.Kernel32.GetTickCount64() < deadline) {
+                helpers.Kernel32.Sleep(250);
+                const probe = fromBluetoothAddress(st, addr, addr_type, 2_000) catch continue;
+                var status: bindings.BluetoothConnectionStatus = .Connected;
+                _ = probe.lpVtbl.get_ConnectionStatus(probe, &status);
+                var closable: ?*bindings.IClosable = null;
+                if (probe.lpVtbl.QueryInterface(probe, &bindings.IID_IClosable, @ptrCast(&closable)) >= 0) {
+                    if (closable) |cl| {
+                        _ = cl.lpVtbl.Close(cl);
+                        _ = cl.lpVtbl.Release(cl);
+                    }
+                }
+                _ = probe.lpVtbl.Release(probe);
+                if (status == .Disconnected) return;
+            }
         }
 
         /// Address type seen while scanning, if any. Random addresses need it to resolve reliably.
@@ -467,6 +520,7 @@ pub fn WindowsBackendWithConfig(comptime pool_config: PoolConfig) type {
             const dev: *DeviceContext = @ptrCast(@alignCast(dev_handle));
             dev.connection_state.store(.disconnecting, .release);
             if (dev.auto_resubscribe) dev.saved_subscriptions.capture(dev.characteristics[0..dev.characteristics_len]);
+            dev.disableSubscriptionsOnPeer(@min(self.timeouts.write_ms, disconnect_write_ms));
             dev.releaseAll();
             dev.connection_state.store(.disconnected, .release);
         }
@@ -678,7 +732,7 @@ pub fn WindowsBackendWithConfig(comptime pool_config: PoolConfig) type {
             if (self.is_closed.load(.acquire)) return .not_bonded;
             const dev: *DeviceContext = @ptrCast(@alignCast(dev_handle));
             if (dev.ble_device) |ble_dev| {
-                dev.bond_state = pairing_mod.queryWinRtBondState(ble_dev);
+                if (!dev.bond_changed) dev.bond_state = pairing_mod.queryWinRtBondState(ble_dev);
             }
             return dev.bond_state;
         }

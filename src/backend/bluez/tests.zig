@@ -23,7 +23,7 @@ test "BluezBackend Disconnected signal cleans up subscriptions and fires callbac
     var slot = bluez_back.allocateDeviceSlot(addr).?;
     slot.setPath("/org/bluez/hci0/dev_AA_BB_CC_11_22_33");
     slot.is_connected = true;
-    try slot.addCharacteristic(UUID.from16(0x2A37), "/org/bluez/hci0/dev_AA_BB_CC_11_22_33/service0010/char0011");
+    try slot.addCharacteristic(UUID.from16(0x2A37), "/org/bluez/hci0/dev_AA_BB_CC_11_22_33/service0010/char0011", .{});
     slot.characteristics[0].is_notifying = true;
     const Noop = struct {
         fn onNotify(_: UUID, _: []const u8, _: ?*anyopaque) void {}
@@ -329,11 +329,11 @@ test "BluezBackend delivers notifications per characteristic, including duplicat
 
     // Two HID reports with the same UUID plus a battery level, added out of handle order
     const report = UUID.from16(0x2A4D);
-    try slot.addCharacteristic(report, "/org/bluez/hci0/dev_AA_BB_CC_11_22_33/service0010/char0014");
-    try slot.addCharacteristic(UUID.from16(0x2A19), "/org/bluez/hci0/dev_AA_BB_CC_11_22_33/service0020/char0021");
-    try slot.addCharacteristic(report, "/org/bluez/hci0/dev_AA_BB_CC_11_22_33/service0010/char0011");
+    try slot.addCharacteristic(report, "/org/bluez/hci0/dev_AA_BB_CC_11_22_33/service0010/char0014", .{});
+    try slot.addCharacteristic(UUID.from16(0x2A19), "/org/bluez/hci0/dev_AA_BB_CC_11_22_33/service0020/char0021", .{});
+    try slot.addCharacteristic(report, "/org/bluez/hci0/dev_AA_BB_CC_11_22_33/service0010/char0011", .{});
     // Rediscovery must not create duplicates
-    try slot.addCharacteristic(report, "/org/bluez/hci0/dev_AA_BB_CC_11_22_33/service0010/char0011");
+    try slot.addCharacteristic(report, "/org/bluez/hci0/dev_AA_BB_CC_11_22_33/service0010/char0011", .{});
     try std.testing.expectEqual(@as(u8, 3), slot.characteristics_len);
     slot.sortCharacteristics();
     try std.testing.expectEqualStrings("/org/bluez/hci0/dev_AA_BB_CC_11_22_33/service0010", slot.characteristics[0].getServicePath());

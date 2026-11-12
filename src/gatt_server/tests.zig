@@ -14,11 +14,19 @@ test "ServerCharacteristic: initialization and value update" {
         .uuid = UUID.from16(0x2A37),
         .flags = .{ .read = true, .notify = true },
     };
-    try std.testing.expectEqual(@as(u8, 0), char.value_len);
+    try std.testing.expectEqual(@as(u16, 0), char.value_len);
 
     char.setValue(&[_]u8{ 0x00, 0x48 }); // 72 bpm
-    try std.testing.expectEqual(@as(u8, 2), char.value_len);
+    try std.testing.expectEqual(@as(u16, 2), char.value_len);
     try std.testing.expectEqualSlices(u8, &[_]u8{ 0x00, 0x48 }, char.getValue());
+
+    // Values up to the ATT maximum of 512 bytes are kept whole.
+    const long: [512]u8 = @splat(0xA5);
+    char.setValue(&long);
+    try std.testing.expectEqual(@as(usize, 512), char.getValue().len);
+    const too_long: [600]u8 = @splat(0x5A);
+    char.setValue(&too_long);
+    try std.testing.expectEqual(@as(usize, 512), char.getValue().len);
 }
 
 test "ServerService: add characteristics within limit" {

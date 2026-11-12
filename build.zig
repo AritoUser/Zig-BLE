@@ -483,7 +483,7 @@ pub fn build(b: *std.Build) void {
     });
     const run_hardware_check_cmd = b.addRunArtifact(hardware_check_exe);
     run_hardware_check_cmd.addPassthruArgs();
-    const run_hardware_check_step = b.step("run-hardware-check", "Scan with the native backend; with a device address also connect and read (needs a Bluetooth adapter)");
+    const run_hardware_check_step = b.step("run-hardware-check", "Run the hardware check, see examples/hardware_check.zig (needs a Bluetooth adapter; pairing prompts need the built binary)");
     run_hardware_check_step.dependOn(&run_hardware_check_cmd.step);
     const hardware_check_step = b.step("hardware-check", "Build the hardware check without running it");
     hardware_check_step.dependOn(&b.addInstallArtifact(hardware_check_exe, .{}).step);
@@ -503,6 +503,39 @@ pub fn build(b: *std.Build) void {
     });
     const check_api_step = b.step("check-api", "Compile every public function for the target, including ones no test calls");
     check_api_step.dependOn(&analyze_api.step);
+
+    // ========================================================================
+    // Compile the programs shown in README.md (check-readme)
+    // ========================================================================
+    const readme_tool = b.addExecutable(.{
+        .name = "readme-examples",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("scripts/readme_examples.zig"),
+            .target = b.graph.host,
+        }),
+    });
+    const check_readme_step = b.step("check-readme", "Compile the Zig programs shown in README.md for the target");
+    // The extractor fails when README.md shows a different number of programs.
+    const readme_example_count = 3;
+    for (0..readme_example_count) |i| {
+        const extract = b.addRunArtifact(readme_tool);
+        extract.addFileArg(b.path("README.md"));
+        extract.addArg(b.fmt("{d}", .{i}));
+        extract.addArg(b.fmt("{d}", .{readme_example_count}));
+        const source = extract.addOutputFileArg(b.fmt("readme_example_{d}.zig", .{i + 1}));
+        const example = b.addExecutable(.{
+            .name = b.fmt("readme-example-{d}", .{i + 1}),
+            .root_module = b.createModule(.{
+                .root_source_file = source,
+                .target = target,
+                .optimize = optimize,
+                .imports = &.{
+                    .{ .name = "Zig_BLE", .module = mod },
+                },
+            }),
+        });
+        check_readme_step.dependOn(&example.step);
+    }
 
     // ========================================================================
     // Fuzz Testing Suite (zig build fuzz / test-fuzz)

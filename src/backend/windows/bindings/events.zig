@@ -167,6 +167,50 @@ pub const GattReadRequestedHandler = extern struct {
     }
 };
 
+/// Same as `GattReadRequestedHandler`, registered on a `GattLocalDescriptor`.
+pub const GattDescriptorReadRequestedHandler = extern struct {
+    lpVtbl: *const Vtbl = &vtbl_instance,
+    ref_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(1),
+    active: std.atomic.Value(bool) = std.atomic.Value(bool).init(true),
+    char_ctx: *anyopaque,
+    on_read_requested: *const fn (ctx: *anyopaque, args: *interfaces.IGattReadRequestedEventArgs) callconv(.c) void,
+
+    pub const Vtbl = extern struct {
+        QueryInterface: *const fn (self: *GattDescriptorReadRequestedHandler, riid: *const GUID, ppvObject: *?*anyopaque) callconv(WINAPI) HRESULT,
+        AddRef: *const fn (self: *GattDescriptorReadRequestedHandler) callconv(WINAPI) ULONG,
+        Release: *const fn (self: *GattDescriptorReadRequestedHandler) callconv(WINAPI) ULONG,
+        Invoke: *const fn (self: *GattDescriptorReadRequestedHandler, sender: ?*anyopaque, args: ?*interfaces.IGattReadRequestedEventArgs) callconv(WINAPI) HRESULT,
+    };
+
+    const vtbl_instance = makeVtbl(GattDescriptorReadRequestedHandler, anyopaque, interfaces.IGattReadRequestedEventArgs, iids.IID_ITypedEventHandler_GattLocalDescriptor_ReadRequested);
+
+    pub fn deactivate(self: *GattDescriptorReadRequestedHandler) void {
+        self.active.store(false, .release);
+    }
+};
+
+/// Same as `GattWriteRequestedHandler`, registered on a `GattLocalDescriptor`.
+pub const GattDescriptorWriteRequestedHandler = extern struct {
+    lpVtbl: *const Vtbl = &vtbl_instance,
+    ref_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(1),
+    active: std.atomic.Value(bool) = std.atomic.Value(bool).init(true),
+    char_ctx: *anyopaque,
+    on_write_requested: *const fn (ctx: *anyopaque, args: *interfaces.IGattWriteRequestedEventArgs) callconv(.c) void,
+
+    pub const Vtbl = extern struct {
+        QueryInterface: *const fn (self: *GattDescriptorWriteRequestedHandler, riid: *const GUID, ppvObject: *?*anyopaque) callconv(WINAPI) HRESULT,
+        AddRef: *const fn (self: *GattDescriptorWriteRequestedHandler) callconv(WINAPI) ULONG,
+        Release: *const fn (self: *GattDescriptorWriteRequestedHandler) callconv(WINAPI) ULONG,
+        Invoke: *const fn (self: *GattDescriptorWriteRequestedHandler, sender: ?*anyopaque, args: ?*interfaces.IGattWriteRequestedEventArgs) callconv(WINAPI) HRESULT,
+    };
+
+    const vtbl_instance = makeVtbl(GattDescriptorWriteRequestedHandler, anyopaque, interfaces.IGattWriteRequestedEventArgs, iids.IID_ITypedEventHandler_GattLocalDescriptor_WriteRequested);
+
+    pub fn deactivate(self: *GattDescriptorWriteRequestedHandler) void {
+        self.active.store(false, .release);
+    }
+};
+
 pub const GattWriteRequestedHandler = extern struct {
     lpVtbl: *const Vtbl = &vtbl_instance,
     ref_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(1),

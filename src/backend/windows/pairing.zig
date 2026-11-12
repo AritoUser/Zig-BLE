@@ -9,6 +9,8 @@ const BleError = types.BleError;
 const PairingCallbacks = types.PairingCallbacks;
 const HSTRING = bindings.HSTRING;
 
+const log = std.log.scoped(.zig_ble);
+
 pub const PairingSessionContext = struct {
     io_cap: types.IoCapability,
     callbacks: PairingCallbacks,
@@ -86,6 +88,7 @@ pub fn onPairingRequested(pair_ctx: *anyopaque, args: *bindings.IDevicePairingRe
     }
 
     const action = evaluatePairingCeremony(kind, pin_slice, ctx.io_cap, ctx.callbacks);
+    log.debug("WinRT pairing requested: kind {d}, answer {t}", .{ kind, action });
     switch (action) {
         .reject => {},
         .accept_only => {
@@ -141,6 +144,20 @@ pub fn pairDevice(backend: anytype, dev: anytype, io_cap: types.IoCapability) Bl
     if (builtin.os.tag != .windows) return BleError.NotSupported;
     const ble_dev = dev.ble_device orelse return BleError.NotConnected;
 
+    dev.bond_state = .bonding;
+    pairBleDevice(ble_dev, io_cap, backend.pairing_callbacks, backend.timeouts.pair_ms) catch |err| {
+        dev.bond_state = .not_bonded;
+        return err;
+    };
+    dev.bond_state = .bonded;
+    dev.bond_changed = true;
+}
+
+/// Pairs with `ble_dev` through `DeviceInformationCustomPairing`, asking `callbacks`. Works for a
+/// device this computer connected to and for a client connected to its GATT server.
+pub fn pairBleDevice(ble_dev: *bindings.IBluetoothLEDevice, io_cap: types.IoCapability, callbacks: PairingCallbacks, timeout_ms: u32) BleError!void {
+    if (builtin.os.tag != .windows) return BleError.NotSupported;
+
     var dev2: ?*bindings.IBluetoothLEDevice2 = null;
     if (ble_dev.lpVtbl.QueryInterface(ble_dev, &bindings.IID_IBluetoothLEDevice2, @ptrCast(&dev2)) < 0 or dev2 == null) {
         return BleError.PairingFailed;
@@ -170,10 +187,7 @@ pub fn pairDevice(backend: anytype, dev: anytype, io_cap: types.IoCapability) Bl
     defer _ = p.lpVtbl.Release(p);
 
     var is_paired: u8 = 0;
-    if (p.lpVtbl.get_IsPaired(p, &is_paired) >= 0 and is_paired != 0) {
-        dev.bond_state = .bonded;
-        return;
-    }
+    if (p.lpVtbl.get_IsPaired(p, &is_paired) >= 0 and is_paired != 0) return;
 
     var pairing2: ?*bindings.IDeviceInformationPairing2 = null;
     if (p.lpVtbl.QueryInterface(p, &bindings.IID_IDeviceInformationPairing2, @ptrCast(&pairing2)) < 0 or pairing2 == null) {
@@ -191,7 +205,7 @@ pub fn pairDevice(backend: anytype, dev: anytype, io_cap: types.IoCapability) Bl
 
     var session_ctx = PairingSessionContext{
         .io_cap = io_cap,
-        .callbacks = backend.pairing_callbacks,
+        .callbacks = callbacks,
     };
 
     var handler = bindings.PairingRequestedHandler{
@@ -213,39 +227,29 @@ pub fn pairDevice(backend: anytype, dev: anytype, io_cap: types.IoCapability) Bl
         .display_yes_no => bindings.DevicePairingKinds.ConfirmPinMatch | bindings.DevicePairingKinds.DisplayPin | bindings.DevicePairingKinds.ConfirmOnly,
         .keyboard_only => bindings.DevicePairingKinds.ProvidePin | bindings.DevicePairingKinds.ConfirmOnly,
         .keyboard_display => bindings.DevicePairingKinds.ConfirmPinMatch | bindings.DevicePairingKinds.ProvidePin | bindings.DevicePairingKinds.DisplayPin | bindings.DevicePairingKinds.ConfirmOnly,
+        _ => return BleError.InvalidParameter,
     };
 
-    dev.bond_state = .bonding;
     var pair_op: ?*bindings.IAsyncOperationGeneric = null;
-    if (cp.lpVtbl.PairAsync(cp, supported_kinds, &pair_op) < 0 or pair_op == null) {
-        dev.bond_state = .not_bonded;
-        return BleError.PairingFailed;
-    }
-
-    const res_raw = (helpers.awaitAsync(pair_op.?, backend.timeouts.pair_ms) catch |err| {
-        dev.bond_state = .not_bonded;
-        return err;
-    }) orelse {
-        dev.bond_state = .not_bonded;
-        return BleError.PairingFailed;
-    };
+    // Without a level Windows asks for MITM protection, which a side without input and output
+    // cannot give: the peer then refuses with "authentication requirements". Just Works needs
+    // the level that only asks for encryption.
+    const pair_hr = if (io_cap == .no_input_no_output)
+        cp.lpVtbl.PairWithProtectionLevelAsync(cp, supported_kinds, .Encryption, &pair_op)
+    else
+        cp.lpVtbl.PairAsync(cp, supported_kinds, &pair_op);
+    if (pair_hr < 0 or pair_op == null) return BleError.PairingFailed;
+    const res_raw = (try helpers.awaitAsync(pair_op.?, timeout_ms)) orelse return BleError.PairingFailed;
 
     const pair_res: *bindings.IDevicePairingResult = @ptrCast(@alignCast(res_raw));
     defer _ = pair_res.lpVtbl.Release(pair_res);
 
     var status: bindings.DevicePairingResultStatus = .Failed;
-    if (pair_res.lpVtbl.get_Status(pair_res, &status) < 0) {
-        dev.bond_state = .not_bonded;
+    if (pair_res.lpVtbl.get_Status(pair_res, &status) < 0) return BleError.PairingFailed;
+    if (status != .Paired and status != .AlreadyPaired) {
+        log.debug("WinRT pairing ended with status {d}", .{@intFromEnum(status)});
         return BleError.PairingFailed;
     }
-
-    if (status == .Paired or status == .AlreadyPaired) {
-        dev.bond_state = .bonded;
-        return;
-    }
-
-    dev.bond_state = .not_bonded;
-    return BleError.PairingFailed;
 }
 
 pub fn unpairDevice(backend: anytype, dev: anytype) BleError!void {
@@ -266,6 +270,47 @@ pub fn unpairDevice(backend: anytype, dev: anytype) BleError!void {
     const info = dev_info.?;
     defer _ = info.lpVtbl.Release(info);
 
+    try unpairDeviceInformation(info, backend.timeouts.pair_ms);
+    // Pairing a dual-mode device over LE also bonds BR/EDR (cross-transport key derivation).
+    // That bond is a separate Windows device; left alone, Windows keeps connecting to it.
+    try unpairClassic(helpers.addressToU64(dev.address), backend.timeouts.pair_ms);
+    dev.bond_state = .not_bonded;
+    dev.bond_changed = true;
+}
+
+fn unpairClassic(address: u64, timeout_ms: u32) BleError!void {
+    const class_name = try helpers.createHStringComptime("Windows.Devices.Bluetooth.BluetoothDevice");
+    defer helpers.deleteHString(class_name);
+
+    var statics: ?*bindings.IBluetoothDeviceStatics = null;
+    if (bindings.Combase.RoGetActivationFactory(class_name, &bindings.IID_IBluetoothDeviceStatics, @ptrCast(&statics)) < 0 or statics == null) {
+        return BleError.PairingFailed;
+    }
+    const st = statics.?;
+    defer _ = st.lpVtbl.Release(st);
+
+    var op: ?*bindings.IAsyncOperationGeneric = null;
+    if (st.lpVtbl.FromBluetoothAddressAsync(st, address, &op) < 0 or op == null) return;
+    // No Classic device with this address: nothing to remove.
+    const classic_raw = (helpers.awaitAsync(op.?, timeout_ms) catch return) orelse return;
+    const classic: *bindings.IUnknown = @ptrCast(@alignCast(classic_raw));
+    defer _ = classic.release();
+
+    var classic2: ?*bindings.IBluetoothDevice2 = null;
+    if (classic.queryInterface(&bindings.IID_IBluetoothDevice2, @ptrCast(&classic2)) < 0 or classic2 == null) {
+        return BleError.PairingFailed;
+    }
+    const c2 = classic2.?;
+    defer _ = c2.lpVtbl.Release(c2);
+
+    var dev_info: ?*bindings.IDeviceInformation = null;
+    if (c2.lpVtbl.get_DeviceInformation(c2, &dev_info) < 0 or dev_info == null) return BleError.PairingFailed;
+    const info = dev_info.?;
+    defer _ = info.lpVtbl.Release(info);
+    try unpairDeviceInformation(info, timeout_ms);
+}
+
+fn unpairDeviceInformation(info: *bindings.IDeviceInformation, timeout_ms: u32) BleError!void {
     var dev_info2: ?*bindings.IDeviceInformation2 = null;
     if (info.lpVtbl.QueryInterface(info, &bindings.IID_IDeviceInformation2, @ptrCast(&dev_info2)) < 0 or dev_info2 == null) {
         return BleError.PairingFailed;
@@ -292,7 +337,7 @@ pub fn unpairDevice(backend: anytype, dev: anytype) BleError!void {
         return BleError.PairingFailed;
     }
 
-    const res_raw = (try helpers.awaitAsync(unpair_op.?, backend.timeouts.pair_ms)) orelse return BleError.PairingFailed;
+    const res_raw = (try helpers.awaitAsync(unpair_op.?, timeout_ms)) orelse return BleError.PairingFailed;
     const unpair_res: *bindings.IDeviceUnpairingResult = @ptrCast(@alignCast(res_raw));
     defer _ = unpair_res.lpVtbl.Release(unpair_res);
 
@@ -300,11 +345,5 @@ pub fn unpairDevice(backend: anytype, dev: anytype) BleError!void {
     if (unpair_res.lpVtbl.get_Status(unpair_res, &status) < 0) {
         return BleError.PairingFailed;
     }
-
-    if (status == .Unpaired or status == .AlreadyUnpaired) {
-        dev.bond_state = .not_bonded;
-        return;
-    }
-    return BleError.PairingFailed;
+    if (status != .Unpaired and status != .AlreadyUnpaired) return BleError.PairingFailed;
 }
-
