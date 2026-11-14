@@ -143,6 +143,10 @@ gekoppelten PC nicht wieder erreicht (B13).
   und koppelt über eine neue Verbindung noch einmal; `--await-pair` verbindet sich dafür neu, das
   Skript zeigt das als `retries=`. L: alle vier Methoden 10/10, drei Runden mit einem Neuversuch.
   W: alle vier Methoden 10/10 ohne Neuversuch. Der zweite Tag mit diesem Stand steht aus.
+- **2026-11-14, Wiederholung mit dem Scan-Fix (B13):** L 39/40: Numeric Comparison, Just Works und
+  Passkey (Central tippt) je 10/10 mit je einem Neuversuch, Passkey (Peripheral tippt) 9/10; die
+  Fehlrunde scheiterte schon an `StartNotify` vor dem Pairing (A10). Gleicher Tag, zählt nicht als
+  zweiter Tag.
 - Bleibt nach einer Runde ein Bond auf nur einer Seite stehen, scheitern alle folgenden Runden
   schon am Verbindungsaufbau (B3). Das Skript wiederholt `PERIPHERAL_FORGET` deshalb und meldet,
   wenn es scheitert.

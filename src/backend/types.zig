@@ -297,11 +297,28 @@ pub const ScanCache = struct {
     entries: [32]DiscoveredDevice = undefined,
     /// Last update per entry; 0 marks a free entry.
     stamps: [32]u64 = @splat(0),
+    /// Whether the entry holds a complete property set (address type, UUIDs, ...), not just
+    /// the properties that changed.
+    complete: [32]bool = @splat(false),
     clock: u64 = 0,
 
     pub fn reset(self: *ScanCache) void {
         self.stamps = @splat(0);
+        self.complete = @splat(false);
         self.clock = 0;
+    }
+
+    pub fn markComplete(self: *ScanCache, address: Address) void {
+        for (self.stamps, 0..) |stamp, i| {
+            if (stamp != 0 and self.entries[i].address.eql(address)) self.complete[i] = true;
+        }
+    }
+
+    pub fn isComplete(self: *const ScanCache, address: Address) bool {
+        for (self.stamps, 0..) |stamp, i| {
+            if (stamp != 0 and self.entries[i].address.eql(address)) return self.complete[i];
+        }
+        return false;
     }
 
     /// Returns the cached data for `address` without inserting it.
@@ -325,6 +342,7 @@ pub const ScanCache = struct {
         }
         self.entries[oldest] = .{ .address = address };
         self.stamps[oldest] = self.clock;
+        self.complete[oldest] = false;
         return &self.entries[oldest];
     }
 };

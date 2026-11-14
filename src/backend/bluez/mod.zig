@@ -77,6 +77,13 @@ pub const BluezBackend = struct {
     active_scan_user_data: ?*anyopaque = null,
     scan_filter: ScanFilter = .{},
     scan_cache: ScanCache = .{},
+    /// Device objects whose path names another address than their `Address` property. BlueZ
+    /// keeps the object of a peer that paired under a random address at that path and only
+    /// changes `Address` to the identity address; its `PropertiesChanged` signals carry the
+    /// path, not the address.
+    scan_aliases: [8]signals.ScanAlias = undefined,
+    scan_aliases_len: u8 = 0,
+    scan_aliases_next: u8 = 0,
 
     connection_event_cb: ?ConnectionEventCallback = null,
     connection_event_user_data: ?*anyopaque = null,

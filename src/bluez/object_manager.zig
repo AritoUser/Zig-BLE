@@ -77,7 +77,8 @@ pub const DeviceInfo = struct {
     service_data_uuid: ?core.UUID = null,
     service_data_buf: [64]u8 = undefined,
     service_data_len: u8 = 0,
-    service_uuids: [8]core.UUID = undefined,
+    /// A bonded phone or PC lists its BR/EDR and GATT services too, easily 20 or more.
+    service_uuids: [32]core.UUID = undefined,
     service_uuids_len: u8 = 0,
 
     pub fn getObjectPath(self: *const DeviceInfo) [:0]const u8 {

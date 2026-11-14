@@ -89,10 +89,13 @@ backend. Error names refer to `BleError`.
 - `Experimental = true` also turns on BlueZ's LE Audio services (0x1844, 0x184D, 0x184F, ...),
   which require encryption: every unbonded central that discovers them is asked to pair, and the
   link drops when nobody confirms. Seen with BlueZ 5.82. Weigh that before enabling it.
-- Seen with a Realtek USB adapter: the LE connect still times out, because the kernel leaves
-  the peer's random address to the controller's resolving list and the controller does not
-  resolve it. `btmon` shows `LE Extended Create Connection` to the identity address while the
-  peer advertises a resolvable address.
+- Seen with kernel 7.0 and a Realtek USB adapter: the LE connect still times out
+  (`le-connection-abort-by-local`). The peer advertises a resolvable private address, the
+  kernel resolves it with the peer's IRK, but sends `LE Extended Create Connection` to the
+  public identity address while the controller's resolving list
+  (`/sys/kernel/debug/bluetooth/hci0/resolv_list`) is empty, so the controller never finds
+  the peer. Nothing above BlueZ can change that. While it tries, BlueZ also connects to the
+  bonded peer by itself as soon as a scan sees it, which blocks further scans for 20 s.
 
 **`bluetoothd` restarts**
 - All connections are reported as disconnected.
