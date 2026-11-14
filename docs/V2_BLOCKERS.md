@@ -61,10 +61,12 @@ Ein Punkt ist erst erledigt, wenn:
 | D2 | Release Notes von v1.3.0 bis v1.3.2 korrigieren: Windows konnte dort weder scannen noch GATT nutzen |
 | D3 | CHANGELOG-Abschnitt „Unreleased“ als 2.0.0 abschließen, Breaking Changes vollständig aufführen |
 
-## E. Zu entscheiden
+## E. Entscheidungen
 
-| # | Frage | Folge |
+Entschieden am 2026-11-14.
+
+| # | Frage | Entscheidung |
 | :--- | :--- | :--- |
-| E1 | Gehören Raw HCI und UART zu v2? (Readiness #15, 16, 18, 19) | ja: ACL-Credits, Peripheral-Rolle, Tests gegen einen echten Controller; nein: bleiben als experimentell markiert |
-| E2 | Gehört EATT zu v2? (Readiness #21) | ja: an ein Backend anbinden und testen; nein: bleibt Baustein ohne Backend |
-| E3 | Ist macOS für v2 ausgeschlossen? | heute so festgelegt, `MacosBackend` liefert `NotSupported` |
+| E1 | Gehören Raw HCI und UART zu v2? (Readiness #15, 16, 18, 19) | ✅ **Nein.** `HciBackend` und `UartBackend` bleiben in v2 als experimentell gekennzeichnet und fallen nicht unter die Hardware-Bedingung. |
+| E2 | Gehört EATT zu v2? (Readiness #21) | ✅ **Nein.** EATT bleibt ein experimenteller Baustein ohne Backend. |
+| E3 | Ist macOS für v2 ausgeschlossen? | ✅ **Ja.** `MacosBackend` liefert `NotSupported`; Protokoll-Toolkit, Krypto und Parser bauen und laufen auf macOS. |

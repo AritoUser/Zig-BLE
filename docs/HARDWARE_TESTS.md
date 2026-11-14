@@ -158,5 +158,6 @@ gekoppelten PC nicht wieder erreicht (B13).
 
 ## Außerhalb der v2-Bedingung
 
-Noch zu entscheiden: Raw HCI und UART (nie gegen einen echten Controller gelaufen, keine
-ACL-Credits) sowie EATT (an kein Backend angebunden) bleiben als experimentell gekennzeichnet.
+Entschieden am 2026-11-14 (E1–E3 in `V2_BLOCKERS.md`): Raw HCI und UART (nie gegen einen echten
+Controller gelaufen, keine ACL-Credits) sowie EATT (an kein Backend angebunden) bleiben in v2 als
+experimentell gekennzeichnet. macOS gehört nicht zu v2.
