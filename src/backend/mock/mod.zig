@@ -93,6 +93,14 @@ pub const MockDevice = struct {
     mtu: u16 = 23,
     bond_state: types.BondState = .not_bonded,
     io_capability: types.IoCapability = .no_input_no_output,
+    /// How many of the next pairing attempts lose the link (`PairingInterrupted`), as some
+    /// controller pairs do when encryption starts. The next attempt reconnects, like WinRT and
+    /// BlueZ do.
+    pair_link_losses: u8 = 0,
+    /// Pairing attempts so far.
+    pair_attempts: u8 = 0,
+    /// Rejects every pairing attempt, as a user declining the prompt would.
+    pair_rejects: bool = false,
 
     pub fn getName(self: *const MockDevice) []const u8 {
         return self.name[0..self.name_len];
@@ -348,6 +356,12 @@ pub const MockController = struct {
         _ = ctx;
         const dev: *MockDevice = @ptrCast(@alignCast(dev_handle));
         if (!dev.is_connected) return BleError.NotConnected;
+        dev.pair_attempts +|= 1;
+        if (dev.pair_rejects) return BleError.PairingFailed;
+        if (dev.pair_link_losses > 0) {
+            dev.pair_link_losses -= 1;
+            return BleError.PairingInterrupted;
+        }
         dev.io_capability = io_cap;
         dev.bond_state = .bonded;
     }

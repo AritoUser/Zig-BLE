@@ -6,6 +6,8 @@ const std = @import("std");
 const types = @import("types.zig");
 const vtable_mod = @import("vtable.zig");
 
+const log = std.log.scoped(.zig_ble);
+
 pub const Address = types.Address;
 pub const UUID = types.UUID;
 pub const ScanFilter = types.ScanFilter;
@@ -104,8 +106,24 @@ pub const UnifiedDevice = struct {
         return self.backend.exchangeMtu(self.handle, target_mtu);
     }
 
+    /// How often `pair` starts over when the link breaks off during pairing.
+    pub const pair_retries = 2;
+
+    /// Pairs with the device. If the link breaks off while pairing (`PairingInterrupted`), it
+    /// starts over up to `pair_retries` times; WinRT and BlueZ connect again for that, and the
+    /// pairing callbacks are asked again. A rejection or a wrong passkey is not repeated.
     pub fn pair(self: *UnifiedDevice, io_cap: types.IoCapability) BleError!void {
-        return self.backend.pairDevice(self.handle, io_cap);
+        var attempt: usize = 0;
+        while (true) : (attempt += 1) {
+            self.backend.pairDevice(self.handle, io_cap) catch |err| {
+                if (err == BleError.PairingInterrupted and attempt < pair_retries) {
+                    log.info("link lost while pairing, trying again ({d} of {d})", .{ attempt + 1, pair_retries });
+                    continue;
+                }
+                return err;
+            };
+            return;
+        }
     }
 
     pub fn unpair(self: *UnifiedDevice) BleError!void {
@@ -346,6 +364,39 @@ test "UnifiedDevice tracks ConnectionState and supports auto-resubscribe" {
     try mock.triggerNotification(addr, char_uuid, &.{ 0x00, 74 });
     try std.testing.expectEqual(@as(usize, 2), hits.hits);
     try third.disconnect();
+}
+
+test "UnifiedDevice.pair starts over when the link breaks off, but not after a rejection" {
+    const mock_mod = @import("mock/mod.zig");
+    var mock = mock_mod.MockController.init();
+    var adapter = UnifiedAdapter.init(mock.asBackend());
+    try adapter.setPowered(true);
+
+    const addr = Address{ .bytes = [_]u8{ 0x11, 0x22, 0x33, 0x44, 0x55, 0x9B } };
+    const peer = try mock.addDevice(.{ .address = addr });
+    var dev = try adapter.connect(addr, 1000);
+
+    // One lost link: the second attempt bonds.
+    peer.pair_link_losses = 1;
+    try dev.pair(.display_yes_no);
+    try std.testing.expectEqual(types.BondState.bonded, dev.getBondState());
+    try std.testing.expectEqual(@as(u8, 2), peer.pair_attempts);
+
+    // More lost links than retries: the error reaches the caller.
+    try dev.unpair();
+    peer.pair_attempts = 0;
+    peer.pair_link_losses = UnifiedDevice.pair_retries + 1;
+    try std.testing.expectError(BleError.PairingInterrupted, dev.pair(.display_yes_no));
+    try std.testing.expectEqual(@as(u8, UnifiedDevice.pair_retries + 1), peer.pair_attempts);
+    try std.testing.expectEqual(types.BondState.not_bonded, dev.getBondState());
+
+    // A rejection is final.
+    peer.pair_link_losses = 0;
+    peer.pair_attempts = 0;
+    peer.pair_rejects = true;
+    try std.testing.expectError(BleError.PairingFailed, dev.pair(.display_yes_no));
+    try std.testing.expectEqual(@as(u8, 1), peer.pair_attempts);
+    try dev.disconnect();
 }
 
 test "UnifiedDevice discoverServicesFiltered" {

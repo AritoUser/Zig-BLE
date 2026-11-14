@@ -83,10 +83,12 @@ start_side_before_mode() { # side, mode, arguments before the mode...
 running() { if [ "$(where "$1")" = local ]; then kill -0 "$(cat "$work/$1.pid" 2>/dev/null)" 2>/dev/null; else $PEER_SSH "kill -0 \$(cat $peer_dir/$1.pid 2>/dev/null) 2>/dev/null"; fi; }
 stop_side() { if [ "$(where "$1")" = local ]; then kill "$(cat "$work/$1.pid" 2>/dev/null)" 2>/dev/null; else $PEER_SSH "kill \$(cat $peer_dir/$1.pid 2>/dev/null) 2>/dev/null"; fi; }
 
-# Answers the prompts both logs show so far. Sets code_c / code_p / passkey as they appear.
+# Answers the prompts both logs show so far. A pairing that starts over after a lost link asks
+# again, so codes and passkeys are counted per attempt: the k-th code of one side is compared
+# with the k-th code of the other, and the k-th passkey entry gets the k-th passkey shown.
 handled_c=0; handled_p=0
 answer_prompts() {
-  local side other log prompts count i line
+  local side other log prompts count i line n
   for side in c p; do
     [ "$side" = c ] && other=p || other=c
     log=$(log_of "$side")
@@ -97,15 +99,21 @@ answer_prompts() {
       line=$(printf '%s\n' "$prompts" | sed -n "$((i + 1))p")
       case $line in
         *"Does the other device show"*)
-          eval "code_$side=$(printf '%s' "$line" | grep -o '[0-9]\{6\}')"
+          eval "n=\$((codes_$side + 1)); codes_$side=\$n"
+          eval "code_${side}_$n=$(printf '%s' "$line" | grep -o '[0-9]\{6\}')"
+          eval "code_$side=\$code_${side}_$n"
           # Numeric comparison is answered below, once both sides show their code.
           [ "$method" = numeric ] || answer "$side" y ;;
         *"Pair without a code"*|*"Allow access to service"*) answer "$side" y ;;
         *"Enter the 6-digit code"*)
-          # The other side may not have shown the passkey yet; look again on the next pass.
-          [ -n "${passkey:-}" ] || break
-          answer "$side" "$passkey" ;;
-        *"Enter "*" on the other device"*) passkey=$(printf '%s' "$line" | grep -o '[0-9]\{6\}') ;;
+          # The other side may not have shown this attempt's passkey yet; look again later.
+          [ "$shown" -gt "$entered" ] || break
+          entered=$((entered + 1))
+          eval "answer \"\$side\" \"\$passkey_$entered\"" ;;
+        *"Enter "*" on the other device"*)
+          shown=$((shown + 1))
+          eval "passkey_$shown=$(printf '%s' "$line" | grep -o '[0-9]\{6\}')"
+          eval "passkey=\$passkey_$shown" ;;
       esac
       i=$((i + 1))
       eval "handled_$side=$i"
@@ -113,20 +121,29 @@ answer_prompts() {
   done
   # Like a person: confirm only when both sides show the same code. If one side stays silent
   # for 20 s the shown code is declined.
-  if [ "$method" = numeric ] && [ -z "${confirmed:-}" ]; then
-    if [ -n "${code_c:-}" ] && [ -n "${code_p:-}" ]; then
-      confirmed=1
-      if [ "$code_c" = "$code_p" ]; then answer c y; answer p y; else answer c n; answer p n; fi
-    elif [ -n "${code_c:-}${code_p:-}" ]; then
-      waited=$((${waited:-0} + 1))
-      if [ "$waited" -ge 20 ]; then confirmed=1; answer c n; answer p n; fi
+  [ "$method" = numeric ] || return 0
+  while [ "$confirmed" -lt "$codes_c" ] && [ "$confirmed" -lt "$codes_p" ]; do
+    confirmed=$((confirmed + 1)); waited=0
+    eval "a=\$code_c_$confirmed; b=\$code_p_$confirmed"
+    if [ "$a" = "$b" ]; then answer c y; answer p y; else answer c n; answer p n; same_all=no; fi
+  done
+  if [ "$codes_c" != "$codes_p" ]; then
+    waited=$((waited + 1))
+    if [ "$waited" -ge 20 ]; then
+      # Decline what the one side shows; the other never showed a code for this attempt.
+      [ "$codes_c" -gt "$confirmed" ] && answer c n
+      [ "$codes_p" -gt "$confirmed" ] && answer p n
+      confirmed=$((codes_c > codes_p ? codes_c : codes_p)); codes_c=$confirmed; codes_p=$confirmed
+      same_all=no; waited=0
     fi
   fi
 }
 
 passed=0
+total_retries=0
 for round in $(seq 1 "$rounds"); do
-  unset code_c code_p passkey confirmed waited
+  unset code_c code_p passkey
+  codes_c=0; codes_p=0; confirmed=0; waited=0; shown=0; entered=0; same_all=yes
   handled_c=0; handled_p=0
   start_side p --peripheral 150 --secure --io "$p_io"
   sleep 6
@@ -146,15 +163,23 @@ for round in $(seq 1 "$rounds"); do
   printf '%s\n' "$c_log" | grep "$protected" | grep -q "read 706169726564" && readable=yes
   printf '%s\n' "$c_log" | grep -q "^Bond state after the reconnect: bonded" && rebonded=yes
   [ "$initiator" = central ] || rebonded=n/a
+  # Rounds in which the link broke off during pairing and the central started over (A9).
+  retries=$(printf '%s
+' "$c_log" | grep -cE 'Link lost while pairing; reconnecting|link lost while pairing, trying again' || true)
+  total_retries=$((total_retries + retries))
   if [ "$method" = numeric ]; then
-    [ -n "${code_c:-}" ] && [ "${code_c:-}" = "${code_p:-}" ] && same=yes || same=no
+    [ "$codes_c" -gt 0 ] && [ "$same_all" = yes ] && same=yes || same=no
   fi
   verdict=FAIL
   [ $paired = yes ] && [ $readable = yes ] && [ $rebonded != no ] && [ $same != no ] && { verdict=PASS; passed=$((passed + 1)); }
-  echo "round $round ($method, central $central, $initiator pairs): paired=$paired protected=$readable bonded-after-reconnect=$rebonded codes-equal=$same code=${code_c:-${passkey:-none}} -> $verdict"
+  echo "round $round ($method, central $central, $initiator pairs): paired=$paired protected=$readable bonded-after-reconnect=$rebonded codes-equal=$same retries=$retries code=${code_c:-${passkey:-none}} -> $verdict"
   if [ $verdict = FAIL ]; then
     echo "--- central log"; printf '%s\n' "$c_log" | grep -E 'Connected after|[Pp]airing|>>>|answer|Bond state|^error' | tail -15
     echo "--- peripheral log"; log_of p | grep -v ' s, echo' | tail -8
+    # Full logs of the failed round, for the analysis.
+    keep="${KEEP_LOGS:-${TMPDIR:-/tmp}}/pairing_${method}_round${round}"
+    log_of c > "$keep.central.log"; log_of p > "$keep.peripheral.log"
+    echo "--- full logs: $keep.*.log"
   fi
 
   # Remove the bond on both sides so the next round pairs from scratch.
@@ -168,11 +193,19 @@ for round in $(seq 1 "$rounds"); do
     $PEER_SSH "$PEER_BIN $unpair_addr --service $service --unpair > $peer_dir/unpair.log 2>&1"
   fi
   stop_side p
+  # A bond left on the peripheral makes every later round fail at connecting, so try again and
+  # say so. The command also fails when there is no bond to remove, e.g. after a failed pairing.
   if [ -n "${PERIPHERAL_FORGET:-}" ]; then
-    if [ "$(where p)" = local ]; then sh -c "$PERIPHERAL_FORGET" > /dev/null 2>&1; else $PEER_SSH "$PERIPHERAL_FORGET" > /dev/null 2>&1; fi
+    for attempt in 1 2 3; do
+      if [ "$(where p)" = local ]; then forget_out=$(sh -c "$PERIPHERAL_FORGET" 2>&1); else forget_out=$($PEER_SSH "$PERIPHERAL_FORGET" 2>&1); fi
+      forget_rc=$?
+      [ $forget_rc = 0 ] && break
+      sleep 3
+    done
+    [ $forget_rc = 0 ] || echo "note: PERIPHERAL_FORGET failed after round $round: $forget_out"
   fi
   sleep 5
 done
 
-echo "pairing $method, central $central, $initiator pairs: $passed/$rounds"
+echo "pairing $method, central $central, $initiator pairs: $passed/$rounds, started over after a lost link: $total_retries"
 [ "$passed" = "$rounds" ]
