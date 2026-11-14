@@ -4,6 +4,8 @@ const types = @import("../types.zig");
 const wire = @import("../../dbus/wire/mod.zig");
 const constants = @import("../../bluez/constants.zig");
 const mod = @import("mod.zig");
+const signals = @import("signals.zig");
+const object_manager = @import("../../bluez/object_manager.zig");
 
 const Address = types.Address;
 const UUID = types.UUID;
@@ -291,6 +293,40 @@ test "BluezBackend merges RSSI-only PropertiesChanged with earlier advertisement
     try std.testing.expectEqual(@as(usize, 2), rec.count);
     try std.testing.expectEqual(@as(?i16, -48), rec.last.rssi);
     try std.testing.expectEqualStrings("HRM-Strap", rec.last.getName().?);
+}
+
+test "BluezBackend reports a bonded device under its identity address with its known UUIDs" {
+    // After pairing, BlueZ keeps the object under the random address the peer had and sets
+    // `Address` to its identity address. While scanning it then only signals what changed.
+    const service = UUID.from16(0x180D);
+    var rec = ScanRecorder{};
+    var bluez_back = initScanningBackend(ScanRecorder.onScan, &rec, .{ .service_uuids = &.{service} });
+
+    const path = "/org/bluez/hci0/dev_48_EB_63_20_F4_85";
+    var info = object_manager.DeviceInfo{
+        .address = try Address.parse("C4:47:4E:CA:94:A9"),
+        .address_type = .public,
+        .paired = true,
+        .rssi = -50, // stale; must not be reported
+    };
+    @memcpy(info.object_path[0..path.len], path);
+    info.object_path[path.len] = 0;
+    info.object_path_len = path.len;
+    // A bonded PC lists its BR/EDR services too; the wanted one comes after the first eight.
+    for (0..18) |i| info.service_uuids[i] = UUID.from16(@intCast(0x1100 + i));
+    info.service_uuids[18] = service;
+    info.service_uuids_len = 19;
+    signals.seedScanObject(&bluez_back, &info);
+    try std.testing.expectEqual(@as(usize, 0), rec.count);
+
+    var update = try buildRssiChanged(path, -61);
+    defer update.deinit();
+    bluez_back.processSignalWireMessage(&update);
+
+    try std.testing.expectEqual(@as(usize, 1), rec.count);
+    try std.testing.expect(rec.last.address.eql(info.address));
+    try std.testing.expectEqual(@as(?i16, -61), rec.last.rssi);
+    try std.testing.expect(rec.last.getServiceUuids()[0].eql(service));
 }
 
 test "BluezBackend applies scan filter and ignores devices while not scanning" {

@@ -4,6 +4,7 @@
 
 const std = @import("std");
 const builtin = @import("builtin");
+const log = std.log.scoped(.zig_ble);
 const types = @import("types.zig");
 const MessageType = types.MessageType;
 const header = @import("header.zig");
@@ -319,6 +320,13 @@ pub const Connection = struct {
             if (incoming.fixed_header.msg_type == .method_return or incoming.fixed_header.msg_type == .error_reply) {
                 if (incoming.getReplySerial() == expected_serial) {
                     if (incoming.fixed_header.msg_type == .error_reply) {
+                        defer incoming.deinit();
+                        // The error set loses BlueZ's own name and text; keep them for diagnosis.
+                        var it = incoming.iterator();
+                        log.debug("D-Bus error reply: {s}: {s}", .{
+                            incoming.getErrorName() orelse "?",
+                            it.getString() orelse "",
+                        });
                         return mapDBusError(incoming.getErrorName());
                     }
                     return incoming;

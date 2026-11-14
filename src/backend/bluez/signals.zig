@@ -15,6 +15,7 @@ const mod = @import("mod.zig");
 
 const dbus = if (builtin.os.tag == .linux) @import("../../dbus/mod.zig") else struct {};
 const gatt_client = if (builtin.os.tag == .linux) @import("../../gatt_client.zig") else struct {};
+const device_mod = if (builtin.os.tag == .linux) @import("../../device.zig") else struct {};
 
 const log = std.log.scoped(.zig_ble);
 const BlueZ = constants.BlueZ;
@@ -160,8 +161,8 @@ pub fn collectSignal(self: *BluezBackend, msg: *const wire.Message, pending: *Pe
                     info.service_data_uuid != null or
                     info.manufacturer_id != null or info.service_uuids_len > 0;
                 if (has_adv_data) {
-                    if (BlueZ.parseAddressFromDevicePath(path)) |addr| {
-                        reportScanResult(self, addr, &info, false, pending);
+                    if (BlueZ.parseAddressFromDevicePath(path)) |path_addr| {
+                        reportScanResult(self, scanAddressForPath(self, path, path_addr), &info, false, pending);
                     }
                 }
             }
@@ -215,6 +216,78 @@ pub fn collectSignal(self: *BluezBackend, msg: *const wire.Message, pending: *Pe
     }
 }
 
+fn containsUuid(list: []const UUID, uuid: UUID) bool {
+    for (list) |u| {
+        if (u.eql(uuid)) return true;
+    }
+    return false;
+}
+
+/// The address a device object at `path_addr`'s path is known by (see `scan_aliases`).
+pub const ScanAlias = struct { path_address: Address, address: Address };
+
+/// Remembers the full property set of a device object for this scan: its data, and its
+/// `Address` if the path names another one.
+pub fn seedScanObject(self: *BluezBackend, info: *const object_manager.DeviceInfo) void {
+    if (BlueZ.parseAddressFromDevicePath(info.getObjectPath())) |path_addr| {
+        if (!path_addr.eql(info.address)) addScanAlias(self, path_addr, info.address);
+    }
+    const dev = mergeScanInfo(self, info.address, info, true);
+    // A cached RSSI is stale; only a fresh advertisement makes a device reportable.
+    dev.rssi = null;
+}
+
+fn addScanAlias(self: *BluezBackend, path_addr: Address, address: Address) void {
+    for (self.scan_aliases[0..self.scan_aliases_len]) |*a| {
+        if (a.path_address.eql(path_addr)) {
+            a.address = address;
+            return;
+        }
+    }
+    const i = if (self.scan_aliases_len < self.scan_aliases.len) blk: {
+        self.scan_aliases_len += 1;
+        break :blk self.scan_aliases_len - 1;
+    } else blk: {
+        const next = self.scan_aliases_next;
+        self.scan_aliases_next = @intCast((next + 1) % self.scan_aliases.len);
+        break :blk next;
+    };
+    self.scan_aliases[i] = .{ .path_address = path_addr, .address = address };
+}
+
+/// The address a `PropertiesChanged` on `path` reports for. Such a signal carries only what
+/// changed, often just `RSSI`; a device whose full property set is not cached (an object
+/// BlueZ already had, which the cache evicted or never held) is read once with `GetAll`, so
+/// that its UUIDs, name and real address reach the scan filter.
+fn scanAddressForPath(self: *BluezBackend, path: []const u8, path_addr: Address) Address {
+    for (self.scan_aliases[0..self.scan_aliases_len]) |a| {
+        if (a.path_address.eql(path_addr)) return a.address;
+    }
+    if (self.scan_cache.isComplete(path_addr)) return path_addr;
+    const info = fetchDeviceObject(self, path) orelse {
+        // Do not ask again on every RSSI update.
+        _ = self.scan_cache.get(path_addr);
+        self.scan_cache.markComplete(path_addr);
+        return path_addr;
+    };
+    seedScanObject(self, &info);
+    return info.address;
+}
+
+fn fetchDeviceObject(self: *BluezBackend, path: []const u8) ?object_manager.DeviceInfo {
+    if (builtin.os.tag != .linux) return null;
+    const conn_ptr = if (self.conn) |*c| c else return null;
+    var path_buf: [160]u8 = undefined;
+    if (path.len >= path_buf.len) return null;
+    @memcpy(path_buf[0..path.len], path);
+    path_buf[path.len] = 0;
+    var dev = device_mod.Device.init(conn_ptr, path_buf[0..path.len :0]);
+    return dev.getInfo() catch |err| {
+        log.debug("BlueZ GetAll for {s} during scan failed: {s}", .{ path, @errorName(err) });
+        return null;
+    };
+}
+
 /// True for `<adapter_path>/dev_*` objects of the opened adapter.
 pub fn isDevicePathOnAdapter(self: *const BluezBackend, path: []const u8) bool {
     const adapter = self.getAdapterPath();
@@ -227,15 +300,26 @@ pub fn isDevicePathOnAdapter(self: *const BluezBackend, path: []const u8) bool {
 /// set (InterfacesAdded, GetManagedObjects) that also carries the address type.
 pub fn mergeScanInfo(self: *BluezBackend, address: Address, info: *const object_manager.DeviceInfo, full: bool) *DiscoveredDevice {
     const dev = self.scan_cache.get(address);
-    if (full) dev.address_type = info.address_type;
+    if (full) {
+        dev.address_type = info.address_type;
+        self.scan_cache.markComplete(address);
+    }
     if (info.rssi) |rssi| dev.rssi = rssi;
     if (info.tx_power) |tx| dev.tx_power = tx;
     if (info.getName()) |name| dev.setName(name);
     if (info.manufacturer_id) |company| dev.setManufacturerData(company, info.getManufacturerData().?);
     if (info.service_data_uuid) |s_uuid| dev.setServiceData(s_uuid, info.service_data_buf[0..info.service_data_len]);
     if (info.service_uuids_len > 0) {
+        // More UUIDs than a scan result holds: keep the ones the scan filter asks for, so a
+        // device whose wanted service is far down the list still matches.
         dev.service_uuids_len = 0;
-        for (info.getServiceUuids()) |uuid| _ = dev.addServiceUuid(uuid);
+        const wanted = self.scan_filter.service_uuids;
+        for (info.getServiceUuids()) |uuid| {
+            if (containsUuid(wanted, uuid)) _ = dev.addServiceUuid(uuid);
+        }
+        for (info.getServiceUuids()) |uuid| {
+            if (!containsUuid(wanted, uuid)) _ = dev.addServiceUuid(uuid);
+        }
     }
     return dev;
 }
@@ -326,6 +410,8 @@ pub fn dispatchNotificationForPath(self: *BluezBackend, char_path: []const u8, p
 /// an `RSSI` update after `StartDiscovery` are still reported with their name.
 pub fn seedScanCache(self: *BluezBackend, conn_ptr: anytype) void {
     self.scan_cache.reset();
+    self.scan_aliases_len = 0;
+    self.scan_aliases_next = 0;
     var msg = dbus.Connection.createMethodCall(
         BlueZ.service_name,
         BlueZ.root_path,
@@ -343,9 +429,7 @@ pub fn seedScanCache(self: *BluezBackend, conn_ptr: anytype) void {
         backend: *BluezBackend,
         pub fn onDevice(v: *@This(), info: object_manager.DeviceInfo) void {
             if (!isDevicePathOnAdapter(v.backend, info.getObjectPath())) return;
-            const dev = mergeScanInfo(v.backend, info.address, &info, true);
-            // A cached RSSI is stale; only a fresh advertisement makes a device reportable.
-            dev.rssi = null;
+            seedScanObject(v.backend, &info);
         }
     };
     var visitor = Visitor{ .backend = self };
