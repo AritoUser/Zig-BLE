@@ -417,6 +417,10 @@ pub const ServerCharacteristic = struct {
     /// a client starts itself shows Windows' own dialog instead, so call this before a client
     /// touches an encrypted characteristic, e.g. once it subscribed (see `subscribers`).
     /// Linux: returns `NotSupported`; BlueZ asks the registered `Agent`.
+    ///
+    /// A client whose link breaks off during pairing is skipped. If that leaves none paired,
+    /// this returns `PairingInterrupted`: call it again once the client has reconnected and
+    /// subscribed again (`subscribers().active` rises).
     pub fn pairSubscribers(self: *const ServerCharacteristic, io_cap: backend_types.IoCapability, callbacks: backend_types.PairingCallbacks, timeout_ms: u32) !usize {
         if (builtin.os.tag != .windows) return error.NotSupported;
         const list = try self.windowsSubscribedClients();
@@ -424,15 +428,23 @@ pub const ServerCharacteristic = struct {
         var count: u32 = 0;
         _ = list.lpVtbl.get_Size(list, &count);
         var paired: usize = 0;
+        var interrupted = false;
         for (0..count) |i| {
             const client = windowsClientAt(list, @intCast(i)) orelse continue;
             defer _ = client.lpVtbl.Release(client);
             if (!windowsSessionActive(client)) continue;
             const ble_dev = try windowsClientDevice(client, timeout_ms);
             defer _ = ble_dev.lpVtbl.Release(ble_dev);
-            try win_pairing.pairBleDevice(ble_dev, io_cap, callbacks, timeout_ms);
+            win_pairing.pairBleDevice(ble_dev, io_cap, callbacks, timeout_ms) catch |err| switch (err) {
+                error.PairingInterrupted => {
+                    interrupted = true;
+                    continue;
+                },
+                else => return err,
+            };
             paired += 1;
         }
+        if (paired == 0 and interrupted) return error.PairingInterrupted;
         return paired;
     }
 

@@ -103,7 +103,8 @@ Linux-Peripheral, L = Linux als Central gegen das Windows-Peripheral:
   immer, die Prüfung sagt dort nichts aus; BlueZ trennt ohnehin ausdrücklich.
 - **L:** Im ersten Lauf lief eine von 89 Verbindungen in den Timeout (A6 in `V2_BLOCKERS.md`),
   im Wiederholungslauf keine von 90. Gewertet ist der Wiederholungslauf.
-- Die Kriterien verlangen einen zweiten vollständig grünen Lauf an einem anderen Tag.
+- **Tag 2 (2026-11-12/13):** beide Richtungen wiederholt, alle zehn Prüfungen wieder 10/10, kein
+  Verbindungsfehler in beiden Läufen. Damit ist der Sammellauf an zwei Tagen grün.
 
 ## Pairing
 
@@ -133,6 +134,18 @@ gekoppelten PC nicht wieder erreicht (B13).
 
 - **L, 8/10:** In den vier Runden endete die Verbindung beim Start der Verschlüsselung mit einem
   Timeout (A9 in `V2_BLOCKERS.md`).
+- **Tag 2 (2026-11-13):** W bei allen vier Methoden 10/10. L: Just Works 10/10, Passkey (Central
+  tippt) 10/10, Numeric Comparison 9/10, Passkey (Peripheral tippt) 9/10; die zwei Fehlrunden
+  endeten nach der Bestätigung auf beiden Seiten mit `PairingFailed` (A9). Pairing ist für W an
+  zwei Tagen grün, für L nicht.
+- **2026-11-14, mit Neuversuch:** A9 ist ein Verbindungsverlust zwischen den Controllern beim Start
+  der Verschlüsselung (MIC Failure im Intel-Adapter). Zig-BLE meldet ihn als `PairingInterrupted`
+  und koppelt über eine neue Verbindung noch einmal; `--await-pair` verbindet sich dafür neu, das
+  Skript zeigt das als `retries=`. L: alle vier Methoden 10/10, drei Runden mit einem Neuversuch.
+  W: alle vier Methoden 10/10 ohne Neuversuch. Der zweite Tag mit diesem Stand steht aus.
+- Bleibt nach einer Runde ein Bond auf nur einer Seite stehen, scheitern alle folgenden Runden
+  schon am Verbindungsaufbau (B3). Das Skript wiederholt `PERIPHERAL_FORGET` deshalb und meldet,
+  wenn es scheitert.
 - **W:** In einem früheren Lauf meldete Windows nach fünf Runden für einige Minuten
   `OperationAlreadyInProgress` (A8); gewertet ist der Wiederholungslauf.
 - Linux kann einen Bond nur über eine Verbindung entfernen, die zum gekoppelten PC nicht mehr

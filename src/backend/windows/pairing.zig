@@ -16,6 +16,12 @@ pub const PairingSessionContext = struct {
     callbacks: PairingCallbacks,
 };
 
+/// The pairing handler with its context, kept off the stack (see `pairBleDevice`).
+const HandlerSlot = struct {
+    session: PairingSessionContext,
+    handler: bindings.PairingRequestedHandler,
+};
+
 /// Evaluates a pairing ceremony request (`DevicePairingKinds`) against `IoCapability` and `PairingCallbacks`.
 /// Extracted so Passkey Entry and Numeric Comparison logic can be unit-tested deterministically.
 pub const PairingAction = union(enum) {
@@ -203,22 +209,29 @@ pub fn pairBleDevice(ble_dev: *bindings.IBluetoothLEDevice, io_cap: types.IoCapa
     const cp = custom_pairing.?;
     defer _ = cp.lpVtbl.Release(cp);
 
-    var session_ctx = PairingSessionContext{
-        .io_cap = io_cap,
-        .callbacks = callbacks,
+    // WinRT may still hold the handler, and call it, after the pairing ended (seen after a
+    // link loss), so it must not live on this stack. It is freed once WinRT let go of it, and
+    // otherwise left behind: a few bytes, against a call into freed memory.
+    const slot = std.heap.page_allocator.create(HandlerSlot) catch return BleError.OutOfMemory;
+    slot.* = .{
+        .session = .{ .io_cap = io_cap, .callbacks = callbacks },
+        .handler = .{ .pair_ctx = undefined, .on_pairing_requested = onPairingRequested },
     };
-
-    var handler = bindings.PairingRequestedHandler{
-        .pair_ctx = @ptrCast(&session_ctx),
-        .on_pairing_requested = onPairingRequested,
-    };
+    slot.handler.pair_ctx = @ptrCast(&slot.session);
     var token: bindings.EventRegistrationToken = 0;
-    if (cp.lpVtbl.add_PairingRequested(cp, @ptrCast(&handler), &token) < 0) {
+    if (cp.lpVtbl.add_PairingRequested(cp, @ptrCast(&slot.handler), &token) < 0) {
+        std.heap.page_allocator.destroy(slot);
         return BleError.PairingFailed;
     }
     defer {
-        handler.deactivate();
+        slot.handler.deactivate();
         _ = cp.lpVtbl.remove_PairingRequested(cp, token);
+        // Only our own reference left: nobody can call it any more.
+        if (slot.handler.ref_count.load(.acquire) <= 1) {
+            std.heap.page_allocator.destroy(slot);
+        } else {
+            log.debug("WinRT still holds the pairing handler; leaving it allocated", .{});
+        }
     }
 
     const supported_kinds: u32 = switch (io_cap) {
@@ -248,8 +261,23 @@ pub fn pairBleDevice(ble_dev: *bindings.IBluetoothLEDevice, io_cap: types.IoCapa
     if (pair_res.lpVtbl.get_Status(pair_res, &status) < 0) return BleError.PairingFailed;
     if (status != .Paired and status != .AlreadyPaired) {
         log.debug("WinRT pairing ended with status {d}", .{@intFromEnum(status)});
+        // `Failed` also covers a link that broke off, e.g. with a MIC failure right after
+        // encryption started. A rejection or a wrong passkey leaves the link up.
+        if (status == .Failed and linkWentDown(ble_dev)) return BleError.PairingInterrupted;
         return BleError.PairingFailed;
     }
+}
+
+/// Whether `ble_dev` reports `Disconnected` within a moment; the status can lag behind the
+/// pairing result.
+fn linkWentDown(ble_dev: *bindings.IBluetoothLEDevice) bool {
+    for (0..15) |_| {
+        var status: bindings.BluetoothConnectionStatus = .Connected;
+        if (ble_dev.lpVtbl.get_ConnectionStatus(ble_dev, &status) < 0) return false;
+        if (status == .Disconnected) return true;
+        helpers.Kernel32.Sleep(200);
+    }
+    return false;
 }
 
 pub fn unpairDevice(backend: anytype, dev: anytype) BleError!void {

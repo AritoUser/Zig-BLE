@@ -441,6 +441,9 @@ pub const BluezBackend = struct {
             if (err == error.Failed and (dev.isPaired() catch false)) {
                 log.warn("A bonded dual-mode device may have been connected over BR/EDR; see docs/TROUBLESHOOTING.md", .{});
             }
+            // Our call timed out, but BlueZ keeps trying to connect; Disconnect cancels that
+            // attempt, which would otherwise hold the controller.
+            if (err == error.Timeout or err == error.NoReply) dev.disconnect() catch {};
             dev_slot.connection_state.store(.disconnected, .release);
             dev_slot.in_use = false;
             return switch (err) {
@@ -917,7 +920,12 @@ pub const BluezBackend = struct {
         const dev_slot: *BluezDeviceContext = @ptrCast(@alignCast(dev_handle));
 
         var dev = device_mod.Device.init(conn_ptr, dev_slot.getPath());
-        dev.pair() catch return BleError.PairingFailed;
+        dev.pair() catch {
+            // A rejection or a wrong passkey leaves the link up; a link lost during pairing
+            // (e.g. when encryption starts) does not.
+            const still_connected = dev.isConnected() catch true;
+            return if (still_connected) BleError.PairingFailed else BleError.PairingInterrupted;
+        };
         dev.setTrusted(true) catch |err| {
             log.warn("BlueZ setTrusted(true) after pairing failed: {s}", .{@errorName(err)});
         };

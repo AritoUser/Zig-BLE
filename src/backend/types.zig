@@ -43,6 +43,11 @@ pub const BleError = error{
     GattError,
     MtuExchangeFailed,
     PairingFailed,
+    /// The link went down while pairing, so nothing was bonded. Some controller pairs lose the
+    /// link right when encryption starts; pairing again over a new link usually succeeds.
+    /// `UnifiedDevice.pair` already tries again; after `pairSubscribers` wait until the client
+    /// is back.
+    PairingInterrupted,
     CccdImproperlyConfigured,
     ValueNotAllowed,
     InsufficientAuthentication,

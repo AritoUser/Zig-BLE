@@ -908,20 +908,42 @@ fn checkAwaitPair(adapter: *ble.UnifiedAdapter, addr: ble.Address) !void {
     }
     defer if (builtin.os.tag == .linux) pairing_agent.stop();
 
-    var dev = try connect(adapter, addr);
-    defer drop(&dev);
-    try queue.subscribe(&dev, counter_char);
-    print("Subscribed to the counter; waiting for the peripheral to pair ...", .{});
-    for (0..600) |_| {
-        _ = drain();
-        if (dev.getBondState() == .bonded) break;
-        try adapter.processEvents(100);
-    } else {
-        print("Not paired within 60 s, bond state: {t}", .{dev.getBondState()});
-        return error.PairingFailed;
+    // Some controller pairs lose the link right when encryption starts (A9). The peripheral then
+    // gets `PairingInterrupted` and pairs again once this side is back, so reconnect and
+    // subscribe again, as an application should.
+    const max_link_losses = ble.UnifiedDevice.pair_retries;
+    var link_losses: usize = 0;
+    while (true) {
+        var dev = try connect(adapter, addr);
+        defer drop(&dev);
+        try queue.subscribe(&dev, counter_char);
+        print("Subscribed to the counter; waiting for the peripheral to pair ...", .{});
+        const outcome: enum { bonded, link_lost, timed_out } = for (0..600) |_| {
+            _ = drain();
+            if (dev.getBondState() == .bonded) break .bonded;
+            if (!dev.isConnected()) break .link_lost;
+            try adapter.processEvents(100);
+        } else .timed_out;
+        switch (outcome) {
+            .bonded => {
+                print("Paired, bond state: {t}", .{dev.getBondState()});
+                _ = try visitCharacteristics(&dev, false);
+                return;
+            },
+            .link_lost => {
+                if (link_losses == max_link_losses) {
+                    print("Link lost while pairing, {d} times; giving up", .{link_losses + 1});
+                    return error.PairingInterrupted;
+                }
+                link_losses += 1;
+                print("Link lost while pairing; reconnecting ({d} of {d})", .{ link_losses, max_link_losses });
+            },
+            .timed_out => {
+                print("Not paired within 60 s, bond state: {t}", .{dev.getBondState()});
+                return error.PairingFailed;
+            },
+        }
     }
-    print("Paired, bond state: {t}", .{dev.getBondState()});
-    _ = try visitCharacteristics(&dev, false);
 }
 
 fn checkUnpair(adapter: *ble.UnifiedAdapter, addr: ble.Address) !void {
@@ -1038,7 +1060,11 @@ fn runPeripheral(seconds: u32, secure: bool) !void {
                 };
                 if (counter.pairSubscribers(io_capability, callbacks, 30_000)) |n| {
                     print("  paired with {d} subscriber(s)", .{n});
-                } else |err| print("  pairing with the subscriber failed: {s}", .{@errorName(err)});
+                } else |err| switch (err) {
+                    // Pairs again when the subscriber is back and `active` rises.
+                    error.PairingInterrupted => print("  link lost while pairing; pairing again when the subscriber is back", .{}),
+                    else => print("  pairing with the subscriber failed: {s}", .{@errorName(err)}),
+                }
             }
             last_subs = subs;
         }

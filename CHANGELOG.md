@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+* **Pairing failed now and then when the link broke off while encryption started.** Some controller pairs lose the link right after the key exchange: on our test hardware (Realtek USB as central, Intel as peripheral) in about one of 20 pairings, where the Intel controller ends the link with a MIC failure. Both hosts behave correctly. `UnifiedDevice.pair` now starts over up to `pair_retries` (2) times when that happens; a rejection or a wrong passkey is not repeated. A lost link is reported as the new `PairingInterrupted` instead of `PairingFailed`.
+* Windows: the pairing handler lived on the stack of `pair` / `pairSubscribers`; when WinRT called it after the pairing had ended (seen after a lost link), the program crashed. It is now allocated and freed only once WinRT released it.
+* BlueZ: when `connect` timed out, BlueZ kept trying to connect, and scanning found nothing until `bluetoothd` was restarted. The attempt is now cancelled.
 * **Windows `disconnect` did not end the link while an indication subscription was active.** Windows keeps a link whose peer still sends indications, even after every object of the device is released and even after the process has ended; the link then stayed up for minutes and a "reconnect" reused it. `disconnect` (and `deinit`) now turn notifications and indications off on the peer first. Found on hardware against a BlueZ peripheral; after the fix the peripheral advertises again 4 to 20 s after `disconnect`, which is how long Windows itself takes.
 * **Windows could not pair by Just Works.** `pair(.no_input_no_output)` asked the peer for MITM protection, which a side without input and output cannot give; a BlueZ peer refused with "authentication requirements" and `pair` returned `PairingFailed`. It now asks for encryption only.
 * BlueZ: every second entry of a characteristic's `Flags` was skipped, so `GattCharacteristicInfo.flags` missed properties, e.g. `write_without_response` on a characteristic reported as read, write-without-response, write.
@@ -86,6 +89,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) with platform behavior and fixes for common problems.
 
 ### Changed
+* `BleError` has a new member, `PairingInterrupted`; an exhaustive `switch` over `BleError` needs a prong for it. `ServerCharacteristic.pairSubscribers` returns it when the link of every client it tried broke off; pair again once the client is back.
 * **Breaking for custom backends:** the `BackendVTable` entries `readCharacteristic`, `writeCharacteristic`, `subscribeNotifications`, `unsubscribeNotifications` and `acquireNotifyFd` take a `CharacteristicSelector` instead of a `UUID`. The new entries `getCharacteristics`, `processEvents`, `readDescriptor` and `writeDescriptor` are optional. Code that calls `UnifiedDevice`, `Backend` or `MockController.triggerNotification` with a `UUID` compiles unchanged.
 * BlueZ callbacks run after the backend mutex is released, so they may call back into the backend.
 * **Breaking:** `ConnectionEvent.disconnected.reason_code` is `?u8` (null when the platform does not report a reason).
