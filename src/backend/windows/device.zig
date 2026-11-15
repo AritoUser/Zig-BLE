@@ -26,24 +26,39 @@ pub const WinCharacteristicSlot = struct {
     char_ptr: ?*bindings.IGattCharacteristic = null,
     value_changed_token: bindings.EventRegistrationToken = 0,
     is_subscribed: bool = false,
-    value_changed_handler: bindings.GattValueChangedHandler = undefined,
+    /// The registered handler, heap-allocated (see `bindings.events.create`). A callback whose
+    /// handler is no longer this one belongs to an earlier subscription and is ignored.
+    value_changed_handler: std.atomic.Value(?*bindings.GattValueChangedHandler) = .init(null),
     parent_device: ?*anyopaque = null,
     notify_cb: ?NotificationCallback = null,
     notify_user_data: ?*anyopaque = null,
 
     pub fn release(self: *WinCharacteristicSlot) void {
+        self.dropValueChangedHandler();
         if (builtin.os.tag == .windows) {
-            self.value_changed_handler.deactivate();
             if (self.char_ptr) |cp| {
-                if (self.is_subscribed and self.value_changed_token != 0) {
-                    _ = cp.lpVtbl.remove_ValueChanged(cp, self.value_changed_token);
-                    self.is_subscribed = false;
-                    self.value_changed_token = 0;
-                }
                 _ = cp.lpVtbl.Release(cp);
                 self.char_ptr = null;
             }
         }
+    }
+
+    /// Ends the subscription's WinRT registration and gives back this slot's reference to the
+    /// handler. WinRT may still call it for a moment; it then finds itself detached.
+    pub fn dropValueChangedHandler(self: *WinCharacteristicSlot) void {
+        const handler = self.value_changed_handler.swap(null, .acq_rel);
+        if (handler) |h| h.active.store(false, .release);
+        if (builtin.os.tag == .windows) {
+            if (self.char_ptr) |cp| {
+                if (self.is_subscribed and self.value_changed_token != 0) {
+                    const hr = cp.lpVtbl.remove_ValueChanged(cp, self.value_changed_token);
+                    if (hr < 0) log.warn("WinRT remove_ValueChanged returned HRESULT 0x{X:0>8}", .{@as(u32, @bitCast(hr))});
+                }
+            }
+        }
+        self.is_subscribed = false;
+        self.value_changed_token = 0;
+        if (handler) |h| bindings.events.drop(bindings.GattValueChangedHandler, h);
     }
 };
 
@@ -70,7 +85,9 @@ pub fn DeviceContext(comptime pool_config: PoolConfig, comptime BackendType: typ
 
         conn_status_token: bindings.EventRegistrationToken = 0,
         conn_status_registered: bool = false,
-        conn_status_handler: bindings.ConnectionStatusChangedHandler = undefined,
+        /// Heap-allocated like `WinCharacteristicSlot.value_changed_handler`: a late callback of
+        /// an earlier connection must not reach the next one that uses this slot.
+        conn_status_handler: std.atomic.Value(?*bindings.ConnectionStatusChangedHandler) = .init(null),
         parent_backend: ?*BackendType = null,
 
         services: [pool_config.max_services_per_device]?*bindings.IGattDeviceService = @splat(null),
@@ -78,6 +95,11 @@ pub fn DeviceContext(comptime pool_config: PoolConfig, comptime BackendType: typ
 
         characteristics: [pool_config.max_characteristics_per_device]WinCharacteristicSlot = @splat(.{}),
         characteristics_len: u8 = 0,
+
+        /// Set after an uncached, unfiltered discovery on the current link: a later rediscovery
+        /// (to narrow the service list) then reads Windows' cache instead of the peer. Cleared
+        /// when the link goes down, since the peer's database may differ after a reconnect.
+        gatt_fresh: std.atomic.Value(bool) = .init(false),
 
         mtu: u16 = 23,
         bond_state: types.BondState = .not_bonded,
@@ -140,23 +162,16 @@ pub fn DeviceContext(comptime pool_config: PoolConfig, comptime BackendType: typ
                 self.dropNotificationCallbacks();
             }
             for (self.characteristics[0..self.characteristics_len]) |*ch| {
-                ch.value_changed_handler.deactivate();
-                if (builtin.os.tag == .windows) {
-                    if (ch.char_ptr) |cp| {
-                        if (ch.is_subscribed and ch.value_changed_token != 0) {
-                            _ = cp.lpVtbl.remove_ValueChanged(cp, ch.value_changed_token);
-                        }
-                    }
-                }
-                ch.is_subscribed = false;
-                ch.value_changed_token = 0;
+                ch.dropValueChangedHandler();
             }
         }
 
         /// Runs on WinRT threads. Only touches state guarded by `state_mutex` and calls the
         /// application's callbacks after releasing it; WinRT registrations are left for the
         /// next backend call to clean up.
-        pub fn handleConnectionStatusTransition(self: *Self, connected: bool) void {
+        /// `source` is the handler that reported it; when it is no longer this slot's handler,
+        /// the report belongs to an earlier connection and is dropped. `null` skips the check.
+        pub fn handleConnectionStatusTransition(self: *Self, connected: bool, source: ?*const bindings.ConnectionStatusChangedHandler) void {
             const backend = self.parent_backend orelse {
                 self.is_connected.store(connected, .release);
                 self.connection_state.store(if (connected) .connected else .disconnected, .release);
@@ -174,9 +189,13 @@ pub fn DeviceContext(comptime pool_config: PoolConfig, comptime BackendType: typ
             {
                 backend.state_mutex.lock();
                 defer backend.state_mutex.unlock();
+                if (source) |src| {
+                    if (self.conn_status_handler.load(.acquire) != src) return;
+                }
                 const was_connected = self.is_connected.swap(connected, .acq_rel);
                 self.connection_state.store(if (connected) .connected else .disconnected, .release);
                 if (!connected) {
+                    self.gatt_fresh.store(false, .release);
                     if (!self.auto_resubscribe) self.dropNotificationCallbacks();
                     // WinRT does not report a disconnect reason.
                     if (was_connected) event = .{ .disconnected = .{ .address = self.address, .reason_code = null } };
@@ -245,7 +264,19 @@ pub fn DeviceContext(comptime pool_config: PoolConfig, comptime BackendType: typ
         }
 
         pub fn releaseAll(self: *Self) void {
-            self.conn_status_handler.deactivate();
+            const conn_handler = blk: {
+                // Under `state_mutex`, so a status callback either sees its handler and finishes
+                // first, or sees it gone.
+                if (self.parent_backend) |backend| {
+                    backend.state_mutex.lock();
+                    defer backend.state_mutex.unlock();
+                    break :blk self.conn_status_handler.swap(null, .acq_rel);
+                }
+                break :blk self.conn_status_handler.swap(null, .acq_rel);
+            };
+            if (conn_handler) |h| h.active.store(false, .release);
+            defer if (conn_handler) |h| bindings.events.drop(bindings.ConnectionStatusChangedHandler, h);
+            self.gatt_fresh.store(false, .release);
             self.releaseGatt();
 
             if (builtin.os.tag == .windows) {

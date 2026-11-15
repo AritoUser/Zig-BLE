@@ -39,7 +39,11 @@ pub fn discoverServicesFiltered(backend: anytype, dev: anytype, filter_uuids: []
     const d3 = dev.ble_device3 orelse return BleError.NotConnected;
 
     var svcs_op: ?*bindings.IAsyncOperationGeneric = null;
-    const cache_mode: bindings.BluetoothCacheMode = if (backend.use_cached_services) .Cached else .Uncached;
+    // Right after a full discovery on this link, Windows' cache is current. Fetching everything
+    // from the peer again only adds work for the Bluetooth service (B5: a crash inside Windows'
+    // own completion of GetGattServicesAsync, once in about 630 discoveries).
+    const cache_mode: bindings.BluetoothCacheMode =
+        if (backend.use_cached_services or dev.gatt_fresh.load(.acquire)) .Cached else .Uncached;
     if (d3.lpVtbl.GetGattServicesWithCacheModeAsync(d3, cache_mode, &svcs_op) < 0 or svcs_op == null) {
         return BleError.GattError;
     }
@@ -115,6 +119,7 @@ pub fn discoverServicesFiltered(backend: anytype, dev: anytype, filter_uuids: []
         }
     }
     if (filter_uuids.len > 0 and matched_services == 0) return BleError.ServiceNotFound;
+    if (cache_mode == .Uncached and filter_uuids.len == 0) dev.gatt_fresh.store(true, .release);
 }
 
 fn discoverCharacteristics(backend: anytype, dev: anytype, s3: *bindings.IGattDeviceService3, svc_uuid: UUID, cache_mode: bindings.BluetoothCacheMode) BleError!void {
@@ -284,13 +289,15 @@ pub fn writeCharacteristic(backend: anytype, dev: anytype, char: CharacteristicS
     }
 }
 
-pub fn handleCharacteristicValueChanged(slot: *WinCharacteristicSlot, dev: anytype, args: *bindings.IGattValueChangedEventArgs) void {
+pub fn handleCharacteristicValueChanged(slot: *WinCharacteristicSlot, handler: *const bindings.GattValueChangedHandler, dev: anytype, args: *bindings.IGattValueChangedEventArgs) void {
     const backend = dev.parent_backend orelse return;
     if (backend.is_closed.load(.acquire)) return;
     // Runs on a WinRT thread: copy the callback under `state_mutex`, call it without the lock.
     const cb, const user_data = blk: {
         backend.state_mutex.lock();
         defer backend.state_mutex.unlock();
+        // A late call for an earlier subscription, perhaps of another characteristic since.
+        if (slot.value_changed_handler.load(.acquire) != handler) return;
         break :blk .{ slot.notify_cb orelse return, slot.notify_user_data };
     };
 
@@ -341,22 +348,25 @@ pub fn subscribeNotifications(
         slot.notify_user_data = user_data;
     }
 
-    slot.value_changed_handler = .{
-        .char_ctx = @ptrCast(slot),
-        .on_changed = value_changed_fn,
-    };
-
     const was_subscribed = slot.is_subscribed;
     if (!was_subscribed) {
-        const add_hr = ch.lpVtbl.add_ValueChanged(ch, @ptrCast(&slot.value_changed_handler), &slot.value_changed_token);
-        if (add_hr < 0) return BleError.NotificationFailed;
+        const handler = bindings.events.create(bindings.GattValueChangedHandler, .{
+            .char_ctx = undefined,
+            .on_changed = value_changed_fn,
+            .owner = @ptrCast(slot),
+        }) catch return BleError.OutOfMemory;
+        handler.char_ctx = @ptrCast(handler);
+        slot.value_changed_handler.store(handler, .release);
+        const add_hr = ch.lpVtbl.add_ValueChanged(ch, @ptrCast(handler), &slot.value_changed_token);
+        if (add_hr < 0) {
+            slot.dropValueChangedHandler();
+            return BleError.NotificationFailed;
+        }
         slot.is_subscribed = true;
     }
     // A subscription the peer refused must not stay registered: it would count as active.
     errdefer if (!was_subscribed) {
-        _ = ch.lpVtbl.remove_ValueChanged(ch, slot.value_changed_token);
-        slot.is_subscribed = false;
-        slot.value_changed_token = 0;
+        slot.dropValueChangedHandler();
         backend.state_mutex.lock();
         defer backend.state_mutex.unlock();
         slot.notify_cb = null;
@@ -389,16 +399,7 @@ pub fn unsubscribeNotifications(backend: anytype, dev: anytype, char: Characteri
     const slot = dev.findCharacteristic(char) orelse return;
     const ch = slot.char_ptr orelse return;
 
-    slot.value_changed_handler.deactivate();
-
-    if (slot.is_subscribed and slot.value_changed_token != 0) {
-        const rem_hr = ch.lpVtbl.remove_ValueChanged(ch, slot.value_changed_token);
-        if (rem_hr < 0) {
-            log.warn("WinRT remove_ValueChanged returned HRESULT 0x{X:0>8}", .{@as(u32, @bitCast(rem_hr))});
-        }
-        slot.is_subscribed = false;
-        slot.value_changed_token = 0;
-    }
+    slot.dropValueChangedHandler();
 
     {
         backend.state_mutex.lock();

@@ -31,7 +31,11 @@ fn makeVtbl(comptime T: type, comptime SenderType: type, comptime ArgsType: type
         }
 
         fn release(self: *T) callconv(WINAPI) ULONG {
-            const prev = self.ref_count.fetchSub(1, .monotonic);
+            const prev = self.ref_count.fetchSub(1, .acq_rel);
+            if (prev == 1 and @hasField(T, "destroy")) {
+                // The last reference: neither WinRT nor the owner can call it any more.
+                if (self.destroy) |destroy| destroy(self);
+            }
             return if (prev > 0) prev - 1 else 0;
         }
 
@@ -62,12 +66,39 @@ fn makeVtbl(comptime T: type, comptime SenderType: type, comptime ArgsType: type
     };
 }
 
+/// Heap handlers for events whose owner is reused (pool slots): WinRT may hold a delegate, and
+/// even call it, after `remove_*` returned, so its memory must stay until the last `Release`.
+/// The owner holds one reference from `create` and gives it back with `drop`; whoever releases
+/// last frees it. Callbacks receive the handler and check that it still belongs to its owner.
+pub fn create(comptime T: type, value: T) error{OutOfMemory}!*T {
+    const h = try std.heap.page_allocator.create(T);
+    h.* = value;
+    h.destroy = &destroyHeap(T).destroy;
+    return h;
+}
+
+/// Deactivates `h` and gives back the owner's reference. Call after `remove_*`.
+pub fn drop(comptime T: type, h: *T) void {
+    h.active.store(false, .release);
+    _ = T.vtbl_instance.Release(h);
+}
+
+fn destroyHeap(comptime T: type) type {
+    return struct {
+        fn destroy(h: *T) void {
+            std.heap.page_allocator.destroy(h);
+        }
+    };
+}
+
 pub const AdvertisementReceivedHandler = extern struct {
     lpVtbl: *const Vtbl = &vtbl_instance,
     ref_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(1),
     active: std.atomic.Value(bool) = std.atomic.Value(bool).init(true),
     backend_ctx: *anyopaque,
     on_received: *const fn (ctx: *anyopaque, args: *interfaces.IBluetoothLEAdvertisementReceivedEventArgs) callconv(.c) void,
+    owner: ?*anyopaque = null,
+    destroy: ?*const fn (self: *AdvertisementReceivedHandler) void = null,
 
     pub const Vtbl = extern struct {
         QueryInterface: *const fn (self: *AdvertisementReceivedHandler, riid: *const GUID, ppvObject: *?*anyopaque) callconv(WINAPI) HRESULT,
@@ -76,19 +107,22 @@ pub const AdvertisementReceivedHandler = extern struct {
         Invoke: *const fn (self: *AdvertisementReceivedHandler, sender: ?*anyopaque, args: ?*interfaces.IBluetoothLEAdvertisementReceivedEventArgs) callconv(WINAPI) HRESULT,
     };
 
-    const vtbl_instance = makeVtbl(AdvertisementReceivedHandler, anyopaque, interfaces.IBluetoothLEAdvertisementReceivedEventArgs, iids.IID_ITypedEventHandler_Watcher_Received);
+    pub const vtbl_instance = makeVtbl(AdvertisementReceivedHandler, anyopaque, interfaces.IBluetoothLEAdvertisementReceivedEventArgs, iids.IID_ITypedEventHandler_Watcher_Received);
 
     pub fn deactivate(self: *AdvertisementReceivedHandler) void {
         self.active.store(false, .release);
     }
 };
 
+/// Created with `create`; `char_ctx` is the handler itself, `owner` the characteristic slot.
 pub const GattValueChangedHandler = extern struct {
     lpVtbl: *const Vtbl = &vtbl_instance,
     ref_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(1),
     active: std.atomic.Value(bool) = std.atomic.Value(bool).init(true),
     char_ctx: *anyopaque,
     on_changed: *const fn (ctx: *anyopaque, args: *interfaces.IGattValueChangedEventArgs) callconv(.c) void,
+    owner: ?*anyopaque = null,
+    destroy: ?*const fn (self: *GattValueChangedHandler) void = null,
 
     pub const Vtbl = extern struct {
         QueryInterface: *const fn (self: *GattValueChangedHandler, riid: *const GUID, ppvObject: *?*anyopaque) callconv(WINAPI) HRESULT,
@@ -97,19 +131,22 @@ pub const GattValueChangedHandler = extern struct {
         Invoke: *const fn (self: *GattValueChangedHandler, sender: ?*anyopaque, args: ?*interfaces.IGattValueChangedEventArgs) callconv(WINAPI) HRESULT,
     };
 
-    const vtbl_instance = makeVtbl(GattValueChangedHandler, anyopaque, interfaces.IGattValueChangedEventArgs, iids.IID_ITypedEventHandler_Characteristic_ValueChanged);
+    pub const vtbl_instance = makeVtbl(GattValueChangedHandler, anyopaque, interfaces.IGattValueChangedEventArgs, iids.IID_ITypedEventHandler_Characteristic_ValueChanged);
 
     pub fn deactivate(self: *GattValueChangedHandler) void {
         self.active.store(false, .release);
     }
 };
 
+/// Created with `create`; `dev_ctx` is the handler itself, `owner` the device slot.
 pub const ConnectionStatusChangedHandler = extern struct {
     lpVtbl: *const Vtbl = &vtbl_instance,
     ref_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(1),
     active: std.atomic.Value(bool) = std.atomic.Value(bool).init(true),
     dev_ctx: *anyopaque,
     on_status_changed: *const fn (ctx: *anyopaque, sender: ?*interfaces.IBluetoothLEDevice) callconv(.c) void,
+    owner: ?*anyopaque = null,
+    destroy: ?*const fn (self: *ConnectionStatusChangedHandler) void = null,
 
     pub const Vtbl = extern struct {
         QueryInterface: *const fn (self: *ConnectionStatusChangedHandler, riid: *const GUID, ppvObject: *?*anyopaque) callconv(WINAPI) HRESULT,
@@ -118,7 +155,7 @@ pub const ConnectionStatusChangedHandler = extern struct {
         Invoke: *const fn (self: *ConnectionStatusChangedHandler, sender: ?*interfaces.IBluetoothLEDevice, args: ?*anyopaque) callconv(WINAPI) HRESULT,
     };
 
-    const vtbl_instance = makeVtbl(ConnectionStatusChangedHandler, interfaces.IBluetoothLEDevice, anyopaque, iids.IID_ITypedEventHandler_BluetoothLEDevice_IInspectable);
+    pub const vtbl_instance = makeVtbl(ConnectionStatusChangedHandler, interfaces.IBluetoothLEDevice, anyopaque, iids.IID_ITypedEventHandler_BluetoothLEDevice_IInspectable);
 
     pub fn deactivate(self: *ConnectionStatusChangedHandler) void {
         self.active.store(false, .release);

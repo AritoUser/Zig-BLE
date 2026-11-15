@@ -263,31 +263,37 @@ pub fn startScan(
     const mode: bindings.BluetoothLEScanningMode = if (filter.active) .Active else .Passive;
     _ = w.lpVtbl.put_ScanningMode(w, mode);
 
-    backend.watcher_handler = .{
+    const handler = bindings.events.create(bindings.AdvertisementReceivedHandler, .{
         .backend_ctx = @ptrCast(backend),
         .on_received = watcher_fn,
-    };
+    }) catch return BleError.OutOfMemory;
 
-    const add_hr = w.lpVtbl.add_Received(w, @ptrCast(&backend.watcher_handler), &backend.watcher_token);
+    const add_hr = w.lpVtbl.add_Received(w, @ptrCast(handler), &backend.watcher_token);
     if (add_hr < 0) {
+        bindings.events.drop(bindings.AdvertisementReceivedHandler, handler);
         log.err("WinRT add_Received returned HRESULT 0x{X:0>8}", .{@as(u32, @bitCast(add_hr))});
         return BleError.IoError;
     }
 
     const start_hr = w.lpVtbl.Start(w);
     if (start_hr < 0) {
-        backend.watcher_handler.deactivate();
+        handler.active.store(false, .release);
         _ = w.lpVtbl.remove_Received(w, backend.watcher_token);
         backend.watcher_token = 0;
+        bindings.events.drop(bindings.AdvertisementReceivedHandler, handler);
         return BleError.NotPowered;
     }
+    backend.watcher_handler = handler;
 
     backend.scanning = true;
 }
 
 pub fn stopScanInternal(backend: anytype) void {
     if (builtin.os.tag != .windows) return;
-    backend.watcher_handler.deactivate();
+    const handler = backend.watcher_handler;
+    backend.watcher_handler = null;
+    if (handler) |h| h.active.store(false, .release);
+    defer if (handler) |h| bindings.events.drop(bindings.AdvertisementReceivedHandler, h);
     if (backend.watcher) |w| {
         if (backend.scanning) {
             const stop_hr = w.lpVtbl.Stop(w);

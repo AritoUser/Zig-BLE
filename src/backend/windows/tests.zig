@@ -116,6 +116,58 @@ test "WindowsBackend ConnectionStatusChanged cleans up subscriptions and invokes
     try std.testing.expectEqual(@as(usize, 1), tracker.disconnected_count);
 }
 
+test "WindowsBackend ignores a connection status report from an earlier connection's handler" {
+    var win = WindowsBackend.init();
+    defer win.deinit();
+
+    const dev = try win.allocateDeviceSlot(try Address.parse("AA:BB:CC:DD:EE:02"));
+    dev.is_connected.store(true, .release);
+    const Noop = struct {
+        fn onStatus(_: *anyopaque, _: ?*bindings.IBluetoothLEDevice) callconv(.c) void {}
+    };
+    const stale = try bindings.events.create(bindings.ConnectionStatusChangedHandler, .{ .dev_ctx = undefined, .on_status_changed = Noop.onStatus, .owner = @ptrCast(dev) });
+    defer bindings.events.drop(bindings.ConnectionStatusChangedHandler, stale);
+    const current = try bindings.events.create(bindings.ConnectionStatusChangedHandler, .{ .dev_ctx = undefined, .on_status_changed = Noop.onStatus, .owner = @ptrCast(dev) });
+    dev.conn_status_handler.store(current, .release);
+
+    dev.handleConnectionStatusTransition(false, stale);
+    try std.testing.expect(dev.is_connected.load(.acquire));
+    dev.handleConnectionStatusTransition(false, current);
+    try std.testing.expect(!dev.is_connected.load(.acquire));
+
+    dev.conn_status_handler.store(null, .release);
+    bindings.events.drop(bindings.ConnectionStatusChangedHandler, current);
+}
+
+test "WinRT event handler lives until its last reference and stays silent once dropped" {
+    const Probe = struct {
+        var calls: usize = 0;
+        var freed: usize = 0;
+        fn onChanged(_: *anyopaque, _: *bindings.IGattValueChangedEventArgs) callconv(.c) void {
+            calls += 1;
+        }
+        fn destroy(h: *bindings.GattValueChangedHandler) void {
+            freed += 1;
+            std.heap.page_allocator.destroy(h);
+        }
+    };
+    const h = try bindings.events.create(bindings.GattValueChangedHandler, .{ .char_ctx = undefined, .on_changed = Probe.onChanged });
+    h.destroy = Probe.destroy;
+    const vtbl = h.lpVtbl;
+
+    _ = vtbl.AddRef(h); // WinRT's reference from add_ValueChanged
+    bindings.events.drop(bindings.GattValueChangedHandler, h); // unsubscribed
+    try std.testing.expectEqual(@as(usize, 0), Probe.freed);
+
+    // A late event after the unsubscribe: still valid memory, but no callback.
+    var args: usize = 0;
+    _ = vtbl.Invoke(h, null, @ptrCast(@alignCast(&args)));
+    try std.testing.expectEqual(@as(usize, 0), Probe.calls);
+
+    _ = vtbl.Release(h); // WinRT lets go
+    try std.testing.expectEqual(@as(usize, 1), Probe.freed);
+}
+
 test "WindowsBackend evaluatePairingCeremony supports Passkey and Numeric Comparison callbacks" {
     const PairTester = struct {
         last_numeric: ?u32 = null,
