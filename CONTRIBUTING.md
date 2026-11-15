@@ -6,6 +6,10 @@ Thank you for your interest in contributing to **Zig-BLE**! This document provid
 
 ## 1. Architectural Principles & Guarantees
 
+Above all: **do more with less** ([docs/PHILOSOPHY.md](docs/PHILOSOPHY.md)). When two designs work, the one with fewer dependencies, allocations, lines, options and unproven claims wins. Removing code is a contribution too.
+
+Larger changes (a new backend feature, a change to object lifetimes or threading, a new public API) start with a short design in [docs/designs/](docs/designs/README.md), reviewed by someone without the context of the work before code is written.
+
 Every contribution to Zig-BLE must strictly adhere to the project's core design principles:
 
 1. **100% Pure Zig**:
@@ -87,6 +91,8 @@ Before submitting a Pull Request, verify the following:
 - [ ] Microbenchmarks execute cleanly without regressions: `zig build run-bench`.
 - [ ] Code is formatted: `zig fmt .`.
 - [ ] Zero heap allocations introduced on any protocol hot-path.
+- [ ] Do more with less: nothing could be removed or simplified instead; any new dependency, allocation, thread or option is bounded and worth its cost.
+- [ ] Backend behavior changes are verified on real hardware, or marked experimental.
 - [ ] Cross-compilation succeeds: `zig build -Dtarget=x86_64-linux`.
 - [ ] HTML documentation builds cleanly: `zig build docs`.
 - [ ] Commit message follows Conventional Commits (see below).

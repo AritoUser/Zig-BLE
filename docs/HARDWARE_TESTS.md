@@ -105,6 +105,8 @@ Linux-Peripheral, L = Linux als Central gegen das Windows-Peripheral:
   im Wiederholungslauf keine von 90. Gewertet ist der Wiederholungslauf.
 - **Tag 2 (2026-11-12/13):** beide Richtungen wiederholt, alle zehn Prüfungen wieder 10/10, kein
   Verbindungsfehler in beiden Läufen. Damit ist der Sammellauf an zwei Tagen grün.
+- **2026-11-15, W nach der Umstellung der WinRT-Handler auf Heap-Objekte** (Notifications,
+  Verbindungsstatus, Scan): alle zehn Prüfungen 10/10, kein Absturz (Build mit `-Dcrash-dumps`).
 
 ## Pairing
 

@@ -8,6 +8,12 @@ A Bluetooth Low Energy (BLE) library written entirely in Zig (0.17.0+). It works
 
 ---
 
+## Do more with less
+
+Zig-BLE is built by one rule: when two designs work, the one with less in it wins. Fewer dependencies, fixed memory instead of growing buffers, the operating system's Bluetooth stack instead of a second one, a small API, and no feature called done before it ran on real hardware. See [docs/PHILOSOPHY.md](docs/PHILOSOPHY.md).
+
+---
+
 ## Why Zig-BLE
 
 - **Zig-native, no C dependencies.** On Linux, Zig-BLE talks to BlueZ through its own D-Bus wire client. No `libdbus`, no `libc`, no C toolchain. On Windows it calls the WinRT Bluetooth APIs directly.
@@ -97,6 +103,7 @@ graph TD
 
 ## Documentation
 
+- [Philosophy: do more with less](docs/PHILOSOPHY.md): the rule behind every design decision.
 - [Technical White Paper](docs/WHITEPAPER.md): design of the D-Bus wire client and the protocol engine.
 - [Architecture & Protocol Manual](docs/ARCHITECTURE_AND_PROTOCOL_MANUAL.md): memory layout, state machines and packet formats.
 - [Roadmap & Extensions](docs/BLE_ROADMAP_AND_EXTENSIONS.md): planned features.
