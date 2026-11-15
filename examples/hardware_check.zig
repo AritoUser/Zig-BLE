@@ -52,6 +52,12 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const ble = @import("Zig_BLE");
+const build_options = @import("build_options");
+
+pub const std_options: std.Options = .{
+    // With `-Dcrash-dumps` a crash reaches Windows Error Reporting, which can write a dump.
+    .enable_segfault_handler = !build_options.crash_dumps,
+};
 
 const UUID = ble.UUID;
 const Native = switch (builtin.os.tag) {
@@ -522,8 +528,9 @@ fn handleCount() ?u32 {
 }
 
 fn soakCycle(adapter: *ble.UnifiedAdapter, addr: ble.Address) !usize {
-    try scanFor(adapter, addr, scan_for_seconds);
-    var dev = try adapter.connect(addr, connect_timeout_ms);
+    // With `auto` the peer may have changed its random address since the last cycle.
+    const target = try locate(adapter, addr, scan_for_seconds);
+    var dev = try adapter.connect(target, connect_timeout_ms);
     defer drop(&dev);
     if (service_filter) |uuid| try dev.discoverServicesFiltered(&.{uuid});
     _ = try visitCharacteristics(&dev, true);

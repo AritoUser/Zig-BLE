@@ -470,6 +470,11 @@ pub fn build(b: *std.Build) void {
     // ========================================================================
     // Hardware check for the native backends (run-hardware-check)
     // ========================================================================
+    // `-Dcrash-dumps`: leave crashes to the operating system, so Windows Error Reporting can
+    // write a dump (Zig's own handler prints a stack trace and exits instead).
+    const crash_dumps = b.option(bool, "crash-dumps", "Hardware check: no Zig segfault handler, so the OS can write a crash dump") orelse false;
+    const hardware_check_options = b.addOptions();
+    hardware_check_options.addOption(bool, "crash_dumps", crash_dumps);
     const hardware_check_exe = b.addExecutable(.{
         .name = "ble-hardware-check",
         .root_module = b.createModule(.{
@@ -478,6 +483,7 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
             .imports = &.{
                 .{ .name = "Zig_BLE", .module = mod },
+                .{ .name = "build_options", .module = hardware_check_options.createModule() },
             },
         }),
     });
