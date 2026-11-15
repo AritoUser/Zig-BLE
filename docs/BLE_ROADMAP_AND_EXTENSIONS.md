@@ -1,8 +1,9 @@
 # Zig-BLE: Roadmap, Architektur-Spezifikation & Release-Matrix
 
 > **Dokumenttyp:** Technische Spezifikation, Release-Matrix & Entwicklungs-Roadmap  
-> **Aktueller Release-Status:** Zig-BLE v1.1.2 (Native Windows WinRT COM, Zero-Allocation Architecture, Complete BlueZ Backend & Agent Hardening — Freigegeben)  
-> **Roadmap-Horizont:** v1.2.0 (Fitness, Ergometer & Health Suite) bis v2.0.0+ (Next-Gen & Audio)  
+> **Aktueller Release-Status:** Zig-BLE v1.3.2  
+> **Nächstes Release:** v2.0.0 = die vorhandenen Funktionen, auf Windows und Linux auf echter Hardware geprüft. Keine neuen Funktionen. Was dafür fehlt, steht in [V2_BLOCKERS.md](V2_BLOCKERS.md).  
+> **Danach, ohne Versionsnummer:** macOS/iOS, Android, Direction Finding, LE Audio, EAD/PAwR, Channel Sounding (Abschnitte 6 und 7). Das sind Ideen, keine Zusagen.  
 > **Compiler-Basis:** Zig 0.17.0+  
 > **Bezugsnormen:** Bluetooth Core Specification (v5.0 – v6.0) & Bluetooth SIG Profile  
 
@@ -31,15 +32,15 @@
    - [Fitness Machine Profile (FTMS v1.0, Service 0x1826)](#51-fitness-machine-profile-ftms-v10-service-0x1826)
    - [Cycling Power Profile (CPP v1.0, Service 0x1818)](#52-cycling-power-profile-cpp-v10-service-0x1818)
    - [Pulse Oximeter Profile (PLXP v1.0) & Health-Sensoren](#53-pulse-oximeter-profile-plxp-v10-service-0x1822--health-sensoren)
-6. [Meilenstein v1.3.0 & v1.4.0: Erweiterte Plattformen & Direction Finding](#6-meilenstein-v130--v140-erweiterte-plattformen--direction-finding)
+6. [Danach (ohne Version): Erweiterte Plattformen & Direction Finding](#6-danach-ohne-version-erweiterte-plattformen--direction-finding)
    - [Tier-2 Plattform: macOS & iOS (CoreBluetooth via Objective-C ABI)](#61-tier-2-plattform-macos--ios-corebluetooth-via-objective-c-abi)
    - [Android NDK / Direct Byte Buffer Bridge](#62-android-ndk--direct-byte-buffer-bridge)
    - [BT 5.1 Direction Finding: Angle of Arrival (AoA) & Angle of Departure (AoD)](#63-bt-51-direction-finding-angle-of-arrival-aoa--angle-of-departure-aod)
-7. [Meilenstein v2.0.0: Next-Gen Bluetooth Radio, LE Audio & Channel Sounding](#7-meilenstein-v200-next-gen-bluetooth-radio-le-audio--channel-sounding)
+7. [Danach (ohne Version): LE Audio, EAD/PAwR & Channel Sounding](#7-danach-ohne-version-le-audio-eadpawr--channel-sounding)
    - [BT 5.2 LE Audio & Auracast Broadcast Architektur](#71-bt-52-le-audio--auracast-broadcast-architektur)
    - [BT 5.4: Encrypted Advertising Data (EAD) & PAwR](#72-bt-54-encrypted-advertising-data-ead--pawr)
    - [BT 6.0: Channel Sounding (CS) — Nanosekunden-Entfernungsmessung](#73-bt-60-channel-sounding-cs--nanosekunden-entfernungsmessung)
-8. [Master-Release- & Feature-Matrix (v1.0.0 bis v2.0.0)](#8-master-release--feature-matrix-v100-bis-v200)
+8. [Release-Matrix (v1.0.0 bis v2.0.0)](#8-release-matrix-v100-bis-v200)
 9. [Detaillierte Implementierungs-Phasen (P1 bis P20)](#9-detaillierte-implementierungs-phasen-p1-bis-p20)
 
 ---
@@ -50,43 +51,37 @@ Für eine Bibliotheksversion **v1.0.0** nach Semantic Versioning (SemVer) steht 
 
 > [!IMPORTANT]
 > **Die Release-Trennung für Zig-BLE:**
-> * **v1.0.0 (Produktionsreife — ABGESCHLOSSEN):** Vollständige Entkopplung vom Linux-Kernel, plattformübergreifende Abstraktion (Linux + Windows), robuster GATT/GAP-Lifecycle mit Long-Transfers, Persistenzschicht für Bonding/CCCDs, ein echter Pure-Zig Host-Stack für UART sowie hardwareloses CI-Testing mit 146/146 bestandenen Tests und realer Over-the-Air Hardware-Verifikation.
-> * **v1.x (Optimierung & Standard-Profile — IN ENTWICKLUNG):** High-Throughput EATT, Connection Subrating für Wearables, Ergometer-/Sensor-Profile (FTMS, CPP, SpO2) und macOS-Support.
-> * **v2.0+ (Spezial- & Audio-Ökosystem — GEPLANT):** LE Audio (Auracast/LC3), BT 5.4 ESL/PAwR und BT 6.0 Channel Sounding.
+> * **v1.0.0 – v1.3.2 (veröffentlicht):** HAL mit Windows- und BlueZ-Backend, Protokoll-Werkzeugkasten (Parser, Krypto, Profile, PCAP), Bond-Speicher, Mock-Backend. Diese Versionen wurden mit Mock und CI geprüft, nicht systematisch auf Hardware; v1.3.0 bis v1.3.2 konnten unter Windows weder scannen noch GATT nutzen.
+> * **v2.0.0 (in Arbeit):** keine neuen Funktionen. Dieselben Funktionen, auf Windows und Linux auf echter Hardware geprüft, jeder Test 10 von 10 an zwei Tagen. Was nur manchmal funktioniert, gilt als nicht erledigt. Offene Punkte und Kriterien: [V2_BLOCKERS.md](V2_BLOCKERS.md), Testbefehle: [HARDWARE_TESTS.md](HARDWARE_TESTS.md). macOS ist ausgenommen (E3). Raw HCI, UART und EATT bleiben experimentell, solange E1 und E2 nicht anders entschieden sind.
+> * **Danach (ohne Versionsnummer):** Ideen aus den Abschnitten 6 und 7. Eine Idee bekommt erst eine Versionsnummer, wenn sie gebaut ist und auf Hardware getestet werden kann ([PHILOSOPHY.md](PHILOSOPHY.md)).
 
 ```mermaid
 graph TD
-    subgraph "Meilenstein v1.0.0 (Core Engine - FREIGEGEBEN)"
-        HAL["Pluggable Backend HAL (VTable)"]
+    subgraph "v1.0.0 – v1.3.2 (veröffentlicht)"
+        HAL["Backend HAL (VTable)"]
         Linux["Linux BlueZ (Pure-Zig D-Bus Wire)"]
-        Win["Windows 11 Native (WinRT COM ABI)"]
-        H4["Pure-Zig Host Stack (UART H4/H5 & Reassembler)"]
-        GattCore["GATT Resilienz & Long Transfers"]
-        Bond["KeyStore, Bonding & NVS ZBGR Persistenz"]
-        Mock["Virtual Mock CI-Harness (146 Tests)"]
-        PCAP["Wireshark PCAP Exporter (DLT 187)"]
+        Win["Windows (WinRT)"]
+        Toolkit["Protokoll-Werkzeugkasten, Profile, PCAP, Bond-Speicher"]
     end
 
-    subgraph "Meilenstein v1.x (Throughput & Profiles - IN ENTWICKLUNG)"
-        EATT["BT 5.2 EATT (Parallel CIDs)"]
-        Subrate["BT 5.3 Connection Subrating"]
-        Profiles["SIG Health/Fitness Profile (FTMS, CPP, SpO2)"]
-        Mac["macOS (CoreBluetooth)"]
+    subgraph "v2.0.0 (in Arbeit): dasselbe, auf Hardware geprüft"
+        HW["Windows + Linux, 10/10 an zwei Tagen (V2_BLOCKERS.md)"]
     end
 
-    subgraph "Meilenstein v2.0+ (Next-Gen - GEPLANT)"
-        Audio["BT 5.2 LE Audio (CIS/BIS/Auracast)"]
-        EAD["BT 5.4 EAD & PAwR"]
-        CS["BT 6.0 Channel Sounding (CS)"]
+    subgraph "Danach (Ideen, ohne Version)"
+        Mac["macOS / iOS, Android"]
+        DF["Direction Finding"]
+        Audio["LE Audio, EAD/PAwR, Channel Sounding"]
     end
 
     HAL --> Linux
     HAL --> Win
-    HAL --> H4
-    H4 --> GattCore
-    GattCore --> EATT
-    GattCore --> Profiles
-    Profiles --> Audio
+    Linux --> HW
+    Win --> HW
+    Toolkit --> HW
+    HW --> Mac
+    HW --> DF
+    HW --> Audio
 ```
 
 ---
@@ -171,7 +166,7 @@ pub const BackendVTable = struct {
     * **Eliminiert externe C#/.NET-Hilfsprogramme** vollständig.
   * **Option B: Win32 GATT API (`BluetoothAPIs.h`):**
     * Direkter Aufruf von `BluetoothGATTGetServices`, `BluetoothGATTGetCharacteristics`, `BluetoothGATTRegisterEvent`.
-    * Extrem schlank, benötigt jedoch für viele moderne Wearables (z. B. Whoop 4.0/5.0) ein vorheriges, manuelles OS-Pairing im Windows-Einstellungsdialog.
+    * Extrem schlank, benötigt jedoch für viele moderne Wearables ein vorheriges, manuelles OS-Pairing im Windows-Einstellungsdialog.
 * **Entscheidung:** WinRT COM ABI als primärer nativer Stack in `src/backend/windows/mod.zig`, da moderne Sport- und Biometriesensoren ohne vorheriges OS-Pairing autonom gekoppelt werden müssen.
 
 ---
@@ -423,8 +418,8 @@ pub const EattMultiplexer = struct {
 > [!IMPORTANT]
 > **Das Kernproblem & Ziel von v1.1.2:**  
 > Auf Windows existiert für Bluetooth LE kein einfacher POSIX-Socket (`AF_BLUETOOTH`), sondern Microsoft zwingt Entwickler durch das **Windows Runtime (WinRT) COM-Objektmodell**.  
-> In frühen Testphasen behalf sich FitLib mit einer externen C#-Bridge (`wearables/tools/ble_scan_src/Program.cs`), die über Named Pipes oder Subprozesse Daten weiterleitete.  
-> **Ziel von v1.1.2:** Vollständige, rückstandslose Eliminierung jeglicher externer Hilfsprogramme (`.cs`-Dateien, .NET-Laufzeiten). Zig-BLE implementiert die WinRT COM VTables nativ in Pure Zig, sodass FitLib direkt `zig_ble.connect()` aufruft und das Verzeichnis `wearables/tools/` ersatzlos gelöscht werden kann.
+> Anwendungen behelfen sich dort oft mit einer externen C#-Bridge, die über Named Pipes oder Subprozesse Daten weiterleitet.  
+> **Ziel von v1.1.2:** Vollständige, rückstandslose Eliminierung jeglicher externer Hilfsprogramme (`.cs`-Dateien, .NET-Laufzeiten). Zig-BLE implementiert die WinRT COM VTables nativ in Pure Zig, sodass eine Anwendung direkt `zig_ble.connect()` aufruft und keine Bridge mehr braucht.
 
 ```mermaid
 graph TD
@@ -441,7 +436,7 @@ graph TD
     Watcher -->|MAC, RSSI, UUIDs| Connect
     Connect --> Enum
     Enum --> Sink
-    Sink -->|Zero-Copy []const u8 Slice| SPSC["SPSC Ring-Buffer Ingestion (FitLib)"]
+    Sink -->|Zero-Copy []const u8 Slice| SPSC["SPSC Ring-Buffer Ingestion (Anwendung)"]
     Enum --> Write
 ```
 
@@ -456,7 +451,7 @@ graph TD
 
 2. **Active BLE Scanner (`BluetoothLEAdvertisementWatcher`):**
    * Erzeugen des Watchers via WinRT Factory.
-   * COM-Event-Handler (`ITypedEventHandler<BluetoothLEAdvertisementWatcher, BluetoothLEAdvertisementReceivedEventArgs>` Vtable in Zig) für das `Received`-Event zur Entdeckung von MAC-Adresse, RSSI und Service-UUIDs (z. B. Standard Heart Rate `0x180D`, Whoop Data `61080001`).
+   * COM-Event-Handler (`ITypedEventHandler<BluetoothLEAdvertisementWatcher, BluetoothLEAdvertisementReceivedEventArgs>` Vtable in Zig) für das `Received`-Event zur Entdeckung von MAC-Adresse, RSSI und Service-UUIDs (z. B. Standard Heart Rate `0x180D` oder herstellereigene 128-Bit-UUIDs).
 
 3. **GATT-Verbindung & Enumeration:**
    * Verbindung über MAC-Adresse: `BluetoothLEDevice.FromBluetoothAddressAsync(u64)`.
@@ -474,18 +469,18 @@ graph TD
          ctx: *anyopaque,
      };
      ```
-     Dadurch feuert Windows eingehende BLE-Pakete (z. B. `0x2A37` Herzfrequenz oder `61080003` Whoop-Rohstream) direkt in eine Zig-Funktion – **ohne Umweg, ohne Pipe, ohne C#**.
+     Dadurch feuert Windows eingehende BLE-Pakete (z. B. `0x2A37` Herzfrequenz oder ein herstellereigener Datenstrom) direkt in eine Zig-Funktion – **ohne Umweg, ohne Pipe, ohne C#**.
 
 5. **GATT Write & Read:**
-   * `WriteValueWithResultAsync` (Confirmed Write für Whoop-Session-Handshake).
+   * `WriteValueWithResultAsync` (Confirmed Write, z. B. für einen Session-Handshake).
    * `WriteValueAsync` mit Option `WriteWithoutResponse` (für High-Throughput-Befehle).
 
 #### Harmonisierung mit Core- & Mobile-Backends:
 * **ATT MTU Exchange (`exchangeMtu`)**: Bereits in v1.1.0 umgesetzt (bis 517 Bytes). Wird im Windows-Backend über `GattSession.MaxPduSize` bzw. Request-Parameter gebunden.
 * **Pairing & Bonding API (`pairDevice`, `unpairDevice`, `getBondState`)**: Bereits in v1.1.0 umgesetzt. Ermöglicht das Löschen veralteter Bonding-Schlüssel bei `AccessDenied` (`0x05`/`0x0F`) via `DeviceInformationCustomPairing`.
 * **Unbuffered Zero-Alloc Event Streaming**: Eingehende BLE-Pakete werden direkt als `[]const u8` Slice in die SPSC-Ring-Queue übergeben – 0 Bytes Heap-Allokation auf dem Hot-Path.
-* **Android / Wear OS (`src/backend/android/mod.zig`, v1.3.0)**: Zero-Copy JNI Direct Buffer Bridge (`env.GetDirectBufferAddress`) für Wearables.
-* **L2CAP CoC (`src/l2cap/stream.zig`, v1.1.0)**: Streaming-Kanal für Samsung Galaxy Watch Ultra (`watch-wire`, PSM `0x1001`).
+* **Android / Wear OS (`src/backend/android/mod.zig`, Idee ohne Version, siehe 6.2)**: Zero-Copy JNI Direct Buffer Bridge (`env.GetDirectBufferAddress`) für Wearables.
+* **L2CAP CoC (`src/l2cap/stream.zig`, v1.1.0)**: Streaming-Kanal für Wearables mit hoher Datenrate (Beispiel-PSM `0x1001`).
 * **Linux BlueZ `AcquireNotify` (`src/backend/bluez/mod.zig`, v1.1.0)**: D-Bus Bypass via Socket-FD.
 
 ---
@@ -553,7 +548,10 @@ Standard für professionelle Leistungsmesser (Kurbel-, Pedal- und Naben-Leistung
 
 ---
 
-## 6. Meilenstein v1.3.0 & v1.4.0: Erweiterte Plattformen & Direction Finding
+## 6. Danach (ohne Version): Erweiterte Plattformen & Direction Finding
+
+> [!NOTE]
+> Ideen, nicht Teil von v2.0.0 und ohne Versionsnummer. Keines der hier genannten Module existiert. macOS ist für v2.0.0 ausdrücklich ausgeschlossen ([V2_BLOCKERS.md](V2_BLOCKERS.md), E3).
 
 ### 6.1 Tier-2 Plattform: macOS & iOS (`CoreBluetooth` via Objective-C ABI)
 
@@ -598,13 +596,16 @@ graph TD
 
 ---
 
-## 7. Meilenstein v2.0.0: Next-Gen Bluetooth Radio, LE Audio & Channel Sounding
+## 7. Danach (ohne Version): LE Audio, EAD/PAwR & Channel Sounding
 
-**v2.0.0** stellt die technologische Spitze moderner Bluetooth-Entwicklung dar und integriert High-End Audio, Mesh-ähnliche Sensornetze und Nanosekunden-Laufzeitmessung.
+> [!NOTE]
+> Ideen, nicht Teil von v2.0.0 und ohne Versionsnummer. Keines der hier genannten Module existiert. Früher war dieser Abschnitt als v2.0.0 geplant; v2.0.0 ist jetzt das auf Hardware geprüfte Release der vorhandenen Funktionen ([V2_BLOCKERS.md](V2_BLOCKERS.md)).
+
+Die Themen hier betreffen High-End Audio, große Sensornetze und Laufzeitmessung.
 
 ```mermaid
 graph TD
-    subgraph "v2.0.0 Next-Gen Core Pillars"
+    subgraph "Ideen: Next-Gen Bluetooth"
         Audio["BT 5.2 LE Audio & Auracast (CIS/BIS & LC3)"]
         PAwR["BT 5.4 PAwR & Encrypted Advertising Data (EAD)"]
         CS["BT 6.0 Channel Sounding: Nanosekunden RTT & PBR"]
@@ -673,32 +674,32 @@ graph LR
 
 ---
 
-## 8. Master-Release- & Feature-Matrix (v1.0.0 bis v2.0.0)
+## 8. Release-Matrix (v1.0.0 bis v2.0.0)
 
-| Version | Release-Titel | Kernfokus für Zig-BLE | FitLib-Bausteine | Status |
+| Version | Release-Titel | Kernfokus für Zig-BLE | Bausteine | Status |
 | :---: | :--- | :--- | :--- | :---: |
 | **v1.0.0** | **Production Core Release** | Multi-OS HAL, Long Transfers, Resilienz, Hardware-Proof | Basis-HAL, ATT, SMP, H4 UART, Windows Win32 & BlueZ | ✅ **FREIGEGEBEN** |
 | **v1.0.1** | **Cross-Platform CI Patch** | macOS ARM64 Calling Conventions, POSIX Timestamps, BlueZ Fix | CI-Matrix 100 % grün auf Ubuntu, macOS & Windows | ✅ **FREIGEGEBEN** |
 | **v1.1.0** | **High-Throughput & Ingestion Engine** | Durchsatz-Tuning (>120 kB/s), EATT, Subrating, VTable-Security | **Nr. 1** (MTU Exchange), **Nr. 2** (Bonding VTable), **Nr. 3** (`AcquireNotify`), **Nr. 5** (L2CAP CoC API), **Nr. 6** (PCAP/Btsnoop Replay) | ✅ **FREIGEGEBEN** |
 | **v1.1.1** | **Zig 0.17.0 Toolchain Upgrade** | Syntax-Migration (`@splat`, `bufPrintSentinel`), Build-Decoupling | Turnkey-Kompatibilität für moderne Zig 0.17.0 Compiler | ✅ **FREIGEGEBEN** |
-| **v1.1.2** | **Native Windows WinRT COM Engine** | **Zero-C# Hardware Ingestion:** RoInitialize, AdvertisementWatcher, FromBluetoothAddressAsync, GattValueChangedHandler COM Sink | **Restlose Eliminierung von `wearables/tools/`**, direkte Whoop 4.0/5.0 Ingestion in Pure Zig | ✅ **FREIGEGEBEN** |
+| **v1.1.2** | **Native Windows WinRT COM Engine** | **Zero-C# Hardware Ingestion:** RoInitialize, AdvertisementWatcher, FromBluetoothAddressAsync, GattValueChangedHandler COM Sink | Keine C#-Bridge mehr nötig | ✅ **FREIGEGEBEN** |
 | **v1.2.0** | **Fitness & Health Ecosystem** | Ergometer, Smart-Trainer, Wattmessung, SpO2, RSCP | **Nr. 7** (PLXP `0x1822`), FTMS (`0x1826`), CPP (`0x1818`), RSCP (`0x1814`) | ✅ **FREIGEGEBEN** |
-| **v1.3.0** | **Mobile & Extended OS** | Native Android NDK & macOS CoreBluetooth Backends | **Nr. 4** (Android JNI Zero-Copy Bridge & Wear OS CoC), macOS ObjC-ABI | 📋 **KONZIPIERT** |
-| **v1.4.0** | **Direction Finding Engine** | Lokalisierung & Raumorientierung (Indoor Tracking)| BT 5.1 AoA / AoD, Constant Tone Extension (CTE), I/Q Sample Processing | 📋 **KONZIPIERT** |
-| **v2.0.0** | **Next-Gen Bluetooth Core** | LE Audio, Auracast, ESL Preisschilder, Nanosekunden CS | BT 5.2 LE Audio / LC3 / Auracast, BT 5.4 EAD & PAwR, BT 6.0 Channel Sounding | 📋 **STRATEGISCH** |
+| **v1.3.0 – v1.3.2** | **Production Readiness** | Punkte aus [PRODUCTION_READINESS.md](PRODUCTION_READINESS.md): Krypto- und Bond-Härtung, Fehlerbehandlung, Windows-Pairing und -Peripheral, Timeouts | — | ✅ **FREIGEGEBEN** (Windows: Scannen und GATT defekt, siehe CHANGELOG) |
+| **v2.0.0** | **Auf Hardware geprüft** | Keine neuen Funktionen: alles, was Windows und Linux anbieten, 10/10 an zwei Tagen auf echter Hardware | — | 🚧 **IN ARBEIT** ([V2_BLOCKERS.md](V2_BLOCKERS.md)) |
+| **ohne Version** | **Ideen** | macOS/iOS, Android, Direction Finding, LE Audio, EAD/PAwR, Channel Sounding (Abschnitte 6 und 7) | Nr. 4 (Android JNI) | 💡 **IDEE** |
 
 ---
 
 ## 9. Detaillierte Implementierungs-Phasen (P1 bis P20)
 
-| Phase | Zielversion | FitLib-Nr. | Arbeitspaket | Modulpfad in `Zig-BLE` | Komplexität | Verifikations-Strategie |
+| Phase | Zielversion | Nr. | Arbeitspaket | Modulpfad in `Zig-BLE` | Komplexität | Verifikations-Strategie |
 | :---: | :---: | :---: | :--- | :--- | :---: | :--- |
 | **P1** | **v1.0.0** | — | Wireshark PCAP Exporter | `src/tooling/pcap.zig` | Gering | ✅ Standard DLT 187 PCAP verifiziert |
 | **P2** | **v1.0.0** | — | Pluggable Backend HAL | `src/backend/` | Mittel | ✅ Polymorphe VTable für Linux & Win |
 | **P3** | **v1.0.0** | — | Virtual Mock CI Controller | `src/backend/mock/` | Mittel | ✅ 146 Tests deterministisch im RAM |
 | **P4** | **v1.0.0** | — | GATT Long Transfers | `src/core/transfers.zig` | Mittel | ✅ Prepare/Execute Queue verifiziert |
 | **P5.1** | **v1.0.0** | — | Windows 11 Win32 Radio & Basic Discovery | `src/backend/windows/` | Mittel | ✅ Radio Enumerate & Power State |
-| **P5.2** | **v1.1.2** | **Top** | Nativer WinRT COM Stack (Ablösung C#) | `src/backend/windows/mod.zig`, `bindings.zig` | Hoch | 🎯 RoInitialize, AdvWatcher, ValueChanged COM Sink, Live Whoop Ingestion |
+| **P5.2** | **v1.1.2** | **Top** | Nativer WinRT COM Stack (Ablösung C#) | `src/backend/windows/mod.zig`, `bindings.zig` | Hoch | 🎯 RoInitialize, AdvWatcher, ValueChanged COM Sink |
 | **P6** | **v1.0.0** | — | Pure-Zig Host-Stack UART H4 | `src/hci/h4.zig`, `src/l2cap/` | Hoch | ✅ Streaming Parser & ACL Reassembly |
 | **P7** | **v1.1.0** | **Nr. 1** | ATT MTU Exchange in HAL | `src/backend/vtable.zig`, OS-Backends | Mittel | ✅ `exchangeMtu` verifiziert bis 517 Bytes |
 | **P8** | **v1.1.0** | **Nr. 2** | Security & Bonding VTable | `src/backend/vtable.zig`, `types.zig` | Mittel | ✅ `pair`/`unpair`/`BondState` & ATT Errors |
@@ -710,8 +711,8 @@ graph LR
 | **P14** | **v1.2.0** | **Nr. 7** | Pulse Oximeter Profile (PLXP) | `src/profiles/pulse_oximeter.zig` | Gering | ✅ Spot-Check (`0x2A5E`) & Continuous (`0x2A5F`) verifiziert |
 | **P15** | **v1.2.0** | — | FTMS Fitness Machine Service | `src/profiles/ftms.zig` | Mittel | ✅ Indoor Bike, Treadmill, Rower & Control Point FSM verifiziert |
 | **P16** | **v1.2.0** | — | Cycling Power (CPP) & RSCP | `src/profiles/cpp.zig`, `rscp.zig`| Mittel | ✅ Festkomma-Präzision & 64s Rollover verifiziert |
-| **P17** | **v1.3.0** | **Nr. 4** | Android NDK & JNI Bridge | `src/backend/android/mod.zig` | Hoch | Zero-Copy JNI Buffer & Wear OS CoC |
-| **P18** | **v1.3.0** | — | macOS CoreBluetooth Bridge | `src/backend/macos/mod.zig` | Hoch | Objective-C Runtime ABI (`objc_msgSend`) |
-| **P19** | **v1.4.0** | — | BT 5.1 Direction Finding AoA | `src/hci/direction_finding.zig` | Hoch | I/Q Phasensimulation & Azimut-Test |
-| **P20** | **v2.0.0** | — | Next-Gen Core (LE Audio, CS) | `src/audio/`, `channel_sounding.zig`| Sehr Hoch | LC3 Codec, Auracast, Nanosekunden-RTT |
+| **P17** | — | **Nr. 4** | Android NDK & JNI Bridge | `src/backend/android/mod.zig` | Hoch | Zero-Copy JNI Buffer & Wear OS CoC |
+| **P18** | — | — | macOS CoreBluetooth Bridge | `src/backend/macos/mod.zig` | Hoch | Objective-C Runtime ABI (`objc_msgSend`) |
+| **P19** | — | — | BT 5.1 Direction Finding AoA | `src/hci/direction_finding.zig` | Hoch | I/Q Phasensimulation & Azimut-Test |
+| **P20** | — | — | Next-Gen Core (LE Audio, CS) | `src/audio/`, `channel_sounding.zig`| Sehr Hoch | LC3 Codec, Auracast, Nanosekunden-RTT |
 

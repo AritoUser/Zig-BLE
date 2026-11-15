@@ -763,7 +763,7 @@ Zig-BLE features an integrated binary PCAP generator conformant with standard Li
 The full table, the measurement method and how to interpret the numbers are in the [White Paper, Section 5](WHITEPAPER.md#5-microbenchmarks--performance-evaluation). In short: parsing cost is negligible compared to radio and operating system latency.
 
 ### 18.2 Real Hardware Over-The-Air Telemetry
-Tested on Windows 11 with a PC Bluetooth adapter against a Samsung Galaxy S25 Ultra:
+Tested on Windows 11 with a PC Bluetooth adapter against an Android smartphone:
 * **Discovery Time**: 324.36 ms (8 Services discovered).
 * **Air Interface Latency**: Min 37.59 ms, Avg 57.10 ms, Max 73.17 ms per GATT read transaction.
 * **Success Rate**: 30/31 operations completed successfully over 2.4 GHz physical radio.

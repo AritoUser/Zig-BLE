@@ -17,7 +17,7 @@ test "v1.1.0: ATT MTU Exchange on MockBackend and UnifiedDevice" {
 
     const addr = ble.Address{ .bytes = [_]u8{ 0x11, 0x22, 0x33, 0x44, 0x55, 0x66 } };
     var dev = ble.MockDevice{ .address = addr };
-    dev.setName("Whoop_4_HighThroughput");
+    dev.setName("Wearable_HighThroughput");
     _ = try mock.addDevice(dev);
 
     try adapter.setPowered(true);
@@ -27,7 +27,7 @@ test "v1.1.0: ATT MTU Exchange on MockBackend and UnifiedDevice" {
     // Initial default MTU is 23
     try std.testing.expectEqual(@as(u16, 23), mock.devices[0].mtu);
 
-    // Request Whoop High-Throughput MTU (247 bytes)
+    // Request a high-throughput MTU (247 bytes)
     const negotiated = try connected_dev.exchangeMtu(247);
     try std.testing.expectEqual(@as(u16, 247), negotiated);
     try std.testing.expectEqual(@as(u16, 247), mock.devices[0].mtu);
@@ -69,7 +69,7 @@ test "v1.1.0: Security, Bonding & Granular ATT Error Mapping" {
     try std.testing.expectEqual(error.CccdImproperlyConfigured, ble.AttErrorCode.toError(@enumFromInt(0xFD)));
 }
 
-test "v1.1.0: High-Level L2CAP CoC Streaming (Galaxy Watch watch-wire PSM 0x1001)" {
+test "v1.1.0: High-Level L2CAP CoC Streaming (PSM 0x1001)" {
     var chan_client: ble.l2cap.MockChannel = .{};
     var chan_server: ble.l2cap.MockChannel = .{};
     var stream_pair = ble.l2cap.createMockStreamPair(&chan_client, &chan_server, 672, 251);

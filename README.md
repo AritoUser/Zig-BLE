@@ -124,7 +124,7 @@ Zig-BLE v1.0.0 has been physically verified over the 2.4 GHz air interface using
           ZIG-BLE v1.0.0: LIVE OVER-THE-AIR TELEMETRY & GATT STATISTICS         
 ================================================================================
 Local Controller:            PC Bluetooth adapter (Windows 11)
-Target Device:               Samsung Galaxy S25 Ultra
+Target Device:               Android smartphone
 Connection Status:           Connected (Active 2.4 GHz Physical Radio Link)
 --------------------------------------------------------------------------------
 GATT Services Discovered:    8 (SIG Standard: 6, Vendor 128-Bit: 2)
@@ -142,7 +142,6 @@ Total Interrogation Time:    3236.92 ms (~3.2 seconds for full device profile)
 ```
 
 **Real Live Payload Sample Extracted Over-the-Air:**
-* **GAP Device Name (0x2A00):** `"S25 Ultra "` (20 bytes UTF-8)
 * **Telephony Bearer Provider (0x2BB4):** `"E.164"` (ITU-T standard)
 * **Telephony Bearer Technology (0x2BB5):** `0x06` (5G NR / LTE active radio)
 * **GATT Database Hash (0x2B2A):** `95 79 53 91 F5 F0 94 08 41 E4 DB D4 7D F6 D8 C3` (16 bytes)

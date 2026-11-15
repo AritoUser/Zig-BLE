@@ -283,7 +283,7 @@ This release delivers milestone **v1.1.0**, establishing high-throughput data st
 #### Architectural Pillar 8: High-Throughput ATT MTU & DLE (`src/backend/vtable.zig`, `src/backend/unified.zig`)
 * **`exchangeMtu` HAL Interface**:
   * Added `exchangeMtu(dev_handle, target_mtu)` to `BackendVTable` and `UnifiedDevice`.
-  * Enables negotiation of ATT MTU sizes up to 517 bytes (e.g. 247 bytes for Whoop 4.0/5.0 high-throughput PPG/IMU telemetry frames).
+  * Enables negotiation of ATT MTU sizes up to 517 bytes (e.g. 247 bytes for high-throughput wearable PPG/IMU telemetry frames).
   * Fully simulated and verified in `MockController` and `UnifiedAdapter`.
 
 #### Architectural Pillar 9: Security Manager & Bonding Lifecycle HAL (`src/backend/types.zig`, `src/backend/vtable.zig`)
@@ -298,7 +298,7 @@ This release delivers milestone **v1.1.0**, establishing high-throughput data st
 
 #### Architectural Pillar 10: High-Level L2CAP Connection-Oriented Channels (CoC) (`src/l2cap/stream.zig`)
 * **`L2capStream` & `L2capListener`**:
-  * High-level stream abstraction over LE Credit-Based Channels for high-frequency wearable sensor streaming (e.g. Samsung Galaxy Watch Ultra `watch-wire`, PSM `0x1001`).
+  * High-level stream abstraction over LE Credit-Based Channels for high-frequency wearable sensor streaming (e.g. PSM `0x1001`).
   * Non-blocking segmentation, credit accounting, and MTU/MPS management.
   * `createMockStreamPair`: Zero-allocation in-memory bi-directional channel pair for deterministic testing on any platform.
 
@@ -384,7 +384,7 @@ This maintenance and patch release resolves cross-compilation errors across mult
 ### Major Milestone: Production Release
 This release marks the official production stabilization of **Zig-BLE**, transforming the library from an embedded Linux D-Bus client into a comprehensive, multi-platform, zero-allocation Bluetooth Low Energy protocol engine and systems library for Zig 0.16.0+.
 
-The release has been physically verified over the 2.4 GHz air interface against an active smartphone (Samsung Galaxy S25 Ultra) across 8 GATT services and 38 characteristics with 96.8% read success rate and 57.1 ms average air interface latency.
+The release has been physically verified over the 2.4 GHz air interface against an active Android smartphone across 8 GATT services and 38 characteristics with 96.8% read success rate and 57.1 ms average air interface latency.
 
 ---
 
@@ -466,6 +466,6 @@ The release has been physically verified over the 2.4 GHz air interface against 
 ### Verified
 
 * **Unit & Edge-Case Tests**: 146 / 146 passing (`zig build test`).
-* **Live Hardware Verification**: Intel Bluetooth Adapter $\to$ Samsung Galaxy S25 Ultra over-the-air (`zig build run-v1-live`).
+* **Live Hardware Verification**: Intel Bluetooth Adapter $\to$ Android smartphone over-the-air (`zig build run-v1-live`).
 * **Cross-Compilation**: Native AMD64 Windows and cross-compilation to `x86_64-linux` with zero C compiler required.
 * **HTML Documentation**: Fully builds via `zig build docs` with searchable type declarations.

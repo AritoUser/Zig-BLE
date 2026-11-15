@@ -718,7 +718,7 @@ Zig-BLE shows that a BLE library for Linux and Windows can be written entirely i
 * **Windows 11 (WinRT)**: scanning, connecting, service discovery and GATT read/write/notifications. Pairing and the peripheral role are not implemented yet.
 * **A platform-independent protocol toolkit**: advertising, ATT/GATT, SMP, HCI, H4 and L2CAP encoders and decoders, the Bluetooth cryptographic functions, a bond store, SIG profiles (Heart Rate, Battery, Device Information, Current Time, Health Thermometer, Blood Pressure, HID, Environmental Sensing, Pulse Oximeter, Fitness Machine, Cycling Power, Running Speed & Cadence, Nordic UART, iBeacon, Eddystone) and a Wireshark PCAP writer.
 * **Simple deployment**: static binaries of 140–240 KB, cross-compiled without sysroots.
-* **Hardware validation**: verified over the air on Windows 11 against a Samsung Galaxy S25 Ultra (8 services, 38 characteristics, 30 of 31 reads successful).
+* **Hardware validation**: verified over the air on Windows 11 against an Android smartphone (8 services, 38 characteristics, 30 of 31 reads successful).
 * **Testing**: unit, end-to-end and edge-case tests, plus fuzzing of the D-Bus and advertising parsers.
 
 ### 8.2 Future Roadmap
