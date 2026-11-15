@@ -171,7 +171,7 @@ pub const ExtAdvertisingReportIterator = struct {
         const dir_mac = Address{
             .bytes = [6]u8{ p[22], p[21], p[20], p[19], p[18], p[17] },
         };
-        const data_len = p[23];
+        const data_len: usize = p[23];
         if (p.len < 24 + data_len) return null;
         const data = p[24 .. 24 + data_len];
 
@@ -340,7 +340,8 @@ pub const HciEvent = union(enum) {
 
         if (buf.len < 2) return EventParseError.BufferTooShort;
         const evt_code = buf[0];
-        const param_len = buf[1];
+        // usize: `2 + param_len` in u8 overflows for lengths from 254 on.
+        const param_len: usize = buf[1];
         if (buf.len < 2 + param_len) return EventParseError.BufferTooShort;
         const params = buf[2 .. 2 + param_len];
 
@@ -711,4 +712,22 @@ test "HciEvent: parse Number of Completed Packets, Encryption Change, LTK Reques
         },
         else => unreachable,
     }
+}
+
+test "HciEvent.parse rejects a parameter length beyond the buffer, even at 255" {
+    // Found by `zig build test --fuzz`: `2 + param_len` overflowed in u8.
+    const evt = [_]u8{ 0x04, 0x0E, 0xFF, 0x01, 0x02 };
+    try std.testing.expectError(EventParseError.BufferTooShort, HciEvent.parse(&evt));
+    const evt2 = [_]u8{ 0x0E, 0xFE, 0x01 };
+    try std.testing.expectError(EventParseError.BufferTooShort, HciEvent.parse(&evt2));
+}
+
+test "ExtAdvertisingReportIterator stops at a data length beyond the report, even above 231" {
+    // Found by `zig build test --fuzz`: `24 + data_len` overflowed in u8. Any nearby advertiser
+    // controls this byte.
+    var payload: [30]u8 = @splat(0);
+    payload[0] = 1; // one report
+    payload[1 + 23] = 0xF0; // data_len 240, far more than the 5 bytes that follow
+    var it = try ExtAdvertisingReportIterator.init(&payload);
+    try std.testing.expect(it.next() == null);
 }
