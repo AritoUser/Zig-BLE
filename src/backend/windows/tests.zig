@@ -236,6 +236,44 @@ test "WinRT device context keeps duplicate characteristic UUIDs apart" {
     try std.testing.expect(dev.findCharacteristic(.inService(UUID.from16(0x180F), report)) == null);
 }
 
+test "WinRT device context narrows a full discovery to the filtered services in memory" {
+    var win = WindowsBackend.init();
+    defer win.deinit();
+
+    const gap = UUID.from16(0x1800);
+    const hrs = UUID.from16(0x180D);
+    const bas = UUID.from16(0x180F);
+    var dev = try win.allocateDeviceSlot(try Address.parse("AA:BB:CC:DD:EE:03"));
+    dev.service_uuids[0] = gap;
+    dev.service_uuids[1] = hrs;
+    dev.service_uuids[2] = bas;
+    dev.services_len = 3;
+    dev.characteristics[0] = .{ .uuid = UUID.from16(0x2A00), .service_uuid = gap };
+    dev.characteristics[1] = .{ .uuid = UUID.from16(0x2A37), .service_uuid = hrs };
+    dev.characteristics[2] = .{ .uuid = UUID.from16(0x2A19), .service_uuid = bas };
+    dev.characteristics[3] = .{ .uuid = UUID.from16(0x2A38), .service_uuid = hrs };
+    dev.characteristics_len = 4;
+    dev.gatt_fresh.store(true, .release);
+
+    // No filter keeps everything, and the list stays complete.
+    try dev.narrowGatt(&.{});
+    try std.testing.expectEqual(@as(u8, 4), dev.characteristics_len);
+    try std.testing.expect(dev.gatt_fresh.load(.acquire));
+
+    try dev.narrowGatt(&.{hrs});
+    try std.testing.expectEqual(@as(u8, 1), dev.services_len);
+    try std.testing.expect(dev.service_uuids[0].eql(hrs));
+    try std.testing.expectEqual(@as(u8, 2), dev.characteristics_len);
+    try std.testing.expect(dev.characteristics[0].uuid.eql(UUID.from16(0x2A37)));
+    try std.testing.expect(dev.characteristics[1].uuid.eql(UUID.from16(0x2A38)));
+    try std.testing.expect(dev.characteristics[2].uuid.eql(UUID.from16(0)));
+    try std.testing.expect(!dev.gatt_fresh.load(.acquire));
+
+    try std.testing.expectError(BleError.ServiceNotFound, dev.narrowGatt(&.{bas}));
+    try std.testing.expectEqual(@as(u8, 0), dev.services_len);
+    try std.testing.expectEqual(@as(u8, 0), dev.characteristics_len);
+}
+
 test "WinRT connection status callbacks report no disconnect reason" {
     var win = WindowsBackend.init();
     defer win.deinit();

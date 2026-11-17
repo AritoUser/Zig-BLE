@@ -573,12 +573,23 @@ pub fn WindowsBackendWithConfig(comptime pool_config: PoolConfig) type {
             const dev: *DeviceContext = @ptrCast(@alignCast(dev_handle));
             if (!dev.is_connected.load(.acquire)) return BleError.NotConnected;
 
-            // Rediscovers, because the list may have been narrowed before. Subscriptions on
-            // services that stay are set up again on the new characteristic objects.
+            // Right after a full discovery the pools are narrowed in memory. That spares the
+            // Bluetooth service another discovery (B5: a crash inside Windows' own completion of
+            // GetGattServicesAsync, once in about 630) and avoids Windows' cache, which keeps
+            // services the peer no longer has (A11). Otherwise it rediscovers, because the list
+            // may have been narrowed before, or because the first discovery lacked the service:
+            // seen once right after the peer registered it. Subscriptions on services that stay
+            // are set up again.
             dev.saved_subscriptions.capture(dev.characteristics[0..dev.characteristics_len]);
             dev.clearSubscriptions();
-            dev.releaseGatt();
-            const result = gatt_mod.discoverServicesFiltered(self, dev, filter_uuids);
+            const narrowed = if (dev.gatt_fresh.load(.acquire)) dev.narrowGatt(filter_uuids) else BleError.ServiceNotFound;
+            const result = narrowed catch |err| switch (err) {
+                BleError.ServiceNotFound => blk: {
+                    dev.releaseGatt();
+                    break :blk gatt_mod.discoverServicesFiltered(self, dev, filter_uuids);
+                },
+                else => err,
+            };
             self.restoreSubscriptions(dev);
             return result;
         }

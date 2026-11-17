@@ -53,7 +53,7 @@ Linux: BlueZ 5.82, Realtek-USB-Adapter; Gegenstelle der jeweils andere Rechner.
 | 8 | Bond entfernen | `… <addr> --service <uuid> --unpair` | beim nächsten Verbinden `not_bonded`, Windows führt das Gerät nicht mehr | ✅ | |
 | 9 | Peripheral: Client verbindet sich | `… --peripheral` | echo les- und schreibbar, counter zählt | ✅ | ✅ |
 | 10 | Peripheral: Pairing | `… --peripheral --secure` | Windows koppelt den Abonnenten selbst (gleicher Code auf beiden Seiten), danach liefert protected `paired` | ✅ | ✅ |
-| 11 | Langzeit: Scannen, Verbinden, Slots | `… <addr> --soak 240` | 0 Fehler, Handles steigen nicht (nur Windows zeigt sie) | | |
+| 11 | Langzeit: Scannen, Verbinden, Slots | `… <addr> --soak 480` | Kein Absturz, jede Fehlrunde erholt sich im nächsten Zyklus, Speicher und Handles steigen nicht (V2_BLOCKERS B5) | | |
 | 12 | Neustart von `bluetoothd` | während 11: `sudo systemctl restart bluetooth` | `Recovered.`, danach laufen die Zyklen weiter | – | |
 
 Anmerkungen:
@@ -149,6 +149,29 @@ gekoppelten PC nicht wieder erreicht (B13).
   Passkey (Central tippt) je 10/10 mit je einem Neuversuch, Passkey (Peripheral tippt) 9/10; die
   Fehlrunde scheiterte schon an `StartNotify` vor dem Pairing (A10). Gleicher Tag, zählt nicht als
   zweiter Tag.
+- **2026-11-16, zweiter Tag:** L und W bei allen vier Methoden 10/10 (80/80), kein Neuversuch nach
+  einem Verbindungsverlust, kein `StartNotify`-Fehler (A10). Pairing ist damit für W und L an zwei
+  Tagen grün.
+- **2026-11-16, zweiter Lauf (für A10):** L bei allen Methoden 10/10, W 39/40. Wieder kein
+  `StartNotify`-Fehler, A10 ist damit erledigt. Die W-Fehlrunde (Passkey, Peripheral tippt, Runde 9)
+  scheiterte vor dem Pairing an der Discovery mit `PoolExhausted` (A11).
+- **2026-11-16, W mit Diagnose (A11):** 37/40 (Numeric 10/10, die anderen drei je 9/10). Alle drei
+  Fehlrunden sind A11: Der Windows-Cache lieferte 13 veraltete Kopien des Testdienstes.
+- **2026-11-16, W mit A11-Fix:** erster Lauf 39/40 (Numeric, Just Works, Passkey/Central je 10/10,
+  Passkey/Peripheral 9/10: die erste Discovery fand den Testdienst nicht, inzwischen abgefangen).
+  Der zweite Lauf ist ungültig: Der USB-Adapter des Linux-Rechners meldete sich mitten im Lauf neu
+  an und hieß danach `hci1`. Der Befehl in `PERIPHERAL_FORGET` und `forget_test_bond.sh` nennen
+  `hci0` fest, und `ble-hardware-check` öffnete als Central fest Adapter 0; es nimmt jetzt den
+  ersten Adapter, den BlueZ meldet. Nach so einem Neustart des Adapters beide Skripte prüfen.
+- **2026-11-17, W mit A11-Fix, Nachweis:** zwei Läufe hintereinander, alle vier Methoden in beiden
+  10/10 (80/80), kein Neuversuch nach einem Verbindungsverlust. A11 ist damit erledigt. Der Befehl in
+  `PERIPHERAL_FORGET` entfernte den Bond dabei auf jedem Adapter, der den Peer kennt, nicht fest
+  unter `hci0`.
+- **2026-11-16/17, B5 Linux-Central, 8 h:** 1841 Zyklen, 5 Fehlrunden, alle im nächsten Zyklus
+  erholt; Speicher und fds flach. Ein Soak von 3 h mit `btmon` auf dem Host (703 Zyklen, 2
+  Fehlrunden) zeigt beide Male `Connection Timeout (0x08)` vom Controller, also einen Funkabbruch.
+  Der Soak schreibt pro Zyklus Zeit und Adresse (`<unix-zeit> connect <addr>`), damit eine
+  Fehlrunde im Mitschnitt zu finden ist.
 - Bleibt nach einer Runde ein Bond auf nur einer Seite stehen, scheitern alle folgenden Runden
   schon am Verbindungsaufbau (B3). Das Skript wiederholt `PERIPHERAL_FORGET` deshalb und meldet,
   wenn es scheitert.

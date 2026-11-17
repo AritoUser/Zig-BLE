@@ -91,14 +91,18 @@ pub fn DeviceContext(comptime pool_config: PoolConfig, comptime BackendType: typ
         parent_backend: ?*BackendType = null,
 
         services: [pool_config.max_services_per_device]?*bindings.IGattDeviceService = @splat(null),
+        /// UUID of `services[i]`, so `narrowGatt` needs no WinRT call.
+        service_uuids: [pool_config.max_services_per_device]UUID = @splat(UUID.from16(0)),
         services_len: u8 = 0,
 
         characteristics: [pool_config.max_characteristics_per_device]WinCharacteristicSlot = @splat(.{}),
         characteristics_len: u8 = 0,
 
-        /// Set after an uncached, unfiltered discovery on the current link: a later rediscovery
-        /// (to narrow the service list) then reads Windows' cache instead of the peer. Cleared
-        /// when the link goes down, since the peer's database may differ after a reconnect.
+        /// Set after an uncached, unfiltered discovery on the current link: the pools then hold
+        /// the peer's whole database, and a filtered rediscovery narrows them in memory
+        /// (`narrowGatt`) instead of asking Windows again. Not Windows' cache: it keeps services
+        /// the peer no longer has (A11). Cleared once the pools are narrowed, and when the link
+        /// goes down, since the peer's database may differ after a reconnect.
         gatt_fresh: std.atomic.Value(bool) = .init(false),
 
         mtu: u16 = 23,
@@ -131,7 +135,7 @@ pub fn DeviceContext(comptime pool_config: PoolConfig, comptime BackendType: typ
             self.characteristics_len += 1;
         }
 
-        pub fn addService(self: *Self, svc: *bindings.IGattDeviceService) BleError!void {
+        pub fn addService(self: *Self, uuid: UUID, svc: *bindings.IGattDeviceService) BleError!void {
             if (self.services_len >= self.services.len) {
                 if (builtin.os.tag == .windows) {
                     _ = svc.lpVtbl.Release(svc);
@@ -139,6 +143,7 @@ pub fn DeviceContext(comptime pool_config: PoolConfig, comptime BackendType: typ
                 return BleError.PoolExhausted;
             }
             self.services[self.services_len] = svc;
+            self.service_uuids[self.services_len] = uuid;
             self.services_len += 1;
         }
 
@@ -245,22 +250,55 @@ pub fn DeviceContext(comptime pool_config: PoolConfig, comptime BackendType: typ
                 ch.release();
             }
             self.characteristics_len = 0;
+            for (self.services[0..self.services_len]) |*svc| releaseService(svc);
+            self.services_len = 0;
+        }
 
-            if (builtin.os.tag == .windows) {
-                for (self.services[0..self.services_len]) |maybe_svc| {
-                    if (maybe_svc) |svc| {
-                        var closable: ?*bindings.IClosable = null;
-                        if (svc.lpVtbl.QueryInterface(svc, &bindings.IID_IClosable, @ptrCast(&closable)) >= 0) {
-                            if (closable) |cl| {
-                                _ = cl.lpVtbl.Close(cl);
-                                _ = cl.lpVtbl.Release(cl);
-                            }
-                        }
-                        _ = svc.lpVtbl.Release(svc);
-                    }
+        /// Keeps only the services in `filter` and their characteristics, in discovery order,
+        /// and releases the rest. Subscriptions must be cleared first: slots move.
+        pub fn narrowGatt(self: *Self, filter: []const UUID) BleError!void {
+            if (filter.len == 0) return;
+            var kept: u8 = 0;
+            for (self.characteristics[0..self.characteristics_len]) |*ch| {
+                if (contains(filter, ch.service_uuid)) {
+                    self.characteristics[kept] = ch.*;
+                    kept += 1;
+                } else ch.release();
+            }
+            for (self.characteristics[kept..self.characteristics_len]) |*ch| ch.* = .{};
+            self.characteristics_len = kept;
+
+            kept = 0;
+            for (0..self.services_len) |i| {
+                if (contains(filter, self.service_uuids[i])) {
+                    self.services[kept] = self.services[i];
+                    self.service_uuids[kept] = self.service_uuids[i];
+                    kept += 1;
+                } else releaseService(&self.services[i]);
+            }
+            for (self.services[kept..self.services_len]) |*svc| svc.* = null;
+            self.services_len = kept;
+            self.gatt_fresh.store(false, .release);
+            if (kept == 0) return BleError.ServiceNotFound;
+        }
+
+        fn contains(list: []const UUID, uuid: UUID) bool {
+            for (list) |u| if (u.eql(uuid)) return true;
+            return false;
+        }
+
+        fn releaseService(slot: *?*bindings.IGattDeviceService) void {
+            const svc = slot.* orelse return;
+            slot.* = null;
+            if (builtin.os.tag != .windows) return;
+            var closable: ?*bindings.IClosable = null;
+            if (svc.lpVtbl.QueryInterface(svc, &bindings.IID_IClosable, @ptrCast(&closable)) >= 0) {
+                if (closable) |cl| {
+                    _ = cl.lpVtbl.Close(cl);
+                    _ = cl.lpVtbl.Release(cl);
                 }
             }
-            self.services_len = 0;
+            _ = svc.lpVtbl.Release(svc);
         }
 
         pub fn releaseAll(self: *Self) void {

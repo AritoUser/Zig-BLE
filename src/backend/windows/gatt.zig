@@ -39,11 +39,10 @@ pub fn discoverServicesFiltered(backend: anytype, dev: anytype, filter_uuids: []
     const d3 = dev.ble_device3 orelse return BleError.NotConnected;
 
     var svcs_op: ?*bindings.IAsyncOperationGeneric = null;
-    // Right after a full discovery on this link, Windows' cache is current. Fetching everything
-    // from the peer again only adds work for the Bluetooth service (B5: a crash inside Windows'
-    // own completion of GetGattServicesAsync, once in about 630 discoveries).
-    const cache_mode: bindings.BluetoothCacheMode =
-        if (backend.use_cached_services or dev.gatt_fresh.load(.acquire)) .Cached else .Uncached;
+    // From the peer unless the application asked for the cache: Windows' cache keeps services
+    // the peer has removed since (A11). After a full discovery, a filtered one narrows the
+    // pools in memory instead (`narrowGatt`).
+    const cache_mode: bindings.BluetoothCacheMode = if (backend.use_cached_services) .Cached else .Uncached;
     if (d3.lpVtbl.GetGattServicesWithCacheModeAsync(d3, cache_mode, &svcs_op) < 0 or svcs_op == null) {
         return BleError.GattError;
     }
@@ -91,7 +90,10 @@ pub fn discoverServicesFiltered(backend: anytype, dev: anytype, filter_uuids: []
                 continue;
             }
         }
-        try dev.addService(svc);
+        dev.addService(svc_uuid, svc) catch |err| {
+            logServiceList(sv, svc_count, cache_mode, dev.services_len, dev.characteristics_len);
+            return err;
+        };
         matched_services += 1;
 
         var svc3: ?*bindings.IGattDeviceService3 = null;
@@ -113,13 +115,34 @@ pub fn discoverServicesFiltered(backend: anytype, dev: anytype, filter_uuids: []
             // A service whose characteristics cannot be read (Windows denies access to HID, for
             // example) is skipped with a warning instead of failing the whole connection.
             discoverCharacteristics(backend, dev, s3, svc_uuid, cache_mode) catch |err| switch (err) {
-                BleError.PoolExhausted => return err,
+                BleError.PoolExhausted => {
+                    logServiceList(sv, svc_count, cache_mode, dev.services_len, dev.characteristics_len);
+                    return err;
+                },
                 else => log.warn("Skipping characteristics of service {f}: {s}", .{ svc_uuid, @errorName(err) }),
             };
         }
     }
     if (filter_uuids.len > 0 and matched_services == 0) return BleError.ServiceNotFound;
     if (cache_mode == .Uncached and filter_uuids.len == 0) dev.gatt_fresh.store(true, .release);
+}
+
+/// A11: a filtered discovery overflowed the pool once, which needs the same service many times
+/// over. The list with its attribute handles shows whether Windows returned copies.
+fn logServiceList(sv: *bindings.IVectorViewGeneric, svc_count: u32, cache_mode: bindings.BluetoothCacheMode, services_len: anytype, chars_len: anytype) void {
+    log.warn("Discovery pool exhausted ({s}): {d} services from Windows, {d} kept, {d} characteristics", .{ @tagName(cache_mode), svc_count, services_len, chars_len });
+    var i: u32 = 0;
+    while (i < svc_count) : (i += 1) {
+        var raw: ?*anyopaque = null;
+        if (sv.lpVtbl.GetAt(sv, i, &raw) < 0 or raw == null) continue;
+        const svc: *bindings.IGattDeviceService = @ptrCast(@alignCast(raw.?));
+        defer _ = svc.lpVtbl.Release(svc);
+        var guid: GUID = undefined;
+        var handle: u16 = 0;
+        const uuid = if (svc.lpVtbl.get_Uuid(svc, &guid) >= 0) helpers.guidToUuid(guid) else UUID.from16(0);
+        _ = svc.lpVtbl.get_AttributeHandle(svc, &handle);
+        log.warn("  service {d}: {f} handle 0x{x:0>4}", .{ i, uuid, handle });
+    }
 }
 
 fn discoverCharacteristics(backend: anytype, dev: anytype, s3: *bindings.IGattDeviceService3, svc_uuid: UUID, cache_mode: bindings.BluetoothCacheMode) BleError!void {
