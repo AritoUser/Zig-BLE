@@ -171,7 +171,16 @@ gekoppelten PC nicht wieder erreicht (B13).
   erholt; Speicher und fds flach. Ein Soak von 3 h mit `btmon` auf dem Host (703 Zyklen, 2
   Fehlrunden) zeigt beide Male `Connection Timeout (0x08)` vom Controller, also einen Funkabbruch.
   Der Soak schreibt pro Zyklus Zeit und Adresse (`<unix-zeit> connect <addr>`), damit eine
-  Fehlrunde im Mitschnitt zu finden ist.
+  Fehlrunde im Mitschnitt zu finden ist, und nach dem Abonnieren die Dauer bis zur nutzbaren
+  Verbindung (`ready in <ms> ms: connect …, discover …, read and subscribe …`). Aus einer Nacht
+  ergibt sich so die Verteilung der Verbindungszeiten, ohne eigenen Messlauf.
+- **2026-11-17/18, B5 Windows-Central, 8 h, Commit `cd6efff`:** 1167 Zyklen, 0 Fehlrunden, 25920
+  Notifications, 0 Events verworfen. Handles 238 bis 247 flach, Working Set ab etwa 4 h konstant
+  um 19,6 MB; das Linux-Peripheral blieb bei 7,1 bis 7,2 MB und 4 fds.
+- **2026-11-18, erste Messung `ready`** (je 3 min): Windows-Central bis zur nutzbaren Verbindung
+  3,3 bis 6,8 s (`connect` mit voller Discovery 2,9 bis 6,3 s, gefilterte Discovery 2 bis 3 ms,
+  Lesen und Abonnieren etwa 0,4 s); Linux-Central 2,3 bis 3,2 s (`connect` 1,3 bis 1,9 s,
+  Discovery 1 ms, Lesen und Abonnieren etwa 1 s).
 - Bleibt nach einer Runde ein Bond auf nur einer Seite stehen, scheitern alle folgenden Runden
   schon am Verbindungsaufbau (B3). Das Skript wiederholt `PERIPHERAL_FORGET` deshalb und meldet,
   wenn es scheitert.

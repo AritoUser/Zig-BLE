@@ -534,11 +534,22 @@ fn soakCycle(adapter: *ble.UnifiedAdapter, addr: *ble.Address) !usize {
     const target = try locate(adapter, addr.*, scan_for_seconds);
     // With a timestamp, so a failed cycle can be found in an HCI trace.
     print("{d} connect {f}", .{ std.Io.Timestamp.now(io, .real).toSeconds(), target });
+    const t_connect = std.Io.Timestamp.now(io, .awake);
     var dev = try adapter.connect(target, connect_timeout_ms);
     defer drop(&dev);
     addr.* = target;
+    const t_connected = std.Io.Timestamp.now(io, .awake);
     if (service_filter) |uuid| try dev.discoverServicesFiltered(&.{uuid});
+    const t_discovered = std.Io.Timestamp.now(io, .awake);
     _ = try visitCharacteristics(&dev, true);
+    const t_ready = std.Io.Timestamp.now(io, .awake);
+    // Time to a usable link, per step, so the soak logs yield a latency distribution.
+    print("ready in {d} ms: connect {d}, discover {d}, read and subscribe {d}", .{
+        t_connect.durationTo(t_ready).toMilliseconds(),
+        t_connect.durationTo(t_connected).toMilliseconds(),
+        t_connected.durationTo(t_discovered).toMilliseconds(),
+        t_discovered.durationTo(t_ready).toMilliseconds(),
+    });
     const notifications = try hold(adapter, soak_hold_seconds);
     if (!dev.isConnected()) return error.ConnectionLost;
     return notifications;
