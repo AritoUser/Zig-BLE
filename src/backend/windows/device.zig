@@ -26,24 +26,39 @@ pub const WinCharacteristicSlot = struct {
     char_ptr: ?*bindings.IGattCharacteristic = null,
     value_changed_token: bindings.EventRegistrationToken = 0,
     is_subscribed: bool = false,
-    value_changed_handler: bindings.GattValueChangedHandler = undefined,
+    /// The registered handler, heap-allocated (see `bindings.events.create`). A callback whose
+    /// handler is no longer this one belongs to an earlier subscription and is ignored.
+    value_changed_handler: std.atomic.Value(?*bindings.GattValueChangedHandler) = .init(null),
     parent_device: ?*anyopaque = null,
     notify_cb: ?NotificationCallback = null,
     notify_user_data: ?*anyopaque = null,
 
     pub fn release(self: *WinCharacteristicSlot) void {
+        self.dropValueChangedHandler();
         if (builtin.os.tag == .windows) {
-            self.value_changed_handler.deactivate();
             if (self.char_ptr) |cp| {
-                if (self.is_subscribed and self.value_changed_token != 0) {
-                    _ = cp.lpVtbl.remove_ValueChanged(cp, self.value_changed_token);
-                    self.is_subscribed = false;
-                    self.value_changed_token = 0;
-                }
                 _ = cp.lpVtbl.Release(cp);
                 self.char_ptr = null;
             }
         }
+    }
+
+    /// Ends the subscription's WinRT registration and gives back this slot's reference to the
+    /// handler. WinRT may still call it for a moment; it then finds itself detached.
+    pub fn dropValueChangedHandler(self: *WinCharacteristicSlot) void {
+        const handler = self.value_changed_handler.swap(null, .acq_rel);
+        if (handler) |h| h.active.store(false, .release);
+        if (builtin.os.tag == .windows) {
+            if (self.char_ptr) |cp| {
+                if (self.is_subscribed and self.value_changed_token != 0) {
+                    const hr = cp.lpVtbl.remove_ValueChanged(cp, self.value_changed_token);
+                    if (hr < 0) log.warn("WinRT remove_ValueChanged returned HRESULT 0x{X:0>8}", .{@as(u32, @bitCast(hr))});
+                }
+            }
+        }
+        self.is_subscribed = false;
+        self.value_changed_token = 0;
+        if (handler) |h| bindings.events.drop(bindings.GattValueChangedHandler, h);
     }
 };
 
@@ -70,14 +85,25 @@ pub fn DeviceContext(comptime pool_config: PoolConfig, comptime BackendType: typ
 
         conn_status_token: bindings.EventRegistrationToken = 0,
         conn_status_registered: bool = false,
-        conn_status_handler: bindings.ConnectionStatusChangedHandler = undefined,
+        /// Heap-allocated like `WinCharacteristicSlot.value_changed_handler`: a late callback of
+        /// an earlier connection must not reach the next one that uses this slot.
+        conn_status_handler: std.atomic.Value(?*bindings.ConnectionStatusChangedHandler) = .init(null),
         parent_backend: ?*BackendType = null,
 
         services: [pool_config.max_services_per_device]?*bindings.IGattDeviceService = @splat(null),
+        /// UUID of `services[i]`, so `narrowGatt` needs no WinRT call.
+        service_uuids: [pool_config.max_services_per_device]UUID = @splat(UUID.from16(0)),
         services_len: u8 = 0,
 
         characteristics: [pool_config.max_characteristics_per_device]WinCharacteristicSlot = @splat(.{}),
         characteristics_len: u8 = 0,
+
+        /// Set after an uncached, unfiltered discovery on the current link: the pools then hold
+        /// the peer's whole database, and a filtered rediscovery narrows them in memory
+        /// (`narrowGatt`) instead of asking Windows again. Not Windows' cache: it keeps services
+        /// the peer no longer has (A11). Cleared once the pools are narrowed, and when the link
+        /// goes down, since the peer's database may differ after a reconnect.
+        gatt_fresh: std.atomic.Value(bool) = .init(false),
 
         mtu: u16 = 23,
         bond_state: types.BondState = .not_bonded,
@@ -109,7 +135,7 @@ pub fn DeviceContext(comptime pool_config: PoolConfig, comptime BackendType: typ
             self.characteristics_len += 1;
         }
 
-        pub fn addService(self: *Self, svc: *bindings.IGattDeviceService) BleError!void {
+        pub fn addService(self: *Self, uuid: UUID, svc: *bindings.IGattDeviceService) BleError!void {
             if (self.services_len >= self.services.len) {
                 if (builtin.os.tag == .windows) {
                     _ = svc.lpVtbl.Release(svc);
@@ -117,6 +143,7 @@ pub fn DeviceContext(comptime pool_config: PoolConfig, comptime BackendType: typ
                 return BleError.PoolExhausted;
             }
             self.services[self.services_len] = svc;
+            self.service_uuids[self.services_len] = uuid;
             self.services_len += 1;
         }
 
@@ -140,23 +167,16 @@ pub fn DeviceContext(comptime pool_config: PoolConfig, comptime BackendType: typ
                 self.dropNotificationCallbacks();
             }
             for (self.characteristics[0..self.characteristics_len]) |*ch| {
-                ch.value_changed_handler.deactivate();
-                if (builtin.os.tag == .windows) {
-                    if (ch.char_ptr) |cp| {
-                        if (ch.is_subscribed and ch.value_changed_token != 0) {
-                            _ = cp.lpVtbl.remove_ValueChanged(cp, ch.value_changed_token);
-                        }
-                    }
-                }
-                ch.is_subscribed = false;
-                ch.value_changed_token = 0;
+                ch.dropValueChangedHandler();
             }
         }
 
         /// Runs on WinRT threads. Only touches state guarded by `state_mutex` and calls the
         /// application's callbacks after releasing it; WinRT registrations are left for the
         /// next backend call to clean up.
-        pub fn handleConnectionStatusTransition(self: *Self, connected: bool) void {
+        /// `source` is the handler that reported it; when it is no longer this slot's handler,
+        /// the report belongs to an earlier connection and is dropped. `null` skips the check.
+        pub fn handleConnectionStatusTransition(self: *Self, connected: bool, source: ?*const bindings.ConnectionStatusChangedHandler) void {
             const backend = self.parent_backend orelse {
                 self.is_connected.store(connected, .release);
                 self.connection_state.store(if (connected) .connected else .disconnected, .release);
@@ -174,9 +194,13 @@ pub fn DeviceContext(comptime pool_config: PoolConfig, comptime BackendType: typ
             {
                 backend.state_mutex.lock();
                 defer backend.state_mutex.unlock();
+                if (source) |src| {
+                    if (self.conn_status_handler.load(.acquire) != src) return;
+                }
                 const was_connected = self.is_connected.swap(connected, .acq_rel);
                 self.connection_state.store(if (connected) .connected else .disconnected, .release);
                 if (!connected) {
+                    self.gatt_fresh.store(false, .release);
                     if (!self.auto_resubscribe) self.dropNotificationCallbacks();
                     // WinRT does not report a disconnect reason.
                     if (was_connected) event = .{ .disconnected = .{ .address = self.address, .reason_code = null } };
@@ -226,26 +250,71 @@ pub fn DeviceContext(comptime pool_config: PoolConfig, comptime BackendType: typ
                 ch.release();
             }
             self.characteristics_len = 0;
-
-            if (builtin.os.tag == .windows) {
-                for (self.services[0..self.services_len]) |maybe_svc| {
-                    if (maybe_svc) |svc| {
-                        var closable: ?*bindings.IClosable = null;
-                        if (svc.lpVtbl.QueryInterface(svc, &bindings.IID_IClosable, @ptrCast(&closable)) >= 0) {
-                            if (closable) |cl| {
-                                _ = cl.lpVtbl.Close(cl);
-                                _ = cl.lpVtbl.Release(cl);
-                            }
-                        }
-                        _ = svc.lpVtbl.Release(svc);
-                    }
-                }
-            }
+            for (self.services[0..self.services_len]) |*svc| releaseService(svc);
             self.services_len = 0;
         }
 
+        /// Keeps only the services in `filter` and their characteristics, in discovery order,
+        /// and releases the rest. Subscriptions must be cleared first: slots move.
+        pub fn narrowGatt(self: *Self, filter: []const UUID) BleError!void {
+            if (filter.len == 0) return;
+            var kept: u8 = 0;
+            for (self.characteristics[0..self.characteristics_len]) |*ch| {
+                if (contains(filter, ch.service_uuid)) {
+                    self.characteristics[kept] = ch.*;
+                    kept += 1;
+                } else ch.release();
+            }
+            for (self.characteristics[kept..self.characteristics_len]) |*ch| ch.* = .{};
+            self.characteristics_len = kept;
+
+            kept = 0;
+            for (0..self.services_len) |i| {
+                if (contains(filter, self.service_uuids[i])) {
+                    self.services[kept] = self.services[i];
+                    self.service_uuids[kept] = self.service_uuids[i];
+                    kept += 1;
+                } else releaseService(&self.services[i]);
+            }
+            for (self.services[kept..self.services_len]) |*svc| svc.* = null;
+            self.services_len = kept;
+            self.gatt_fresh.store(false, .release);
+            if (kept == 0) return BleError.ServiceNotFound;
+        }
+
+        fn contains(list: []const UUID, uuid: UUID) bool {
+            for (list) |u| if (u.eql(uuid)) return true;
+            return false;
+        }
+
+        fn releaseService(slot: *?*bindings.IGattDeviceService) void {
+            const svc = slot.* orelse return;
+            slot.* = null;
+            if (builtin.os.tag != .windows) return;
+            var closable: ?*bindings.IClosable = null;
+            if (svc.lpVtbl.QueryInterface(svc, &bindings.IID_IClosable, @ptrCast(&closable)) >= 0) {
+                if (closable) |cl| {
+                    _ = cl.lpVtbl.Close(cl);
+                    _ = cl.lpVtbl.Release(cl);
+                }
+            }
+            _ = svc.lpVtbl.Release(svc);
+        }
+
         pub fn releaseAll(self: *Self) void {
-            self.conn_status_handler.deactivate();
+            const conn_handler = blk: {
+                // Under `state_mutex`, so a status callback either sees its handler and finishes
+                // first, or sees it gone.
+                if (self.parent_backend) |backend| {
+                    backend.state_mutex.lock();
+                    defer backend.state_mutex.unlock();
+                    break :blk self.conn_status_handler.swap(null, .acq_rel);
+                }
+                break :blk self.conn_status_handler.swap(null, .acq_rel);
+            };
+            if (conn_handler) |h| h.active.store(false, .release);
+            defer if (conn_handler) |h| bindings.events.drop(bindings.ConnectionStatusChangedHandler, h);
+            self.gatt_fresh.store(false, .release);
             self.releaseGatt();
 
             if (builtin.os.tag == .windows) {

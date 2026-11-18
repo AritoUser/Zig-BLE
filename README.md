@@ -8,6 +8,12 @@ A Bluetooth Low Energy (BLE) library written entirely in Zig (0.17.0+). It works
 
 ---
 
+## Do more with less
+
+Zig-BLE is built by one rule: when two designs work, the one with less in it wins. Fewer dependencies, fixed memory instead of growing buffers, the operating system's Bluetooth stack instead of a second one, a small API, and no feature called done before it ran on real hardware. See [docs/PHILOSOPHY.md](docs/PHILOSOPHY.md).
+
+---
+
 ## Why Zig-BLE
 
 - **Zig-native, no C dependencies.** On Linux, Zig-BLE talks to BlueZ through its own D-Bus wire client. No `libdbus`, no `libc`, no C toolchain. On Windows it calls the WinRT Bluetooth APIs directly.
@@ -97,6 +103,7 @@ graph TD
 
 ## Documentation
 
+- [Philosophy: do more with less](docs/PHILOSOPHY.md): the rule behind every design decision.
 - [Technical White Paper](docs/WHITEPAPER.md): design of the D-Bus wire client and the protocol engine.
 - [Architecture & Protocol Manual](docs/ARCHITECTURE_AND_PROTOCOL_MANUAL.md): memory layout, state machines and packet formats.
 - [Roadmap & Extensions](docs/BLE_ROADMAP_AND_EXTENSIONS.md): planned features.
@@ -117,7 +124,7 @@ Zig-BLE v1.0.0 has been physically verified over the 2.4 GHz air interface using
           ZIG-BLE v1.0.0: LIVE OVER-THE-AIR TELEMETRY & GATT STATISTICS         
 ================================================================================
 Local Controller:            PC Bluetooth adapter (Windows 11)
-Target Device:               Samsung Galaxy S25 Ultra
+Target Device:               Android smartphone
 Connection Status:           Connected (Active 2.4 GHz Physical Radio Link)
 --------------------------------------------------------------------------------
 GATT Services Discovered:    8 (SIG Standard: 6, Vendor 128-Bit: 2)
@@ -135,7 +142,6 @@ Total Interrogation Time:    3236.92 ms (~3.2 seconds for full device profile)
 ```
 
 **Real Live Payload Sample Extracted Over-the-Air:**
-* **GAP Device Name (0x2A00):** `"S25 Ultra "` (20 bytes UTF-8)
 * **Telephony Bearer Provider (0x2BB4):** `"E.164"` (ITU-T standard)
 * **Telephony Bearer Technology (0x2BB5):** `0x06` (5G NR / LTE active radio)
 * **GATT Database Hash (0x2B2A):** `95 79 53 91 F5 F0 94 08 41 E4 DB D4 7D F6 D8 C3` (16 bytes)

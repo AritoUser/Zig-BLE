@@ -401,7 +401,7 @@ pub const HciBackend = struct {
             const handle_flags = std.mem.readInt(u16, packet[1..3], .little);
             const conn_handle: u16 = handle_flags & 0x0FFF;
             const pb_flag: u2 = @intCast((handle_flags >> 12) & 0x03);
-            const acl_len = std.mem.readInt(u16, packet[3..5], .little);
+            const acl_len: usize = std.mem.readInt(u16, packet[3..5], .little);
             if (packet.len < 5 + acl_len) return BleError.GattError;
 
             for (&self.devices) |*dev| {

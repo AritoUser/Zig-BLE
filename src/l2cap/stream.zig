@@ -2,8 +2,7 @@
 //!
 //! Conforms to Bluetooth Core Specification Vol 3, Part A (L2CAP).
 //! Provides high-level stream and listener abstractions for high-throughput
-//! LE Credit-Based Channels (e.g. Galaxy Watch Ultra `watch-wire`, PSM 0x1001,
-//! or custom wearable continuous telemetry streams).
+//! LE Credit-Based Channels (e.g. continuous wearable telemetry streams).
 //!
 //! Fully zero-allocation hot paths, supporting native Linux `AF_BLUETOOTH`
 //! sockets as well as deterministic in-memory mock streams for CI testing.
@@ -260,7 +259,7 @@ test "MockChannel bi-directional streaming test" {
     var pair = createMockStreamPair(&chan_a, &chan_b, 512, 251);
 
     // Client -> Server
-    const msg = "GalaxyWatch_100Hz_PPG_Stream";
+    const msg = "Wearable_100Hz_PPG_Stream";
     _ = try pair.client.write(msg);
 
     var rx_buf: [64]u8 = undefined;

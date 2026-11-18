@@ -53,7 +53,7 @@ Linux: BlueZ 5.82, Realtek-USB-Adapter; Gegenstelle der jeweils andere Rechner.
 | 8 | Bond entfernen | `… <addr> --service <uuid> --unpair` | beim nächsten Verbinden `not_bonded`, Windows führt das Gerät nicht mehr | ✅ | |
 | 9 | Peripheral: Client verbindet sich | `… --peripheral` | echo les- und schreibbar, counter zählt | ✅ | ✅ |
 | 10 | Peripheral: Pairing | `… --peripheral --secure` | Windows koppelt den Abonnenten selbst (gleicher Code auf beiden Seiten), danach liefert protected `paired` | ✅ | ✅ |
-| 11 | Langzeit: Scannen, Verbinden, Slots | `… <addr> --soak 240` | 0 Fehler, Handles steigen nicht (nur Windows zeigt sie) | | |
+| 11 | Langzeit: Scannen, Verbinden, Slots | `… <addr> --soak 480` | Kein Absturz, jede Fehlrunde erholt sich im nächsten Zyklus, Speicher und Handles steigen nicht (V2_BLOCKERS B5) | | |
 | 12 | Neustart von `bluetoothd` | während 11: `sudo systemctl restart bluetooth` | `Recovered.`, danach laufen die Zyklen weiter | – | |
 
 Anmerkungen:
@@ -105,6 +105,8 @@ Linux-Peripheral, L = Linux als Central gegen das Windows-Peripheral:
   im Wiederholungslauf keine von 90. Gewertet ist der Wiederholungslauf.
 - **Tag 2 (2026-11-12/13):** beide Richtungen wiederholt, alle zehn Prüfungen wieder 10/10, kein
   Verbindungsfehler in beiden Läufen. Damit ist der Sammellauf an zwei Tagen grün.
+- **2026-11-15, W nach der Umstellung der WinRT-Handler auf Heap-Objekte** (Notifications,
+  Verbindungsstatus, Scan): alle zehn Prüfungen 10/10, kein Absturz (Build mit `-Dcrash-dumps`).
 
 ## Pairing
 
@@ -147,6 +149,38 @@ gekoppelten PC nicht wieder erreicht (B13).
   Passkey (Central tippt) je 10/10 mit je einem Neuversuch, Passkey (Peripheral tippt) 9/10; die
   Fehlrunde scheiterte schon an `StartNotify` vor dem Pairing (A10). Gleicher Tag, zählt nicht als
   zweiter Tag.
+- **2026-11-16, zweiter Tag:** L und W bei allen vier Methoden 10/10 (80/80), kein Neuversuch nach
+  einem Verbindungsverlust, kein `StartNotify`-Fehler (A10). Pairing ist damit für W und L an zwei
+  Tagen grün.
+- **2026-11-16, zweiter Lauf (für A10):** L bei allen Methoden 10/10, W 39/40. Wieder kein
+  `StartNotify`-Fehler, A10 ist damit erledigt. Die W-Fehlrunde (Passkey, Peripheral tippt, Runde 9)
+  scheiterte vor dem Pairing an der Discovery mit `PoolExhausted` (A11).
+- **2026-11-16, W mit Diagnose (A11):** 37/40 (Numeric 10/10, die anderen drei je 9/10). Alle drei
+  Fehlrunden sind A11: Der Windows-Cache lieferte 13 veraltete Kopien des Testdienstes.
+- **2026-11-16, W mit A11-Fix:** erster Lauf 39/40 (Numeric, Just Works, Passkey/Central je 10/10,
+  Passkey/Peripheral 9/10: die erste Discovery fand den Testdienst nicht, inzwischen abgefangen).
+  Der zweite Lauf ist ungültig: Der USB-Adapter des Linux-Rechners meldete sich mitten im Lauf neu
+  an und hieß danach `hci1`. Der Befehl in `PERIPHERAL_FORGET` und `forget_test_bond.sh` nennen
+  `hci0` fest, und `ble-hardware-check` öffnete als Central fest Adapter 0; es nimmt jetzt den
+  ersten Adapter, den BlueZ meldet. Nach so einem Neustart des Adapters beide Skripte prüfen.
+- **2026-11-17, W mit A11-Fix, Nachweis:** zwei Läufe hintereinander, alle vier Methoden in beiden
+  10/10 (80/80), kein Neuversuch nach einem Verbindungsverlust. A11 ist damit erledigt. Der Befehl in
+  `PERIPHERAL_FORGET` entfernte den Bond dabei auf jedem Adapter, der den Peer kennt, nicht fest
+  unter `hci0`.
+- **2026-11-16/17, B5 Linux-Central, 8 h:** 1841 Zyklen, 5 Fehlrunden, alle im nächsten Zyklus
+  erholt; Speicher und fds flach. Ein Soak von 3 h mit `btmon` auf dem Host (703 Zyklen, 2
+  Fehlrunden) zeigt beide Male `Connection Timeout (0x08)` vom Controller, also einen Funkabbruch.
+  Der Soak schreibt pro Zyklus Zeit und Adresse (`<unix-zeit> connect <addr>`), damit eine
+  Fehlrunde im Mitschnitt zu finden ist, und nach dem Abonnieren die Dauer bis zur nutzbaren
+  Verbindung (`ready in <ms> ms: connect …, discover …, read and subscribe …`). Aus einer Nacht
+  ergibt sich so die Verteilung der Verbindungszeiten, ohne eigenen Messlauf.
+- **2026-11-17/18, B5 Windows-Central, 8 h, Commit `cd6efff`:** 1167 Zyklen, 0 Fehlrunden, 25920
+  Notifications, 0 Events verworfen. Handles 238 bis 247 flach, Working Set ab etwa 4 h konstant
+  um 19,6 MB; das Linux-Peripheral blieb bei 7,1 bis 7,2 MB und 4 fds.
+- **2026-11-18, erste Messung `ready`** (je 3 min): Windows-Central bis zur nutzbaren Verbindung
+  3,3 bis 6,8 s (`connect` mit voller Discovery 2,9 bis 6,3 s, gefilterte Discovery 2 bis 3 ms,
+  Lesen und Abonnieren etwa 0,4 s); Linux-Central 2,3 bis 3,2 s (`connect` 1,3 bis 1,9 s,
+  Discovery 1 ms, Lesen und Abonnieren etwa 1 s).
 - Bleibt nach einer Runde ein Bond auf nur einer Seite stehen, scheitern alle folgenden Runden
   schon am Verbindungsaufbau (B3). Das Skript wiederholt `PERIPHERAL_FORGET` deshalb und meldet,
   wenn es scheitert.
