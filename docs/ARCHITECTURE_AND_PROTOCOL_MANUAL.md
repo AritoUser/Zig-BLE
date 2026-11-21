@@ -1,8 +1,8 @@
 # Zig-BLE: Architecture & Protocol Manual
 
-**Engineering Specification & Systems Reference | Version 3.0 (v1.2.0)**  
+**Engineering Specification & Systems Reference | Version 3.1 (written for v1.2.0, updated before v2.0.0)**  
 **Module:** `Zig_BLE`  
-**Compatibility:** Zig 0.17.0+ | Windows 11 (WinRT) / Linux BlueZ 5.x / Linux raw HCI (scanning) / H4 framing for bare-metal (building blocks)  
+**Compatibility:** Zig 0.17.0+ | Windows 11 (WinRT) / Linux BlueZ 5.x / Linux raw HCI and UART H4/H5 (experimental, never run against a real controller)  
 **Repository:** [github.com/AritoUser/Zig-BLE](https://github.com/AritoUser/Zig-BLE)  
 
 ---
@@ -105,7 +105,7 @@ graph TD
    * Supports `SCM_RIGHTS` ancillary control messages (`cmsg`) for zero-copy file descriptor handovers (used in GATT `AcquireWrite` / `AcquireNotify` streaming).
 2. **Direct Kernel HCI Socket Interface (`AF_BLUETOOTH`)**:
    * Direct user-space channel to the Bluetooth Controller via raw HCI sockets (`HCI_CHANNEL_USER` / `HCI_CHANNEL_RAW`), without `bluetoothd`.
-   * Scanning works (`HciController`). An experimental `HciBackend` (`src/backend/hci.zig`) implements the backend interface on top of raw HCI, but connections, GATT and pairing do not work against a real controller yet; use the BlueZ backend for those.
+   * `HciController` opens the socket, reads the controller address and runs LE scans. The experimental `HciBackend` (`src/backend/hci.zig`) implements the backend interface on top of raw HCI: connect, full GATT discovery, notifications and pairing with link encryption work against a simulated controller in the tests. None of this, scanning included, has run against a real controller yet; use the BlueZ backend for real devices.
 3. **Embedded Bare-Metal Serial HCI (UART H4)**:
    * H4 (4-wire) and H5 (3-wire, `src/hci/h5.zig`) framing for host controllers such as Nordic nRF52, Espressif ESP32-C3/C6 or STM32WB are implemented (see Section 14). The experimental `UartBackend` (`src/backend/uart.zig`) builds on `HciBackend` and has the same limitations.
 4. **Android**: There is no Android integration yet. Possible future approaches include forwarding GATT notifications from the Android app to Zig via JNI direct buffers, or handing the file descriptor of an L2CAP CoC channel (`createL2capChannel`) to Zig.
@@ -118,7 +118,7 @@ graph TD
 
 Long-running gateways and sensor pipelines benefit from memory use that does not grow with traffic: no fragmentation over weeks of uptime and no allocator work in the receive path. Zig-BLE follows these rules:
 * **Borrow semantics**: Parsers (`AdvertisingReport.parse`, `MessageIter`, the ATT/SMP/HCI decoders) take no allocator and return structures whose string, byte and payload members point directly into the receive buffer (`[]const u8`).
-* **Fixed-size pools**: The Windows and BlueZ backends store devices, characteristics and subscriptions in fixed-size arrays.
+* **Fixed-size pools**: The Windows and BlueZ backends store devices, characteristics and subscriptions in fixed-size arrays. One exception on Windows: WinRT event handlers (one per subscription, connection and scan) are reference-counted heap objects, because WinRT may call a handler after it was removed (see Section 13).
 * **Serialization**: `Message.finalize` and the advertising builder use bounded stack buffers. Building outgoing D-Bus message bodies uses `ByteBuffer`, a growable buffer backed by a caller-supplied allocator; it can be pre-sized with `ByteBuffer.initCapacity` or backed by a fixed buffer allocator.
 
 ### 2.2 Struct Packing, Endianness & Hardware Alignment
@@ -409,19 +409,19 @@ The engine provides zero-copy parsers and serializers for the following ATT PDUs
 | `0x02` | **ATT_EXCHANGE_MTU_REQ** | `ExchangeMtuRequest.parse(raw)` |
 | `0x03` | **ATT_EXCHANGE_MTU_RSP** | `ExchangeMtuResponse.parse(raw)` |
 | `0x04` | **ATT_FIND_INFO_REQ** | `FindInformationRequest.parse(raw)` |
-| `0x05` | **ATT_FIND_INFO_RSP** | `FindInformationResponse` with zero-allocation `InformationIterator` |
+| `0x05` | **ATT_FIND_INFO_RSP** | `FindInformationResponse` with zero-allocation `FindInformationResponse.Iterator` |
 | `0x06` | **ATT_FIND_BY_TYPE_VALUE_REQ** | `FindByTypeValueRequest.parse(raw)` |
-| `0x07` | **ATT_FIND_BY_TYPE_VALUE_RSP** | `FindByTypeValueResponse` with `HandlesInformationIterator` |
+| `0x07` | **ATT_FIND_BY_TYPE_VALUE_RSP** | `FindByTypeValueResponse` with `FindByTypeValueResponse.Iterator` |
 | `0x08` | **ATT_READ_BY_TYPE_REQ** | `ReadByTypeRequest.parse(raw)` |
-| `0x09` | **ATT_READ_BY_TYPE_RSP** | `ReadByTypeResponse` with `ReadByTypeIterator` |
+| `0x09` | **ATT_READ_BY_TYPE_RSP** | `ReadByTypeResponse` with `ReadByTypeResponse.Iterator` |
 | `0x0A` | **ATT_READ_REQ** | `ReadRequest.parse(raw)` |
 | `0x0B` | **ATT_READ_RSP** | `ReadResponse.parse(raw)` |
 | `0x0C` | **ATT_READ_BLOB_REQ** | `ReadBlobRequest.parse(raw)` |
 | `0x0D` | **ATT_READ_BLOB_RSP** | `ReadBlobResponse.parse(raw)` |
-| `0x0E` | **ATT_READ_MULTIPLE_REQ** | `ReadMultipleRequest.parse(raw)` with `HandlesIterator` |
+| `0x0E` | **ATT_READ_MULTIPLE_REQ** | `ReadMultipleRequest.decode(bytes)` / `encode(handles, dest)` |
 | `0x0F` | **ATT_READ_MULTIPLE_RSP** | `ReadMultipleResponse.parse(raw)` |
 | `0x10` | **ATT_READ_BY_GROUP_TYPE_REQ** | `ReadByGroupTypeRequest.parse(raw)` |
-| `0x11` | **ATT_READ_BY_GROUP_TYPE_RSP** | `ReadByGroupTypeResponse` with `ReadByGroupTypeIterator` |
+| `0x11` | **ATT_READ_BY_GROUP_TYPE_RSP** | `ReadByGroupTypeResponse` with `ReadByGroupTypeResponse.Iterator` |
 | `0x12` | **ATT_WRITE_REQ** | `WriteRequest.parse(raw)` |
 | `0x13` | **ATT_WRITE_RSP** | `WriteResponse.parse(raw)` |
 | `0x52` | **ATT_WRITE_CMD** | `WriteCommand.parse(raw)` |
@@ -565,7 +565,7 @@ Compliant with Bluetooth Core Specification v5.4 / v6.0, Volume 4, Part E (HCI F
 
 Intended for minimal embedded Linux systems where `bluetoothd` and D-Bus are not available.
 
-**Current status:** `HciController` opens a raw HCI socket, reads the controller address and runs LE scans. The command encoders and event decoders below cover a much larger part of the HCI specification, The experimental `HciBackend` wires connection commands, ACL flow control, ATT and SMP together, but it does not yet wait for controller events (e.g. LE Connection Complete) or ATT responses, so it is not usable against a real controller.
+**Current status:** `HciController` opens a raw HCI socket, reads the controller address and runs LE scans. The command encoders and event decoders below cover a much larger part of the HCI specification. The experimental `HciBackend` wires connection commands, ACL flow control, ATT and SMP together and waits for controller events and ATT responses; it is tested against a simulated controller only. Known gaps: no ACL credit flow control, central role only, events pumped on one thread. A real controller is the subject of v3 ([V2_BLOCKERS.md](V2_BLOCKERS.md), E1).
 
 ### 11.1 Low-Level Architecture & Packet Framing
 - **Transport**: Communicates directly with the Linux Bluetooth subsystem via `AF_BLUETOOTH` and `BTPROTO_HCI` (`HciSocket`).
@@ -610,21 +610,21 @@ To decouple GATT application logic from platform-specific drivers, Zig-BLE uses 
 ```zig
 pub const BackendVTable = struct {
     name: []const u8,
-    openAdapter: *const fn (ctx: *anyopaque, index: u16) anyerror!void,
+    openAdapter: *const fn (ctx: *anyopaque, index: u16) BleError!void,
     closeAdapter: *const fn (ctx: *anyopaque) void,
-    setPowered: *const fn (ctx: *anyopaque, powered: bool) anyerror!void,
-    isPowered: *const fn (ctx: *anyopaque) anyerror!bool,
-    startScan: *const fn (ctx: *anyopaque, filter: ScanFilter, cb: ScanCallback, user_data: ?*anyopaque) anyerror!void,
-    stopScan: *const fn (ctx: *anyopaque) anyerror!void,
-    connectDevice: *const fn (ctx: *anyopaque, addr: Address, timeout_ms: u32) anyerror!*anyopaque,
-    disconnectDevice: *const fn (ctx: *anyopaque, dev_handle: *anyopaque) anyerror!void,
+    setPowered: *const fn (ctx: *anyopaque, powered: bool) BleError!void,
+    isPowered: *const fn (ctx: *anyopaque) BleError!bool,
+    startScan: *const fn (ctx: *anyopaque, filter: ScanFilter, cb: ScanCallback, user_data: ?*anyopaque) BleError!void,
+    stopScan: *const fn (ctx: *anyopaque) BleError!void,
+    connectDevice: *const fn (ctx: *anyopaque, addr: Address, timeout_ms: u32) BleError!*anyopaque,
+    disconnectDevice: *const fn (ctx: *anyopaque, dev_handle: *anyopaque) BleError!void,
     isDeviceConnected: *const fn (ctx: *anyopaque, dev_handle: *anyopaque) bool,
     getDeviceRssi: *const fn (ctx: *anyopaque, dev_handle: *anyopaque) ?i16,
-    discoverServices: *const fn (ctx: *anyopaque, dev_handle: *anyopaque) anyerror!void,
-    readCharacteristic: *const fn (ctx: *anyopaque, dev_handle: *anyopaque, char_uuid: UUID, buf: []u8) anyerror!usize,
-    writeCharacteristic: *const fn (ctx: *anyopaque, dev_handle: *anyopaque, char_uuid: UUID, data: []const u8, with_response: bool) anyerror!void,
-    subscribeNotifications: *const fn (ctx: *anyopaque, dev_handle: *anyopaque, char_uuid: UUID, cb: NotificationCallback, user_data: ?*anyopaque) anyerror!void,
-    unsubscribeNotifications: *const fn (ctx: *anyopaque, dev_handle: *anyopaque, char_uuid: UUID) anyerror!void,
+    discoverServices: *const fn (ctx: *anyopaque, dev_handle: *anyopaque) BleError!void,
+    readCharacteristic: *const fn (ctx: *anyopaque, dev_handle: *anyopaque, char_uuid: UUID, buf: []u8) BleError!usize,
+    writeCharacteristic: *const fn (ctx: *anyopaque, dev_handle: *anyopaque, char_uuid: UUID, data: []const u8, with_response: bool) BleError!void,
+    subscribeNotifications: *const fn (ctx: *anyopaque, dev_handle: *anyopaque, char_uuid: UUID, cb: NotificationCallback, user_data: ?*anyopaque) BleError!void,
+    unsubscribeNotifications: *const fn (ctx: *anyopaque, dev_handle: *anyopaque, char_uuid: UUID) BleError!void,
 };
 ```
 
@@ -664,18 +664,16 @@ Unlike traditional C++ solutions that require MSVC C++ runtime DLLs, Windows SDK
 1. **Win32 Inquiry Scanner (`radio.zig`, `bindings.zig`)**:
    Loads `bthprops.cpl` and `BluetoothApis.dll` on demand. Directly issues radio inquiries (`BLUETOOTH_DEVICE_SEARCH_PARAMS`) to detect nearby active devices, querying friendly names, MAC addresses, and manufacturer identifiers.
 2. **WinRT Bluetooth LE Device Model**:
-   Connects to devices via exact Device ID (`BluetoothLE#BluetoothLE...`) or 48-bit Bluetooth MAC addresses, performing live uncached GATT service discovery and characteristic read/write operations over the air.
-3. **Zero-Allocation Static Storage & Memory Pools (`WindowsDevice`)**:
-   Eliminates all runtime heap allocations by using bounded static arrays:
-   * Fixed device capacity (`[8]WindowsDevice`) inside `WindowsBackend`.
-   * Static characteristic discovery slots (`[64]CharEntry`) and subscription slots (`[16]SubEntry`).
-   * By-value storage of COM delegate sinks (`GattValueChangedHandler`) directly inside `SubEntry`, safe from memory fragmentation during multi-day continuous telemetry streaming.
+   Connects to devices via exact Device ID (`BluetoothLE#BluetoothLE...`) or 48-bit Bluetooth MAC addresses. `connect` runs one uncached GATT discovery over the air; a filtered discovery right after it narrows that result in memory, because Windows' cache keeps services the peer has removed.
+3. **Bounded pools (`WindowsBackendWithConfig(pool_config)`)**:
+   Devices, services and characteristics live in fixed arrays sized by `PoolConfig` (`src/backend/windows/device.zig`; defaults: 8 devices, 16 services and 64 characteristics per device). Each device is a `DeviceContext`, each characteristic a `WinCharacteristicSlot`; a full pool returns `PoolExhausted`.
+   * **Exception, event handlers:** the COM delegates for notifications (`GattValueChangedHandler`), connection status and scanning are heap objects with real reference counting, freed with WinRT's last `Release`. WinRT may call a handler after `remove_*` returned; a handler stored inside a reused slot could then deliver a stale event to the next connection. A callback whose handler no longer belongs to its slot is ignored.
 
 ---
 
 ## 14. Bare-Metal Host-Stack Building Blocks (UART H4 & L2CAP ACL)
 
-For environments without an operating system Bluetooth stack, Zig-BLE provides the lower building blocks of a host stack. A complete host stack (connection management, ATT and SMP state machines on top of these layers) is not implemented yet; see [PRODUCTION_READINESS.md](PRODUCTION_READINESS.md).
+For environments without an operating system Bluetooth stack, Zig-BLE provides the building blocks of a host stack, and the experimental `HciBackend` (Section 11) puts connection management, the ATT client and the SMP initiator on top of them. It has run against a simulated controller only; see [PRODUCTION_READINESS.md](PRODUCTION_READINESS.md), items 15–21.
 
 ### 14.1 H4 UART Streaming Parser (`src/hci/h4.zig`)
 Conforms strictly to Bluetooth Core Spec Vol 4, Part A (HCI UART Transport Layer):
@@ -763,7 +761,7 @@ Zig-BLE features an integrated binary PCAP generator conformant with standard Li
 The full table, the measurement method and how to interpret the numbers are in the [White Paper, Section 5](WHITEPAPER.md#5-microbenchmarks--performance-evaluation). In short: parsing cost is negligible compared to radio and operating system latency.
 
 ### 18.2 Real Hardware Over-The-Air Telemetry
-Tested on Windows 11 with a PC Bluetooth adapter against an Android smartphone:
+The hardware results before v2.0.0 (Windows 11 and Linux against each other, both roles, pairing, 8-hour soak tests, time to a usable link) are in [HARDWARE_TESTS.md](HARDWARE_TESTS.md) and [V2_BLOCKERS.md](V2_BLOCKERS.md). An earlier single run on Windows 11 with a PC Bluetooth adapter against an Android smartphone:
 * **Discovery Time**: 324.36 ms (8 Services discovered).
 * **Air Interface Latency**: Min 37.59 ms, Avg 57.10 ms, Max 73.17 ms per GATT read transaction.
 * **Success Rate**: 30/31 operations completed successfully over 2.4 GHz physical radio.

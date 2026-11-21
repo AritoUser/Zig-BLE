@@ -1,7 +1,7 @@
 # Offene Punkte bis v2.0.0
 
 v2.0.0 erscheint erst, wenn alles hier erledigt ist. Was nur manchmal funktioniert, gilt als
-nicht erledigt. Stand: 2026-11-13. Die Testbefehle stehen in [`HARDWARE_TESTS.md`](HARDWARE_TESTS.md).
+nicht erledigt. Stand: 2026-11-21. Die Testbefehle stehen in [`HARDWARE_TESTS.md`](HARDWARE_TESTS.md).
 
 ## Release-Kriterien
 
@@ -31,7 +31,7 @@ Ein Punkt ist erst erledigt, wenn:
 
 | # | Funktion | Windows | Linux |
 | :--- | :--- | :---: | :---: |
-| B1 | Pairing als Central (`--pair`), Numeric Comparison, Bond hält über einen Reconnect. Windows: 10/10 an zwei Tagen mit `scripts/hardware_pairing.sh`, jede Runde mit frischem Bond und gleichem Code auf beiden Seiten. Linux: Koppeln klappt, der Reconnect danach scheitert (B13). | ✅ 10/10 an zwei Tagen | teilweise |
+| B1 | Pairing als Central (`--pair`), Numeric Comparison, Bond hält über einen Reconnect. Windows: 10/10 an zwei Tagen mit `scripts/hardware_pairing.sh`, jede Runde mit frischem Bond und gleichem Code auf beiden Seiten. Linux: Koppeln klappt, der Reconnect danach scheitert am Kernel (B13 (3b), bekannte Einschränkung); die Teile in Zig-BLE (B13 (1), (2), (3a)) sind behoben. | ✅ 10/10 an zwei Tagen | teilweise |
 | B2 | Pairing per Just Works und per Passkey (Central tippt / Peripheral tippt). Windows als Central mit Reconnect: je 10/10 an zwei Tagen. Linux als Central gegen das Windows-Peripheral: Just Works 10/10 an zwei Tagen; Passkey (Central tippt) 8/10 und 10/10; Passkey (Peripheral tippt) 10/10 und 9/10; Numeric Comparison 8/10 und 9/10, siehe A9. | ✅ je 10/10 an zwei Tagen | teilweise (A9) |
 | B3 | Erneutes Koppeln, nachdem eine Seite die Kopplung vergessen hat. Beobachtet 2026-11-13: Vergisst nur Windows (Central) die Kopplung und das BlueZ-Peripheral behält sie, scheitert jeder Verbindungsaufbau von Windows (`ConnectionFailed`/`ConnectionTimeout`, 6 von 6 Versuchen); BlueZ fragt dabei seinen Agent jedes Mal nach einem Code. Nach `RemoveDevice` auf der Linux-Seite klappt der Connect sofort wieder (2 von 2). Offen: der umgekehrte Fall (nur das Peripheral vergisst) und ob Zig-BLE den Zustand erkennen und klar melden kann. | teilweise | teilweise |
 | B4 | Auto-Resubscribe mit ankommenden Notifications. Seit A4 ist der Reconnect unter Windows eine echte Neuverbindung: CCCDs danach wieder `0100`/`0200`, Notifications kommen. | ✅ 10/10 an zwei Tagen | ✅ 10/10 an zwei Tagen |
@@ -49,23 +49,25 @@ Ein Punkt ist erst erledigt, wenn:
 
 | # | Punkt | Erledigt, wenn |
 | :--- | :--- | :--- |
-| C1 | Teilweise: `ble-hardware-check <addr\|auto> --service <uuid> --suite` fährt alle Prüfungen ohne Abfrage 10-mal und druckt die Tabelle; `scripts/hardware_pairing.sh` steuert beide Rechner für die Pairing-Prüfungen (noch kein Lauf). Offen: Soak, `bluetoothd`-Neustart und mehrere Geräte im selben Lauf. | ein Befehl liefert die Tabelle aus `HARDWARE_TESTS.md` mit „10/10“ je Zeile |
+| C1 | Teilweise: `ble-hardware-check <addr\|auto> --service <uuid> --suite` fährt alle Prüfungen ohne Abfrage 10-mal und druckt die Tabelle; `scripts/hardware_pairing.sh` steuert beide Rechner für die Pairing-Prüfungen (B1, B2, A9–A11), `scripts/hardware_soak.sh` für den Langzeittest (B5). Offen: `bluetoothd`-Neustart und mehrere Geräte im selben Lauf. | ein Befehl liefert die Tabelle aus `HARDWARE_TESTS.md` mit „10/10“ je Zeile |
 | C2 | Eine Gegenstelle, die zuverlässig Notifications, Indications und Pairing kann (z. B. Handy mit nRF Connect oder ein nRF52) | Tests hängen nicht mehr vom Windows-Peripheral ab |
-| C3 | ✅ README-Beispiele in der CI kompilieren (Readiness #36): `zig build check-readme`, lokal für Windows und Linux grün (2026-11-11). Der erste CI-Lauf steht mit dem PR (D1) aus. | CI baut den Code aus dem README |
+| C3 | ✅ README-Beispiele in der CI kompilieren (Readiness #36): `zig build check-readme`, lokal für Windows und Linux grün (2026-11-11), in der CI auf allen drei Systemen grün (PRs #3–#5, #7). | CI baut den Code aus dem README |
 | C4 | Linux-CI gegen virtuellen Controller (Readiness #27) | CI testet BlueZ mit `btvirt` oder `hci_vhci` |
 
 ## D. Release-Vorbereitung
 
 | # | Punkt |
 | :--- | :--- |
-| D1 | Branch `test/hardware-linux-pairing` als PR nach `main`, CI grün |
+| D1 | Der Stand für v2 ist in `main`, CI grün. `test/hardware-linux-pairing`, `test/hardware-day2` und `fix/b13-linux-reconnect` sind gemergt (PRs #3–#5); offen ist PR #7 (`test/b5-soak`, CI grün). |
 | D2 | Release Notes von v1.3.0 bis v1.3.2 korrigieren: Windows konnte dort weder scannen noch GATT nutzen |
 | D3 | CHANGELOG-Abschnitt „Unreleased“ als 2.0.0 abschließen, Breaking Changes vollständig aufführen |
 
-## E. Zu entscheiden
+## E. Entscheidungen
 
-| # | Frage | Folge |
+Entschieden am 2026-11-14 (PR #6), bestätigt am 2026-11-21.
+
+| # | Frage | Entscheidung |
 | :--- | :--- | :--- |
-| E1 | ✅ **Entschieden 2026-11-21: nein.** Gehören Raw HCI und UART zu v2? (Readiness #15, 16, 18, 19) Sie bleiben in v2 als experimentell markiert; der eigene Stack kommt in v3 (zuerst Linux `HCI_CHANNEL_USER`, dann ein nRF52840-Dongle über UART). | ja: ACL-Credits, Peripheral-Rolle, Tests gegen einen echten Controller; nein: bleiben als experimentell markiert |
-| E2 | ✅ **Entschieden 2026-11-21: nein.** Gehört EATT zu v2? (Readiness #21) BlueZ und WinRT bieten EATT Anwendungen nicht an; sinnvoll erst mit dem eigenen Stack. | ja: an ein Backend anbinden und testen; nein: bleibt Baustein ohne Backend |
-| E3 | ✅ **Entschieden 2026-11-21: ja.** Ist macOS für v2 ausgeschlossen? Ohne Mac kein Hardware-Test, also kein Backend in v2. | heute so festgelegt, `MacosBackend` liefert `NotSupported` |
+| E1 | Gehören Raw HCI und UART zu v2? (Readiness #15, 16, 18, 19) | ✅ **Nein.** `HciBackend` und `UartBackend` bleiben in v2 als experimentell gekennzeichnet und fallen nicht unter die Hardware-Bedingung. Der eigene Stack kommt in v3: zuerst Linux `HCI_CHANNEL_USER`, dann ein nRF52840-Dongle über UART. |
+| E2 | Gehört EATT zu v2? (Readiness #21) | ✅ **Nein.** EATT bleibt ein experimenteller Baustein ohne Backend; BlueZ und WinRT bieten es Anwendungen nicht an, sinnvoll wird es erst mit dem eigenen Stack. |
+| E3 | Ist macOS für v2 ausgeschlossen? | ✅ **Ja.** `MacosBackend` liefert `NotSupported`; Protokoll-Toolkit, Krypto und Parser bauen und laufen auf macOS. Ohne Mac gibt es keinen Hardware-Test. |

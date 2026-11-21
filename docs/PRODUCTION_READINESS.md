@@ -1,6 +1,10 @@
 # Production Readiness Checklist
 
-Stand: 2026-10-28 (Basis: v1.2.0 + nicht committete Änderungen, nach Code-Review)
+Stand: 2026-11-21 (Basis: v1.2.0, ergänzt um die Hardware-Läufe vor v2.0.0)
+
+Was für v2.0.0 noch fehlt und welche Läufe auf Hardware bestanden sind, steht in
+[`V2_BLOCKERS.md`](V2_BLOCKERS.md) und [`HARDWARE_TESTS.md`](HARDWARE_TESTS.md). Diese Liste
+bleibt die Übersicht über alle Punkte; den Status auf Hardware führt V2_BLOCKERS.
 
 Diese Liste sammelt alle Punkte, die Zig-BLE von einem Protokoll-Toolkit zu einer
 produktionsreifen BLE-Bibliothek machen. Sortiert nach Priorität:
@@ -13,9 +17,9 @@ produktionsreifen BLE-Bibliothek machen. Sortiert nach Priorität:
 
 - **Erledigt:** P0 weitgehend, Windows-/BlueZ-Punkte aus P1, die meisten Diagnose- und Release-Punkte.
 - **Windows-Korrektur (nach v1.3.2):** Wegen falscher WinRT-IIDs und einer verschobenen Vtable konnte `WindowsBackend` seit v1.3.0 weder scannen noch GATT nutzen. Behoben und am 2026-11-02 mit `zig build run-hardware-check` gegen ein Fitnessband und einen Tracker-Tag geprüft: Scannen, Verbinden, Discovery, Lesen, Descriptors, Notifications, MTU, 30 s Halten einer Verbindung mit aktiven Abos. Ebenso am Gerät geprüft: Auto-Resubscribe, gefilterte Discovery, Service-Daten. Nicht geprüft: Schreiben, Pairing, Peripheral-Rolle.
-- **Implementiert, aber nicht auf Hardware verifiziert:** Windows-Pairing, -Peripheral-Rolle, -MTU-Abfrage und -Verbindungsabbruch (Punkte 6, 9–11). Erst nach einem Test mit echtem Gerät als verifiziert betrachten.
-- **Offen:** Raw-HCI/UART und SMP gegen einen echten Controller (15, 16, 18, 19), EATT-Anbindung (21), Hardware- und vHCI-Tests (26, 27), Langzeittests (30), README-Beispieltests (36).
-- Tests: `zig build test` läuft unter Windows (293 Tests); die Test-Binaries für Linux (musl, glibc, mit libc) liefen zusätzlich in einem Debian-13-Container grün (266 Tests), dazu `tests/bluez_fake_e2e.zig` gegen ein simuliertes `org.bluez`. Die macOS-Binaries kompilieren, ausgeführt werden sie erst in der CI.
+- **Auf Hardware verifiziert (November 2026):** Windows-Pairing mit allen vier Methoden, Peripheral-Rolle, MTU-Abfrage, Verbindungsabbruch und Auto-Resubscribe (Punkte 6, 9–11, 38), jeweils 10/10 an zwei Tagen gegen BlueZ; Langzeittest über 8 h unter Windows und Linux (30). Belege in `V2_BLOCKERS.md` (A3, A4, B1, B2, B4, B5, B8, B9).
+- **Offen:** Raw-HCI/UART und SMP gegen einen echten Controller (15, 16, 18, 19), EATT-Anbindung (21), automatisierte Hardware- und vHCI-Tests (26, 27). 15–21 gehören nicht zu v2.0.0 (Entscheidungen E1/E2 in `V2_BLOCKERS.md`).
+- Tests (Zahlen von v1.2.0): `zig build test` lief unter Windows mit 293 Tests; die Test-Binaries für Linux (musl, glibc, mit libc) liefen zusätzlich in einem Debian-13-Container grün (266 Tests), dazu `tests/bluez_fake_e2e.zig` gegen ein simuliertes `org.bluez`. Die macOS-Binaries kompilieren, ausgeführt werden sie erst in der CI.
 
 ---
 
@@ -40,7 +44,7 @@ produktionsreifen BLE-Bibliothek machen. Sortiert nach Priorität:
   - [x] `src/backend/bluez/mod.zig` (Discovery, `addCharacteristic`)
   - [x] `src/backend/windows/mod.zig` (`addService`, CCCD-Write)
 - [x] **6. Falsche Rückgabewerte korrigieren**
-  - [x] `exchangeMtu` muss auf beiden Backends die tatsächlich ausgehandelte MTU liefern (WinRT `GattSession.MaxPduSize`, BlueZ `MTU`-Property), nicht den gewünschten Wert — *nicht auf Hardware verifiziert*
+  - [x] `exchangeMtu` muss auf beiden Backends die tatsächlich ausgehandelte MTU liefern (WinRT `GattSession.MaxPduSize`, BlueZ `MTU`-Property), nicht den gewünschten Wert — *auf Hardware verifiziert: beide Seiten handeln 517 aus (V2_BLOCKERS B9)*
   - [x] `getBondState` auf Windows echt abfragen (`DeviceInformation.Pairing.IsPaired`) statt immer `.not_bonded`
 - [x] **7. Ehrliche Fehler**: Funktionen, die nichts tun, liefern `NotSupported` statt vorgetäuschten Erfolg
 
@@ -58,9 +62,9 @@ produktionsreifen BLE-Bibliothek machen. Sortiert nach Priorität:
 
 ### Windows-Backend
 
-- [x] **9. Pairing/Unpairing** über `DeviceInformationCustomPairing` mit Callbacks für Passkey und Numeric Comparison — *nicht auf Hardware verifiziert*
-- [x] **10. Peripheral-Rolle**: GATT-Server per `GattServiceProvider`, Advertising per `BluetoothLEAdvertisementPublisher` — *nicht auf Hardware verifiziert*
-- [x] **11. Verbindungsabbrüche erkennen** (`ConnectionStatusChanged`), Reconnect-Callback, Aufräumen der Abonnements — *nicht auf Hardware verifiziert*
+- [x] **9. Pairing/Unpairing** über `DeviceInformationCustomPairing` mit Callbacks für Passkey und Numeric Comparison — *auf Hardware verifiziert, alle vier Methoden 10/10 an zwei Tagen (V2_BLOCKERS B1, B2)*
+- [x] **10. Peripheral-Rolle**: GATT-Server per `GattServiceProvider`, Advertising per `BluetoothLEAdvertisementPublisher` — *auf Hardware verifiziert gegen einen BlueZ-Central, 10/10 (V2_BLOCKERS A3, B8)*
+- [x] **11. Verbindungsabbrüche erkennen** (`ConnectionStatusChanged`), Reconnect-Callback, Aufräumen der Abonnements — *auf Hardware verifiziert (V2_BLOCKERS A4, B4)*
 - [x] **12. Pool-Größen konfigurierbar** (`[8]` Geräte, `[64]` Characteristics, `[16]` Services); bei vollem Pool ein klarer Fehler
 
 ### BlueZ-Backend
@@ -80,14 +84,14 @@ produktionsreifen BLE-Bibliothek machen. Sortiert nach Priorität:
 
 ### API
 
-- [x] **22. Konkrete Fehlermengen** pro Funktion statt `anyerror` (derzeit 86 Stellen, u. a. die gesamte `BackendVTable`)
+- [x] **22. Konkrete Fehlermengen** pro Funktion statt `anyerror` (vorher 86 Stellen, u. a. die gesamte `BackendVTable`; heute keine mehr in `BackendVTable`, eine in `src/backend/bluez/mod.zig`)
 - [x] **23. Nebenläufigkeitsmodell** dokumentieren und durchsetzen
   - [x] Welche Callbacks laufen in welchem Thread?
   - [x] Ist die API thread-sicher?
   - [x] Mutex oder Message-Queue in `src/event_loop.zig` und `src/backend/windows/bindings.zig`
 - [x] **24. Konfigurierbare Timeouts** für alle blockierenden Operationen (Connect, Read, Write, Discovery); nichts darf endlos hängen — *Windows/BlueZ; das experimentelle HCI-Backend ignoriert `timeout_ms`*
 - [x] **25. Lifecycle**: sicheres `deinit` in jedem Zustand; nach `deinit` feuert kein Callback mehr
-- [x] **38. Fehler aus dem Vergleich mit anderen Bibliotheken** ([`COMPARISON.md`](COMPARISON.md)) — *F1–F12 behoben (Details in `COMPARISON.md` und im CHANGELOG), dazu Descriptors, `EventQueue`, Swift-Pair-/Fast-Pair-Decoder und `TROUBLESHOOTING.md`. Nicht auf Hardware verifiziert. Offen aus der Prioritätenliste: Bumble-CI, automatisches Neu-Abonnieren, HCI-Backend, C-API, Company-ID-Tabelle, macOS-Backend.*
+- [x] **38. Fehler aus dem Vergleich mit anderen Bibliotheken** ([`COMPARISON.md`](COMPARISON.md)) — *F1–F12 behoben (Details in `COMPARISON.md` und im CHANGELOG), dazu Descriptors, `EventQueue`, Swift-Pair-/Fast-Pair-Decoder und `TROUBLESHOOTING.md`. Die Windows- und BlueZ-Fixes sind auf Hardware verifiziert, ebenso das automatische Neu-Abonnieren (V2_BLOCKERS B4). Offen aus der Prioritätenliste: Bumble-CI, HCI-Backend, C-API, Company-ID-Tabelle, macOS-Backend.*
 
 ---
 
@@ -99,11 +103,11 @@ produktionsreifen BLE-Bibliothek machen. Sortiert nach Priorität:
 - [ ] **27. Linux-CI gegen virtuelles HCI** (`btvirt` / `hci_vhci`), ohne Hardware — *Offen. Der bisherige CI-Job führte nur die Unit-Tests erneut aus und wurde entfernt. Teilweise ersetzt durch `tests/bluez_fake_e2e.zig` (echtes D-Bus, simuliertes `org.bluez`); das prüft das Backend, aber nicht BlueZ selbst oder einen Controller.*
 - [x] **28. Coverage-fähiges Fuzzing** (`zig build --fuzz`) für die Parser von ATT, SMP, L2CAP-Signaling, HCI-Events und H4
 - [x] **29. Tests der Zustandsmaschinen**: Verbindungsabbruch mitten in einer Transaktion, doppelte Responses, unerwartete Opcodes
-- [ ] **30. Langzeit-Stresstests** über viele Stunden (Scannen, Verbinden, Notifications) mit Prüfung auf Speicherlecks (`GeneralPurposeAllocator`) und Handle-Lecks unter Windows — *Teilweise: 1.050 Zyklen gegen das Mock-Backend mit Leck- und Handle-Prüfung (Sekunden, keine Hardware). Offen: Langzeittest mit echten Geräten.*
+- [x] **30. Langzeit-Stresstests** über viele Stunden (Scannen, Verbinden, Notifications) mit Prüfung auf Speicherlecks (`GeneralPurposeAllocator`) und Handle-Lecks unter Windows — *1.050 Zyklen gegen das Mock-Backend mit Leck- und Handle-Prüfung; auf Hardware je 8 h unter Windows (1167 Zyklen, 0 Fehlrunden) und Linux (1841 Zyklen, 5 Funkabbrüche, alle erholt), Speicher und Handles flach (`scripts/hardware_soak.sh`, V2_BLOCKERS B5).*
 
 ### Diagnose
 
-- [x] **31. Einheitliches Logging** über `std.log` mit eigenem Scope statt `std.debug.print` (`src/gatt_server.zig`, `src/main.zig`)
+- [x] **31. Einheitliches Logging** über `std.log` mit eigenem Scope statt `std.debug.print` (`src/gatt_server.zig`) — *`src/main.zig` ist das Demo-Programm; seine Ausgabe auf der Konsole ist kein Logging der Library*
 - [x] **32. PCAP-Export** an die Windows- und BlueZ-Backends anbinden, soweit möglich
 
 ### Release-Prozess

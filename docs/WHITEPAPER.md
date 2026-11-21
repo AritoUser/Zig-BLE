@@ -2,7 +2,7 @@
 
 **Technical White Paper | Version 3.0**  
 **Author:** Attila Faust & The Zig-BLE Core Contributors  
-**Target Release:** Zig-BLE v1.2.0 (Zig 0.17.0+)  
+**Target Release:** Zig-BLE v2.0.0 (Zig 0.17.0+). Written for v1.2.0 and updated for the hardware results before v2.0.0; the release status is tracked in [V2_BLOCKERS.md](V2_BLOCKERS.md).  
 **Repository:** [github.com/AritoUser/Zig-BLE](https://github.com/AritoUser/Zig-BLE)  
 
 ---
@@ -409,22 +409,26 @@ Zig-BLE interacts with this hierarchy by dispatching method calls (e.g., `StartD
 
 ### 3.3 Event Loop & Asynchronous I/O Multiplexing (`epoll` / `poll`)
 
-Blocking reads on the D-Bus socket would stall an application while it waits for Bluetooth events. The connection in [`src/dbus/wire/connection.zig`](../src/dbus/wire/connection.zig) therefore exposes a `poll`-based, non-blocking read step, and [`src/event_loop.zig`](../src/event_loop.zig) provides an `epoll`-based loop for applications that multiplex several file descriptors:
+Blocking reads on the D-Bus socket would stall an application while it waits for Bluetooth events. The connection in [`src/dbus/wire/connection.zig`](../src/dbus/wire/connection.zig) therefore exposes a `poll`-based read step with a timeout (`pollSocket`, `readWrite`), and [`src/event_loop.zig`](../src/event_loop.zig) provides an `epoll`-based loop for applications that multiplex several file descriptors:
 ```zig
-pub fn pollMessages(self: *Connection, timeout_ms: i32) !usize {
-    var pfd = [1]std.posix.pollfd{.{
-        .fd = self.socket.fd,
-        .events = std.posix.POLL.IN,
-        .revents = 0,
-    }};
+/// Waits on the D-Bus socket for new incoming messages up to timeout_ms.
+pub fn pollSocket(self: *Connection, timeout_ms: i32) bool {
+    self.read_mutex.lock();
+    defer self.read_mutex.unlock();
 
-    const ret = try std.posix.poll(&pfd, timeout_ms);
-    if (ret == 0) return 0; // Timeout
+    const has_data = self.socket.pollRead(timeout_ms) catch return false;
+    if (!has_data) return false;
 
-    if ((pfd[0].revents & std.posix.POLL.IN) != 0) {
-        return self.readAvailableMessages();
+    if (self.readNextMessageFromSocket()) |msg| {
+        self.incoming_queue.append(msg) catch {
+            var m = msg;
+            m.deinit();
+            return false;
+        };
+        return true;
+    } else |_| {
+        return false;
     }
-    return 0;
 }
 ```
 This enables seamless integration into event-driven runtime architectures, game loops, or asynchronous frameworks without spawning background OS threads.
@@ -639,7 +643,7 @@ The microbenchmark suite lives in [`examples/benchmark.zig`](../examples/benchma
 
 * The decoding paths (`MessageIter`, header parsing, advertising parsing, ATT/SMP/HCI/H4 decoders, ACL reassembly) take no allocator and therefore cannot allocate on the heap. This is guaranteed by construction, not by measurement.
 * Building outgoing D-Bus messages uses `ByteBuffer`, a growable buffer backed by a caller-supplied allocator. It can be pre-sized with `ByteBuffer.initCapacity`, or backed by a fixed buffer allocator to avoid the general-purpose heap.
-* The Windows and BlueZ backends keep devices, characteristics and subscriptions in fixed-size pools.
+* The Windows and BlueZ backends keep devices, characteristics and subscriptions in fixed-size pools. One exception on Windows: the WinRT event handlers (one per subscription, connection and scan) are reference-counted heap objects, because WinRT may call a handler after it was removed; each is freed with WinRT's last `Release`.
 * Stack usage is bounded: the header field marshaling buffer in `Message.finalize()` is a fixed 2,048-byte stack array.
 
 ---
@@ -669,13 +673,16 @@ Zig-BLE includes randomized fuzz harnesses for its two most exposed parsers:
 * **D-Bus wire fuzzer (`zig build fuzz-dbus`)**: Random mutations of fixed headers, header field arrays, variants and signatures. Default: 200,000 iterations.
 * **Advertising fuzzer (`zig build fuzz`)**: Random advertising packets with corrupted length fields, truncated strings and invalid AD types. Default: 500,000 iterations.
 
-Both run without panics or out-of-bounds accesses. This is randomized testing, not formal verification; the ATT, SMP, HCI-event, H4 and L2CAP signaling parsers are covered by unit and edge-case tests but not yet fuzzed.
+Both run without panics or out-of-bounds accesses. This is randomized testing, not formal verification. In addition, `src/fuzz.zig` holds coverage-guided fuzz targets (`zig build test --fuzz`, Linux only) for advertising, ATT, SMP, L2CAP signaling with ACL and EATT reassembly, the D-Bus wire format, and HCI events with H4 and H5. Their first run found length checks that overflowed in `u8`/`u16`; each case now has a regression test.
 
 ### 6.4 Continuous Integration Matrix
 
 Every push and pull request runs on GitHub Actions with Zig 0.17.0:
-* **Ubuntu Linux (x86_64)**: all unit and end-to-end tests, both fuzzers (50,000 iterations each), cross-compilation to `aarch64-linux`, the benchmark suite and documentation generation.
-* **macOS (aarch64)** and **Windows (x86_64)**: unit tests of the core library.
+* **Ubuntu, Windows and macOS**: all unit tests (mock backend, no radio), the mock end-to-end test (`run-mock-e2e`), compiling every public function (`check-api`) and both randomized fuzzers (50,000 iterations each).
+* **Ubuntu and Windows**: compiling the programs shown in the README (`check-readme`).
+* **Ubuntu only**: the tests again with libc linked, the BlueZ backend against a simulated `org.bluez` on a private D-Bus (`bluez-fake-e2e`), the benchmark suite and documentation generation.
+* **Cross-compilation** (on Ubuntu): `x86_64-linux-gnu`, `aarch64-linux-gnu`, `aarch64-linux-musl`, `x86_64-windows-msvc` and `aarch64-macos`, each with `check-api`.
+* Tests on real hardware do not run in CI; they are listed in [HARDWARE_TESTS.md](HARDWARE_TESTS.md).
 
 ---
 
@@ -703,7 +710,7 @@ The result is a statically linked executable of roughly 140–240 KB (see Sectio
 ### 7.3 Edge Gateways & Medical Telemetry
 
 Gateways for medical telemetry (glucose monitors, ECG patches, pulse oximeters) and industrial sensors often stay connected to many peripherals for long periods. Zig-BLE helps here in three ways:
-1. **Bounded memory**: Decoding does not allocate, and the backends use fixed-size pools, so memory use does not grow with the number of packets processed. Long-duration soak tests have not been published yet.
+1. **Bounded memory**: Decoding does not allocate, and the backends use fixed-size pools (plus, on Windows, one heap object per WinRT event handler), so memory use does not grow with the number of packets processed. 8-hour soak tests on Windows and Linux kept memory and handles flat ([V2_BLOCKERS.md](V2_BLOCKERS.md), B5).
 2. **No garbage collector**: Unlike runtimes with garbage collection, there are no collection pauses in the notification path.
 3. **BlueZ restart detection**: The BlueZ backend subscribes to `NameOwnerChanged` and `PropertiesChanged` signals to detect `bluetoothd` restarts and disconnected devices, so applications can react.
 
@@ -713,22 +720,21 @@ Gateways for medical telemetry (glucose monitors, ECG patches, pulse oximeters) 
 
 ### 8.1 Summary
 
-Zig-BLE shows that a BLE library for Linux and Windows can be written entirely in Zig, without C client libraries such as `libdbus-1` or GLib. As of v1.2.0 it provides:
+Zig-BLE shows that a BLE library for Linux and Windows can be written entirely in Zig, without C client libraries such as `libdbus-1` or GLib. Before v2.0.0 it provides:
 * **Linux (BlueZ)**: a pure-Zig D-Bus wire client; scanning, connecting, GATT read/write/notifications, pairing via a BlueZ agent, GATT server and advertising; file-descriptor based streaming (`AcquireNotify`/`AcquireWrite`) and L2CAP CoC sockets.
-* **Windows 11 (WinRT)**: scanning, connecting, service discovery and GATT read/write/notifications. Pairing and the peripheral role are not implemented yet.
+* **Windows 11 (WinRT)**: scanning, connecting, service discovery, GATT read/write/notifications/indications, pairing with all four methods (`DeviceInformationCustomPairing`) and the peripheral role (`GattServiceProvider`, `BluetoothLEAdvertisementPublisher`).
 * **A platform-independent protocol toolkit**: advertising, ATT/GATT, SMP, HCI, H4 and L2CAP encoders and decoders, the Bluetooth cryptographic functions, a bond store, SIG profiles (Heart Rate, Battery, Device Information, Current Time, Health Thermometer, Blood Pressure, HID, Environmental Sensing, Pulse Oximeter, Fitness Machine, Cycling Power, Running Speed & Cadence, Nordic UART, iBeacon, Eddystone) and a Wireshark PCAP writer.
 * **Simple deployment**: static binaries of 140–240 KB, cross-compiled without sysroots.
-* **Hardware validation**: verified over the air on Windows 11 against an Android smartphone (8 services, 38 characteristics, 30 of 31 reads successful).
-* **Testing**: unit, end-to-end and edge-case tests, plus fuzzing of the D-Bus and advertising parsers.
+* **Hardware validation**: Windows 11 and Linux (BlueZ 5.82) against each other, in both roles: GATT checks and all four pairing methods 10/10 on two days, 8-hour soak tests with flat memory and handles ([HARDWARE_TESTS.md](HARDWARE_TESTS.md), [V2_BLOCKERS.md](V2_BLOCKERS.md)). An earlier run on Windows 11 against an Android smartphone read 30 of 31 characteristics.
+* **Testing**: unit, end-to-end and edge-case tests, randomized fuzzing of the D-Bus and advertising parsers, and coverage-guided fuzz targets for the protocol parsers.
 
 ### 8.2 Future Roadmap
 
 The detailed list of open items is maintained in [PRODUCTION_READINESS.md](PRODUCTION_READINESS.md). The main milestones are:
-1. **Production hardening**: correct negotiated-MTU reporting, error propagation instead of silently ignored failures, configurable timeouts, a documented threading model and concrete error sets in the public API.
-2. **Windows feature parity**: pairing (`DeviceInformationCustomPairing`), the peripheral role (`GattServiceProvider`, `BluetoothLEAdvertisementPublisher`) and connection-loss handling.
-3. **Bare-metal host stack**: HCI and UART backends, connection management, ATT client/server and SMP state machines over L2CAP, and wiring the existing EATT bearer bookkeeping to L2CAP credit-based channels.
-4. **Measurement**: end-to-end benchmarks against other libraries on the same hardware, long-duration soak tests and hardware-in-the-loop CI.
-5. **Later**: a macOS/iOS CoreBluetooth backend, LE Audio, Encrypted Advertising Data, PAwR and Channel Sounding.
+1. **v2.0.0**: the existing Windows and Linux features, each verified on real hardware ([V2_BLOCKERS.md](V2_BLOCKERS.md)). Production hardening (MTU reporting, error propagation, timeouts, threading model, error sets) and Windows pairing, peripheral role and connection-loss handling are done.
+2. **v3, own host stack**: HCI and UART backends, connection management, ATT client/server and SMP state machines over L2CAP, and wiring the existing EATT bearer bookkeeping to L2CAP credit-based channels; first on Linux (`HCI_CHANNEL_USER`), then over UART with an external controller.
+3. **Measurement**: end-to-end benchmarks against other libraries on the same hardware and hardware-in-the-loop CI.
+4. **Later**: a macOS/iOS CoreBluetooth backend, LE Audio, Encrypted Advertising Data, PAwR and Channel Sounding.
 
 ---
 

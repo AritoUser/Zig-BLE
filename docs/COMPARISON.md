@@ -1,6 +1,9 @@
 # Vergleich mit anderen BLE-Bibliotheken
 
-Stand: 2026-10-29, Basis v1.3.2
+Stand: 2026-10-29, Basis v1.3.2. Nachgetragen am 2026-11-21: was seither behoben oder auf
+Hardware verifiziert ist (Belege in [`V2_BLOCKERS.md`](V2_BLOCKERS.md) und
+[`HARDWARE_TESTS.md`](HARDWARE_TESTS.md)). Die Zeilenangaben in Abschnitt 1 beziehen sich auf
+v1.3.2 und stimmen im heutigen Code nicht mehr.
 
 Verglichen wurden Zig-BLE und zehn verbreitete BLE-Projekte. Ziel ist herauszufinden,
 was Zig-BLE noch fehlt und welche Fehler die anderen schon gelöst haben. Der Code der
@@ -24,7 +27,7 @@ Alle Punkte wurden im Code nachgeprüft.
 
 ### Kritisch
 
-**F1. BlueZ: Scan-Callback und Notifications kommen nie an** — ✅ behoben (unveröffentlicht, nicht auf Hardware verifiziert)
+**F1. BlueZ: Scan-Callback und Notifications kommen nie an** — ✅ behoben (unveröffentlicht), auf Hardware verifiziert (Sammellauf 10/10 an zwei Tagen)
 - [`src/backend/bluez/mod.zig`](../src/backend/bluez/mod.zig)
 - `startScan` speichert `active_scan_cb` (Zeile 420), aber kein Code ruft ihn je auf.
 - `processSignalWireMessage` (Zeile 143) wertet nur Verbindungsabbrüche, Notifications
@@ -84,7 +87,7 @@ Alle Punkte wurden im Code nachgeprüft.
 
 ### Hoch
 
-**F4. Windows: Verbindung wird nicht gehalten** — ✅ behoben (unveröffentlicht, nicht auf Hardware verifiziert)
+**F4. Windows: Verbindung wird nicht gehalten** — ✅ behoben (unveröffentlicht), auf Hardware verifiziert (V2_BLOCKERS A4, B4)
 - Es wird kein `GattSession` mit `MaintainConnection = true` angelegt.
 - Ohne diese Einstellung trennt Windows die Verbindung nach kurzer Inaktivität von selbst.
   Unter Windows gibt es kein explizites „Connect“, die Verbindung gehört der GATT-Session.
@@ -110,7 +113,7 @@ Alle Punkte wurden im Code nachgeprüft.
   `core/advertising.zig`-Parser auswerten. Dann gelten auf allen Plattformen dieselben
   Regeln.
 
-**F6. BlueZ: `connect` wartet nicht und ignoriert den Timeout** — ✅ behoben (unveröffentlicht, nicht auf Hardware verifiziert)
+**F6. BlueZ: `connect` wartet nicht und ignoriert den Timeout** — ✅ behoben (unveröffentlicht), auf Hardware verifiziert (Sammellauf, Langzeittest B5)
 - [`mod.zig:476`](../src/backend/bluez/mod.zig): `_ = timeout_ms;`.
 - `Device1.Connect` kehrt zurück, bevor BlueZ die Services aufgelöst hat
   (`ServicesResolved`). Ein direkt folgendes `discoverServices` findet dann oft nichts.
@@ -143,7 +146,7 @@ Alle Punkte wurden im Code nachgeprüft.
   zu halten.
 - Wird währenddessen `stopScan` oder `disconnect` aufgerufen, ist das ein Data Race.
 
-**F9. Windows: immer `Uncached`-Discovery** — ✅ Option `use_cached_services`; Standard bleibt `Uncached`
+**F9. Windows: immer `Uncached`-Discovery** — ✅ Option `use_cached_services`; Standard bleibt `Uncached`, aber nur einmal pro Verbindung: eine gefilterte Discovery direkt nach `connect` grenzt das Ergebnis im Speicher ein. Den Windows-Cache dafür zu lesen war ein Fehler: er behält Dienste, die das Gerät nicht mehr hat (V2_BLOCKERS A11)
 - [`gatt.zig:36`](../src/backend/windows/gatt.zig).
 - Jeder Connect erzwingt eine komplette GATT-Discovery über Funk, das kostet je nach Gerät
   1–5 s.
@@ -194,7 +197,8 @@ Alle Punkte wurden im Code nachgeprüft.
 ### bleak (Python): das am meisten genutzte
 
 - Größte Stärke ist die Dokumentation von Plattformeigenheiten: eine Seite pro Backend,
-  Troubleshooting, bekannte Fehlercodes. Für Zig-BLE fehlt so eine Seite ganz.
+  Troubleshooting, bekannte Fehlercodes. Für Zig-BLE fehlte so eine Seite; heute gibt es
+  [`TROUBLESHOOTING.md`](TROUBLESHOOTING.md).
 - Technische Lehren: F1, F4, F5, F6 und F9 oben stammen direkt aus bleaks Code.
 - Weitere Punkte:
   - `BleakScanner.find_device_by_address(addr, timeout)` und `find_device_by_filter(...)`
@@ -229,8 +233,8 @@ Alle Punkte wurden im Code nachgeprüft.
   - `device.DiscoverServices(filter_uuids)` mit Filter
   - `char.EnableNotifications(cb)`
   - `char.GetMTU()`
-- **Discovery mit UUID-Filter** spart auf langsamen Geräten viel Zeit. Zig-BLE entdeckt
-  immer alles.
+- **Discovery mit UUID-Filter** spart auf langsamen Geräten viel Zeit. Zig-BLE entdeckte
+  damals immer alles; heute gibt es `discoverServicesFiltered`.
 - `ConnectionParams` beim Connect (Intervall, Timeout).
 
 ### Kable (Kotlin): Zustand und Wiederverbinden
@@ -239,8 +243,9 @@ Alle Punkte wurden im Code nachgeprüft.
   `Connecting → Connected → Disconnecting → Disconnected(status)`.
 - **`observe()` überlebt Reconnects:** Nach einem Wiederverbinden werden Abos automatisch
   neu eingerichtet.
-- Zig-BLE löscht beim Trennen alle Abos (`clearSubscriptions`). Nutzer müssen dann selbst
-  neu abonnieren und bekommen nur einen `reconnect_cb` (Windows) bzw. gar nichts (BlueZ).
+- Zig-BLE löschte damals beim Trennen alle Abos (`clearSubscriptions`), Nutzer mussten selbst
+  neu abonnieren. Heute gibt es auf allen Backends `ConnectionState` und `setAutoResubscribe`,
+  auf Hardware verifiziert (V2_BLOCKERS B4).
 - **Übernehmen:**
   - einen `ConnectionState`-Enum, den man jederzeit abfragen kann
   - optionales automatisches Neu-Abonnieren nach einem Reconnect
@@ -320,7 +325,7 @@ Alle Punkte wurden im Code nachgeprüft.
 - **Keine C-Abhängigkeit unter Linux.** Bleak braucht `dbus-fast`, btleplug `dbus-rs`
   (libdbus), SimpleBLE libdbus.
 - **Protokoll-Werkzeugkasten ohne Backend** (Parser, Krypto mit offiziellen Testvektoren,
-  PCAP-Writer, 15 SIG-Profile). Das hat keine der Desktop-Bibliotheken.
+  PCAP-Writer, 12 SIG-Profile plus iBeacon, Eddystone und Nordic UART). Das hat keine der Desktop-Bibliotheken.
 - **Bond-Speicher mit Verschlüsselung und MAC.** Desktop-Bibliotheken überlassen das dem
   Betriebssystem.
 - **Fuzzing** von Advertising-Parser und D-Bus-Wire. Bei den Vorbildern selten.
@@ -350,8 +355,8 @@ Alle Punkte wurden im Code nachgeprüft.
 | 16 | macOS-Backend (CoreBluetooth) — *offen* | btleplug, bleak, SimpleBLE |
 
 Die Punkte 1 bis 7 sind Fehler bzw. Lücken in Funktionen, die das README heute schon als
-verfügbar führt. Sie sollten vor neuen Funktionen kommen. Bis F1 behoben ist, sollte die
-BlueZ-Spalte im README für Scannen, Notifications und Verbindungsabbrüche nicht ✅ zeigen.
+verfügbar führt. Sie sollten vor neuen Funktionen kommen. F1 ist behoben und auf Hardware verifiziert; die
+BlueZ-Spalte im README zeigt deshalb ✅.
 
 ## Quellen
 

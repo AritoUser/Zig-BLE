@@ -11,7 +11,9 @@ backend. Error names refer to `BleError`.
   regularly, e.g. `while (running) try adapter.processEvents(100);`.
 - **Windows:** callbacks run on WinRT thread-pool threads, possibly while your main thread
   is inside a backend call. `processEvents` only waits there, so the same loop works on
-  both platforms.
+  both platforms. WinRT may still call an event handler after it was removed, so the
+  backend keeps these handlers as reference-counted heap objects, freed with WinRT's last
+  `Release`; such a late call is ignored and never reaches your callback.
 - Callbacks may call back into the backend, but should return quickly. For a single-threaded
   design, use `EventQueue`: it copies every event into a queue that you drain with `next()` /
   `wait()`.
@@ -130,9 +132,13 @@ backend. Error names refer to `BleError`.
   usable.
 
 **Discovery is slow**
-- By default every connect reads the services over the air (`Uncached`).
+- By default `connect` reads the services over the air once (`Uncached`). A
+  `discoverServicesFiltered` right after it narrows that result in memory instead of asking
+  again; only after a reconnect, or when the wanted service is missing, does it ask the peer.
 - Set `backend.use_cached_services = true` to use Windows' GATT cache. It is much faster,
-  but can return stale services after a firmware update of the peripheral.
+  but can return stale services: Windows keeps services the peripheral has removed, after a
+  firmware update or when a peripheral registers its services anew (seen: 13 stale copies of
+  one service, which filled the characteristic pool).
 
 **Devices with random addresses are not found**
 - Scan before connecting. The backend remembers each device's address type from the scan

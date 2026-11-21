@@ -100,6 +100,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * **Breaking:** `ConnectionEvent.disconnected.reason_code` is `?u8` (null when the platform does not report a reason).
 * **Security, `SmpStateMachine`:** `require_user_confirmation` now defaults to `true`, so Numeric Comparison no longer accepts itself. `setPasskey` validates the range and returns an error. Passkey Entry waits for a passkey (`wait_passkey`) instead of running with `0`, and a peer public key equal to the local one is rejected (CVE-2020-26558).
 
+### Removed
+* **Breaking for build scripts:** the build option `-Dlink-dbus` is gone. It linked the system `libdbus-1` for a C backend that no longer exists; no code used the library. `zig build -Dlink-dbus=…` now fails as an unknown option; drop the flag. `-Dlink-libc` stays.
+
 ## [1.3.2] - 2026-10-29
 
 ### Changed
