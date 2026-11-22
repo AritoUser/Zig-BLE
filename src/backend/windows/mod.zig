@@ -112,6 +112,10 @@ pub fn WindowsBackendWithConfig(comptime pool_config: PoolConfig) type {
         /// Use Windows' GATT cache for service discovery instead of reading services over the
         /// air on every connect. Faster, but can return stale services after a firmware update.
         use_cached_services: bool = false,
+        /// Open each connection's `GattSession` with `MaintainConnection = true`, so Windows
+        /// keeps an idle link up. Without it Windows may close a link that has no active
+        /// subscription after a few seconds; mainly there to compare the two.
+        maintain_connection: bool = true,
         /// Only read the characteristics of these services during `connect` and lazy discovery,
         /// which saves round trips on devices with many services. Empty means all services.
         service_filter: []const UUID = &.{},
@@ -429,7 +433,7 @@ pub fn WindowsBackendWithConfig(comptime pool_config: PoolConfig) type {
                 dev_slot.ble_device3 = dev3;
             }
 
-            dev_slot.gatt_session = gatt_mod.openGattSession(ble_dev, timeout_ms) catch |err| blk: {
+            dev_slot.gatt_session = gatt_mod.openGattSession(ble_dev, timeout_ms, self.maintain_connection) catch |err| blk: {
                 log.warn("WinRT GattSession for {f} unavailable ({s}); Windows may drop an idle connection", .{ addr, @errorName(err) });
                 break :blk null;
             };

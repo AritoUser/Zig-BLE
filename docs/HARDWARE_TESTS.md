@@ -41,7 +41,9 @@ Der Peripheral-Modus bietet diese Characteristics an:
 
 Weitere Modi neben denen in der Tabelle unten: `--write-len <uuid> <bytes>` schreibt einen
 langen Wert, `--write-desc <char-uuid> <descriptor-uuid> <hex>` einen Descriptor,
-`--disconnect` prüft, ob die Verbindung wirklich endet, `--multi <addr> <addr> …` verbindet
+`--disconnect` prüft, ob die Verbindung wirklich endet, `--idle <s>` hält sie ohne Abo im
+Leerlauf und prüft danach, ob sie noch steht (mit `--no-maintain` vor dem Modus ohne
+`MaintainConnection`, B12), `--multi <addr> <addr> …` verbindet
 mehrere Geräte gleichzeitig (B10), `--io <capability>` setzt die IO-Fähigkeit fürs Pairing und
 `--answers <datei>` beantwortet die Pairing-Abfragen aus einer Datei. `ble-hardware-check`
 ohne Argumente druckt die vollständige Übersicht.

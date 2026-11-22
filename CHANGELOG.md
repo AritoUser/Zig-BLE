@@ -93,6 +93,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * `-Dlink-libc=true` build option. CI runs the tests with libc, `check-api` for all targets and the simulated BlueZ test.
 * [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) with platform behavior and fixes for common problems.
 
+* Windows: `WindowsBackend.maintain_connection` (default `true`) opens the GATT session without `MaintainConnection` when set to `false`, to compare both. Against a BlueZ peripheral an idle link held 60 s either way.
+
 ### Changed
 * `BleError` has a new member, `PairingInterrupted`; an exhaustive `switch` over `BleError` needs a prong for it. `ServerCharacteristic.pairSubscribers` returns it when the link of every client it tried broke off; pair again once the client is back.
 * **Breaking for custom backends:** the `BackendVTable` entries `readCharacteristic`, `writeCharacteristic`, `subscribeNotifications`, `unsubscribeNotifications` and `acquireNotifyFd` take a `CharacteristicSelector` instead of a `UUID`. The new entries `getCharacteristics`, `processEvents`, `readDescriptor` and `writeDescriptor` are optional. Code that calls `UnifiedDevice`, `Backend` or `MockController.triggerNotification` with a `UUID` compiles unchanged.

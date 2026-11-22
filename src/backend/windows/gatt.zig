@@ -580,7 +580,7 @@ pub fn exchangeMtu(backend: anytype, dev: anytype, target_mtu: u16) BleError!u16
     // 3. Fallback: open a session now (it is kept for later calls and released on disconnect)
     if (dev.gatt_session == null) {
         if (dev.ble_device) |ble_dev| {
-            dev.gatt_session = try openGattSession(ble_dev, backend.timeouts.mtu_exchange_ms);
+            dev.gatt_session = try openGattSession(ble_dev, backend.timeouts.mtu_exchange_ms, backend.maintain_connection);
             if (dev.gatt_session) |sess| {
                 var max_pdu: u16 = 0;
                 if (sess.lpVtbl.get_MaxPduSize(sess, &max_pdu) >= 0 and max_pdu >= 23) {
@@ -594,10 +594,11 @@ pub fn exchangeMtu(backend: anytype, dev: anytype, target_mtu: u16) BleError!u16
     return BleError.MtuExchangeFailed;
 }
 
-/// Opens the device's `GattSession` with `MaintainConnection = true`. Windows has no explicit
-/// connect: the link belongs to the GATT sessions that want it, and without this flag Windows
-/// drops it after a few idle seconds. Returns null if the device offers no session.
-pub fn openGattSession(ble_dev: *bindings.IBluetoothLEDevice, timeout_ms: u32) BleError!?*bindings.IGattSession {
+/// Opens the device's `GattSession`, with `MaintainConnection = true` when `maintain` is set.
+/// Windows has no explicit connect: the link belongs to the GATT sessions that want it, and
+/// without this flag Windows drops it after a few idle seconds. Returns null if the device
+/// offers no session.
+pub fn openGattSession(ble_dev: *bindings.IBluetoothLEDevice, timeout_ms: u32, maintain: bool) BleError!?*bindings.IGattSession {
     if (builtin.os.tag != .windows) return BleError.NotSupported;
 
     var dev4: ?*bindings.IBluetoothLEDevice4 = null;
@@ -623,6 +624,7 @@ pub fn openGattSession(ble_dev: *bindings.IBluetoothLEDevice, timeout_ms: u32) B
     const sess_raw = (try helpers.awaitAsync(sess_op.?, timeout_ms)) orelse return null;
     const sess: *bindings.IGattSession = @ptrCast(@alignCast(sess_raw));
 
+    if (!maintain) return sess;
     var can_maintain: u8 = 0;
     if (sess.lpVtbl.get_CanMaintainConnection(sess, &can_maintain) >= 0 and can_maintain != 0) {
         if (sess.lpVtbl.put_MaintainConnection(sess, 1) < 0) {
