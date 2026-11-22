@@ -7,7 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.0-rc.1] - 2026-11-22
+
+Release candidate for v2.0.0. Same features as v1.3.2, now working and verified on real hardware: Windows 11 and Linux (BlueZ 5.82) against each other in both roles, the GATT suite and all four pairing methods 10/10 on at least two days, 8-hour soak tests with flat memory and handles (`docs/HARDWARE_TESTS.md`). Still open before v2.0.0: re-pairing after only the peripheral forgot the bond (B3), a `bluetoothd` restart during a connection (B6), going out of range (B7), several devices at once (B10), `MaintainConnection` over a longer idle time (B12) and a rare `OperationAlreadyInProgress` on Windows (A8); see `docs/V2_BLOCKERS.md`. Raw HCI, UART and EATT stay experimental; macOS is not supported. Breaking changes are marked **Breaking** below.
+
 ### Fixed
+* **HCI, L2CAP signaling and ACL parsers: length fields from the peer or controller could overflow their checks.** `2 + param_len` (HCI events), `24 + data_len` (extended advertising reports, set by any nearby advertiser), `4 + payload_len` (L2CAP Command Reject), `5 + acl_len` (ACL packets) were computed in `u8` or `u16`; in Debug that panicked, in ReleaseFast the length check was bypassed and the parser read past the buffer. The credit-based L2CAP parsers also cast the CID count to `u8` before its range check and never compared the PDU length with the buffer. Found by running the existing coverage-guided fuzz targets (`zig build test --fuzz`, Linux only) for the first time; each case has a regression test. Only the experimental raw HCI, UART and EATT paths use this code.
+* **Windows: event handlers for notifications, connection status and scanning lived in reused memory.** WinRT may keep a handler, and call it, after `remove_*` returned. The notification and connection-status handlers sat in the pool slots of characteristics and devices, so such a late call could land in a slot that already served the next characteristic or connection: a stale notification, a disconnect reported for the wrong connection, or a crash once the slot was overwritten. These handlers are now heap objects with real COM reference counting, freed with the last `Release`, and a callback whose handler no longer belongs to its slot is ignored.
+* Windows: `discoverServicesFiltered` right after `connect` fetched every service and characteristic from the peer a second time. It now keeps the services the filter names from the discovery `connect` just did, and releases the others, without asking Windows again; after a reconnect it asks the peer. In an overnight run Windows crashed once inside its own completion of `GetGattServicesAsync`; the second discovery per connection doubled how often that code ran. Windows' own cache is no help here: it still lists services the peer has removed (13 stale copies of a re-registered service seen), which overflowed the characteristic pool.
 * D-Bus: error replies were never freed, so every failed BlueZ call leaked its message. Their name and text are now logged at debug level; the error set alone does not tell BlueZ's errors apart.
 * **BlueZ: a scan with a service filter did not find a bonded phone or PC.** BlueZ lists all services of such a device, BR/EDR ones included (19 for a Windows PC), and the backend read only the first 8, so the wanted UUID was often cut off. BlueZ also keeps the object of a peer that paired under a random address at that path, so the changes it signals while scanning landed in an empty entry. The backend now reads up to 32 UUIDs and keeps the ones the filter asks for, maps such paths to the device's `Address`, and reads a device it has no complete data for once with `GetAll`.
 * **Pairing failed now and then when the link broke off while encryption started.** Some controller pairs lose the link right after the key exchange: on our test hardware (Realtek USB as central, Intel as peripheral) in about one of 20 pairings, where the Intel controller ends the link with a MIC failure. Both hosts behave correctly. `UnifiedDevice.pair` now starts over up to `pair_retries` (2) times when that happens; a rejection or a wrong passkey is not repeated. A lost link is reported as the new `PairingInterrupted` instead of `PairingFailed`.
@@ -90,12 +97,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * `-Dlink-libc=true` build option. CI runs the tests with libc, `check-api` for all targets and the simulated BlueZ test.
 * [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) with platform behavior and fixes for common problems.
 
+* Windows: `WindowsBackend.maintain_connection` (default `true`) opens the GATT session without `MaintainConnection` when set to `false`, to compare both. Against a BlueZ peripheral an idle link held 60 s either way.
+
 ### Changed
 * `BleError` has a new member, `PairingInterrupted`; an exhaustive `switch` over `BleError` needs a prong for it. `ServerCharacteristic.pairSubscribers` returns it when the link of every client it tried broke off; pair again once the client is back.
 * **Breaking for custom backends:** the `BackendVTable` entries `readCharacteristic`, `writeCharacteristic`, `subscribeNotifications`, `unsubscribeNotifications` and `acquireNotifyFd` take a `CharacteristicSelector` instead of a `UUID`. The new entries `getCharacteristics`, `processEvents`, `readDescriptor` and `writeDescriptor` are optional. Code that calls `UnifiedDevice`, `Backend` or `MockController.triggerNotification` with a `UUID` compiles unchanged.
 * BlueZ callbacks run after the backend mutex is released, so they may call back into the backend.
 * **Breaking:** `ConnectionEvent.disconnected.reason_code` is `?u8` (null when the platform does not report a reason).
 * **Security, `SmpStateMachine`:** `require_user_confirmation` now defaults to `true`, so Numeric Comparison no longer accepts itself. `setPasskey` validates the range and returns an error. Passkey Entry waits for a passkey (`wait_passkey`) instead of running with `0`, and a peer public key equal to the local one is rejected (CVE-2020-26558).
+
+### Removed
+* **Breaking for build scripts:** the build option `-Dlink-dbus` is gone. It linked the system `libdbus-1` for a C backend that no longer exists; no code used the library. `zig build -Dlink-dbus=…` now fails as an unknown option; drop the flag. `-Dlink-libc` stays.
 
 ## [1.3.2] - 2026-10-29
 
@@ -280,7 +292,7 @@ This release delivers milestone **v1.1.0**, establishing high-throughput data st
 #### Architectural Pillar 8: High-Throughput ATT MTU & DLE (`src/backend/vtable.zig`, `src/backend/unified.zig`)
 * **`exchangeMtu` HAL Interface**:
   * Added `exchangeMtu(dev_handle, target_mtu)` to `BackendVTable` and `UnifiedDevice`.
-  * Enables negotiation of ATT MTU sizes up to 517 bytes (e.g. 247 bytes for Whoop 4.0/5.0 high-throughput PPG/IMU telemetry frames).
+  * Enables negotiation of ATT MTU sizes up to 517 bytes (e.g. 247 bytes for high-throughput wearable PPG/IMU telemetry frames).
   * Fully simulated and verified in `MockController` and `UnifiedAdapter`.
 
 #### Architectural Pillar 9: Security Manager & Bonding Lifecycle HAL (`src/backend/types.zig`, `src/backend/vtable.zig`)
@@ -295,7 +307,7 @@ This release delivers milestone **v1.1.0**, establishing high-throughput data st
 
 #### Architectural Pillar 10: High-Level L2CAP Connection-Oriented Channels (CoC) (`src/l2cap/stream.zig`)
 * **`L2capStream` & `L2capListener`**:
-  * High-level stream abstraction over LE Credit-Based Channels for high-frequency wearable sensor streaming (e.g. Samsung Galaxy Watch Ultra `watch-wire`, PSM `0x1001`).
+  * High-level stream abstraction over LE Credit-Based Channels for high-frequency wearable sensor streaming (e.g. PSM `0x1001`).
   * Non-blocking segmentation, credit accounting, and MTU/MPS management.
   * `createMockStreamPair`: Zero-allocation in-memory bi-directional channel pair for deterministic testing on any platform.
 
@@ -381,7 +393,7 @@ This maintenance and patch release resolves cross-compilation errors across mult
 ### Major Milestone: Production Release
 This release marks the official production stabilization of **Zig-BLE**, transforming the library from an embedded Linux D-Bus client into a comprehensive, multi-platform, zero-allocation Bluetooth Low Energy protocol engine and systems library for Zig 0.16.0+.
 
-The release has been physically verified over the 2.4 GHz air interface against an active smartphone (Samsung Galaxy S25 Ultra) across 8 GATT services and 38 characteristics with 96.8% read success rate and 57.1 ms average air interface latency.
+The release has been physically verified over the 2.4 GHz air interface against an active Android smartphone across 8 GATT services and 38 characteristics with 96.8% read success rate and 57.1 ms average air interface latency.
 
 ---
 
@@ -463,6 +475,6 @@ The release has been physically verified over the 2.4 GHz air interface against 
 ### Verified
 
 * **Unit & Edge-Case Tests**: 146 / 146 passing (`zig build test`).
-* **Live Hardware Verification**: Intel Bluetooth Adapter $\to$ Samsung Galaxy S25 Ultra over-the-air (`zig build run-v1-live`).
+* **Live Hardware Verification**: Intel Bluetooth Adapter $\to$ Android smartphone over-the-air (`zig build run-v1-live`).
 * **Cross-Compilation**: Native AMD64 Windows and cross-compilation to `x86_64-linux` with zero C compiler required.
 * **HTML Documentation**: Fully builds via `zig build docs` with searchable type declarations.

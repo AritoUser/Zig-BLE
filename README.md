@@ -1,10 +1,16 @@
-# Zig-BLE v1.3.2
+# Zig-BLE v2.0.0-rc.1
 
 A Bluetooth Low Energy (BLE) library written entirely in Zig (0.17.0+). It works through the native Bluetooth stacks of **Windows 11 (WinRT)** and **Linux (BlueZ)** and ships with a platform-independent toolkit of BLE protocol parsers and encoders, cryptographic functions and SIG profiles.
 
 [![CI](https://github.com/AritoUser/Zig-BLE/actions/workflows/ci.yml/badge.svg)](https://github.com/AritoUser/Zig-BLE/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/badge/Release-v1.3.2-brightgreen.svg)](https://github.com/AritoUser/Zig-BLE/releases)
+[![Release](https://img.shields.io/badge/Release-v2.0.0--rc.1-orange.svg)](https://github.com/AritoUser/Zig-BLE/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
+---
+
+## Do more with less
+
+Zig-BLE is built by one rule: when two designs work, the one with less in it wins. Fewer dependencies, fixed memory instead of growing buffers, the operating system's Bluetooth stack instead of a second one, a small API, and no feature called done before it ran on real hardware. See [docs/PHILOSOPHY.md](docs/PHILOSOPHY.md).
 
 ---
 
@@ -40,6 +46,8 @@ A Bluetooth Low Energy (BLE) library written entirely in Zig (0.17.0+). It works
 **Windows:** v1.3.0 to v1.3.2 could not scan or use GATT through `WindowsBackend` because of wrong WinRT IIDs and a wrong vtable. That is fixed and verified with `zig build run-hardware-check -- <address>` against a fitness band and a tracker tag: scanning, connecting, discovery, reading characteristics and descriptors, notifications, and holding an idle connection with active subscriptions for 30 s.
 
 **BlueZ through `BluezBackend` / `UnifiedAdapter`:** before this release the backend never read D-Bus signals, so scan results, notifications and disconnects did not reach the callbacks. That is fixed (call `processEvents` regularly). Verified on 2026-11-10 against BlueZ 5.82 with a Realtek USB adapter, with a Windows 11 PC as the other side: scanning, connecting, filtered discovery, reads, writes with and without response, notifications, descriptors, MTU, and the peripheral role (GATT server and advertising, read, write and notify from a Windows central). Pairing with the pairing agent works as peripheral (a Windows central paired by Numeric Comparison); pairing as central and the recovery after a `bluetoothd` restart are not verified yet.
+
+**Known limitation (Linux kernel and BlueZ, not Zig-BLE):** after Linux pairs as central with a dual-mode peer that uses a resolvable private address (seen with a Windows 11 PC), reconnecting over LE can fail. The kernel resolves the peer's address but sends the connection request to its identity address, under which the peer never advertises. Seen with kernel 7.0.14 and BlueZ 5.82; details in `docs/V2_BLOCKERS.md`, B13.
 
 **Windows as peripheral:** advertising, reads, writes and notifications verified against a BlueZ central (10/10 runs). Pairing that the client starts is handled by Windows itself; call `ServerCharacteristic.pairSubscribers` to pair from the peripheral side through `PairingCallbacks` (10/10 runs). The connection problems seen earlier came from the Linux kernel on the test machine; see `docs/TROUBLESHOOTING.md`.
 
@@ -86,7 +94,7 @@ graph TD
 - ATT/GATT PDU encoding and decoding, `AttBearer` client & server state machine over L2CAP CID `0x0004` with a 30-second transaction timeout check, `ServiceDiscoveryClient`, long reads (`LongReadClient`) and queued writes (`QueuedWriteClient`) (`src/core/att.zig`).
 - SMP PDU encoding/decoding and an experimental `SmpStateMachine` (Legacy & LE Secure Connections Just Works with ECDH P-256; no user confirmation for numeric comparison, no SC passkey entry, no key distribution yet) over L2CAP CID `0x0006`, plus the Bluetooth crypto toolbox verified against Core Spec Vol 3, Part H, Appendix D test vectors: AES-128, AES-CMAC, `ah`, `c1`, `s1`, `f4`, `f5`, `f6`, `g2`, `h6`, `h7` (`src/crypto/`).
 - HCI command and event encoding (LE Create/Extended Create Connection, Disconnect, Connection Update, Data Length, Encryption, LE Connection Subrating), ACL flow controller (`AclFlowController`), H4 and 3-Wire H5 UART framing, L2CAP ACL reassembly and signaling (`src/hci/`, `src/l2cap/`).
-- EATT bearer & multiplexer (`src/core/eatt.zig`) over L2CAP Credit-Based Flow Control (`local_credits`, `remote_credits`, MPS K-frame SDU segmentation and reassembly, per-bearer fault isolation).
+- EATT bearer & multiplexer (`src/core/eatt.zig`), **experimental** and not used by any backend yet, over L2CAP Credit-Based Flow Control (`local_credits`, `remote_credits`, MPS K-frame SDU segmentation and reassembly, per-bearer fault isolation).
 - Authenticated bond store (`src/storage/bond_store.zig`): AES-128-CTR encryption for LTK, IRK and CSRK with an application-supplied key (`initWithKey`, or `initWithKeyFile` for a random `0600` key file; Linux file persistence refuses to run without one, the built-in default key is only used for in-memory images and inside the DPAPI blob), import of v1.2.x files via `deserializeLegacy`, constant-time `CmacAes128` integrity tag, Windows DPAPI (`CryptProtectData`), Linux `0600` permission enforcement, and atomic write-temp-fsync-rename persistence.
 - SIG profiles: Heart Rate, Battery, Device Information, Current Time, Health Thermometer, Blood Pressure, HID over GATT, Environmental Sensing, Pulse Oximeter, Fitness Machine, Cycling Power, Running Speed & Cadence, Nordic UART, iBeacon and Eddystone (`src/profiles/`).
 - Wireshark PCAP writer (`DLT_BLUETOOTH_HCI_H4`) (`src/tooling/pcap.zig`) with live `PcapHook` integration across backends.
@@ -97,6 +105,7 @@ graph TD
 
 ## Documentation
 
+- [Philosophy: do more with less](docs/PHILOSOPHY.md): the rule behind every design decision.
 - [Technical White Paper](docs/WHITEPAPER.md): design of the D-Bus wire client and the protocol engine.
 - [Architecture & Protocol Manual](docs/ARCHITECTURE_AND_PROTOCOL_MANUAL.md): memory layout, state machines and packet formats.
 - [Roadmap & Extensions](docs/BLE_ROADMAP_AND_EXTENSIONS.md): planned features.
@@ -117,7 +126,7 @@ Zig-BLE v1.0.0 has been physically verified over the 2.4 GHz air interface using
           ZIG-BLE v1.0.0: LIVE OVER-THE-AIR TELEMETRY & GATT STATISTICS         
 ================================================================================
 Local Controller:            PC Bluetooth adapter (Windows 11)
-Target Device:               Samsung Galaxy S25 Ultra
+Target Device:               Android smartphone
 Connection Status:           Connected (Active 2.4 GHz Physical Radio Link)
 --------------------------------------------------------------------------------
 GATT Services Discovered:    8 (SIG Standard: 6, Vendor 128-Bit: 2)
@@ -135,7 +144,6 @@ Total Interrogation Time:    3236.92 ms (~3.2 seconds for full device profile)
 ```
 
 **Real Live Payload Sample Extracted Over-the-Air:**
-* **GAP Device Name (0x2A00):** `"S25 Ultra "` (20 bytes UTF-8)
 * **Telephony Bearer Provider (0x2BB4):** `"E.164"` (ITU-T standard)
 * **Telephony Bearer Technology (0x2BB5):** `0x06` (5G NR / LTE active radio)
 * **GATT Database Hash (0x2B2A):** `95 79 53 91 F5 F0 94 08 41 E4 DB D4 7D F6 D8 C3` (16 bytes)
@@ -147,8 +155,13 @@ Total Interrogation Time:    3236.92 ms (~3.2 seconds for full device profile)
 Add `zig_ble` to your `build.zig.zon`:
 
 ```sh
-zig fetch --save git+https://github.com/AritoUser/Zig-BLE.git
+zig fetch --save git+https://github.com/AritoUser/Zig-BLE.git#v2.0.0-rc.1
 ```
+
+`v2.0.0-rc.1` is a release candidate: Windows and Linux are verified on hardware for scanning,
+GATT, notifications, indications, pairing, the peripheral role and 8-hour soak tests; a few
+tests are still open before v2.0.0 (`docs/V2_BLOCKERS.md`). It has breaking changes against
+v1.3.2, listed in `CHANGELOG.md`.
 
 Or reference locally in `build.zig.zon`:
 
@@ -281,7 +294,7 @@ pub fn main(init: std.process.Init) !void {
 
 A qualitative comparison of how the libraries are built, not a performance measurement. No benchmarks were run on the other libraries with the same data, so this table deliberately contains no throughput numbers.
 
-| Criterion | **Zig-BLE v1.3.2** | **Rust (`btleplug`)** | **C++ (`SimpleBLE`)** | **Embedded C (`NimBLE`)** | **Python (`bleak`)** |
+| Criterion | **Zig-BLE v2.0.0-rc.1** | **Rust (`btleplug`)** | **C++ (`SimpleBLE`)** | **Embedded C (`NimBLE`)** | **Python (`bleak`)** |
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | **Language** | Zig 0.17+ | Rust | C++17 | C99 | Python 3.8+ |
 | **Needs `libc` (Linux)** | No (own D-Bus wire client) | Yes (indirectly) | Yes | Partly | Yes (Python runtime) |

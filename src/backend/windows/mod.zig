@@ -85,7 +85,9 @@ pub fn WindowsBackendWithConfig(comptime pool_config: PoolConfig) type {
         adapter: ?*bindings.IBluetoothAdapter = null,
         watcher: ?*bindings.IBluetoothLEAdvertisementWatcher = null,
         watcher_token: bindings.EventRegistrationToken = 0,
-        watcher_handler: bindings.AdvertisementReceivedHandler = undefined,
+        /// Heap-allocated (see `bindings.events.create`): WinRT may call it after the scan
+        /// stopped, even after this backend is gone, and then finds it inactive.
+        watcher_handler: ?*bindings.AdvertisementReceivedHandler = null,
 
         scan_filter: ScanFilter = .{},
         active_scan_cb: ?ScanCallback = null,
@@ -110,6 +112,10 @@ pub fn WindowsBackendWithConfig(comptime pool_config: PoolConfig) type {
         /// Use Windows' GATT cache for service discovery instead of reading services over the
         /// air on every connect. Faster, but can return stale services after a firmware update.
         use_cached_services: bool = false,
+        /// Open each connection's `GattSession` with `MaintainConnection = true`, so Windows
+        /// keeps an idle link up. Without it Windows may close a link that has no active
+        /// subscription after a few seconds; mainly there to compare the two.
+        maintain_connection: bool = true,
         /// Only read the characteristics of these services during `connect` and lazy discovery,
         /// which saves round trips on devices with many services. Empty means all services.
         service_filter: []const UUID = &.{},
@@ -249,7 +255,7 @@ pub fn WindowsBackendWithConfig(comptime pool_config: PoolConfig) type {
         pub fn closeAdapter(ctx: *anyopaque) void {
             const self: *Self = @ptrCast(@alignCast(ctx));
             self.is_closed.store(true, .release);
-            self.watcher_handler.deactivate();
+            if (self.watcher_handler) |h| h.active.store(false, .release);
 
             if (builtin.os.tag != .windows) {
                 self.powered = false;
@@ -342,7 +348,10 @@ pub fn WindowsBackendWithConfig(comptime pool_config: PoolConfig) type {
         }
 
         fn onConnectionStatusChanged(dev_ctx: *anyopaque, sender: ?*bindings.IBluetoothLEDevice) callconv(.c) void {
-            const dev: *DeviceContext = @ptrCast(@alignCast(dev_ctx));
+            const handler: *bindings.ConnectionStatusChangedHandler = @ptrCast(@alignCast(dev_ctx));
+            const dev: *DeviceContext = @ptrCast(@alignCast(handler.owner orelse return));
+            // Detached: a late call for a connection this slot no longer holds.
+            if (dev.conn_status_handler.load(.acquire) != handler) return;
             const backend = dev.parent_backend orelse return;
             if (backend.is_closed.load(.acquire)) return;
 
@@ -350,11 +359,11 @@ pub fn WindowsBackendWithConfig(comptime pool_config: PoolConfig) type {
             var status: bindings.BluetoothConnectionStatus = .Disconnected;
             if (ble_dev.lpVtbl.get_ConnectionStatus(ble_dev, &status) < 0) return;
 
-            dev.handleConnectionStatusTransition(status == .Connected);
+            dev.handleConnectionStatusTransition(status == .Connected, handler);
         }
 
         pub fn simulateConnectionStatusTransition(dev: *DeviceContext, connected: bool) void {
-            dev.handleConnectionStatusTransition(connected);
+            dev.handleConnectionStatusTransition(connected, null);
         }
 
         pub fn connectDevice(ctx: *anyopaque, addr: Address, timeout_ms: u32) BleError!*anyopaque {
@@ -424,16 +433,22 @@ pub fn WindowsBackendWithConfig(comptime pool_config: PoolConfig) type {
                 dev_slot.ble_device3 = dev3;
             }
 
-            dev_slot.gatt_session = gatt_mod.openGattSession(ble_dev, timeout_ms) catch |err| blk: {
+            dev_slot.gatt_session = gatt_mod.openGattSession(ble_dev, timeout_ms, self.maintain_connection) catch |err| blk: {
                 log.warn("WinRT GattSession for {f} unavailable ({s}); Windows may drop an idle connection", .{ addr, @errorName(err) });
                 break :blk null;
             };
 
-            dev_slot.conn_status_handler = .{
-                .dev_ctx = @ptrCast(dev_slot),
+            const conn_handler = bindings.events.create(bindings.ConnectionStatusChangedHandler, .{
+                .dev_ctx = undefined,
                 .on_status_changed = onConnectionStatusChanged,
+                .owner = @ptrCast(dev_slot),
+            }) catch {
+                dev_slot.releaseAll();
+                return BleError.OutOfMemory;
             };
-            if (ble_dev.lpVtbl.add_ConnectionStatusChanged(ble_dev, @ptrCast(&dev_slot.conn_status_handler), &dev_slot.conn_status_token) >= 0) {
+            conn_handler.dev_ctx = @ptrCast(conn_handler);
+            dev_slot.conn_status_handler.store(conn_handler, .release);
+            if (ble_dev.lpVtbl.add_ConnectionStatusChanged(ble_dev, @ptrCast(conn_handler), &dev_slot.conn_status_token) >= 0) {
                 dev_slot.conn_status_registered = true;
             }
 
@@ -562,12 +577,23 @@ pub fn WindowsBackendWithConfig(comptime pool_config: PoolConfig) type {
             const dev: *DeviceContext = @ptrCast(@alignCast(dev_handle));
             if (!dev.is_connected.load(.acquire)) return BleError.NotConnected;
 
-            // Rediscovers, because the list may have been narrowed before. Subscriptions on
-            // services that stay are set up again on the new characteristic objects.
+            // Right after a full discovery the pools are narrowed in memory. That spares the
+            // Bluetooth service another discovery (B5: a crash inside Windows' own completion of
+            // GetGattServicesAsync, once in about 630) and avoids Windows' cache, which keeps
+            // services the peer no longer has (A11). Otherwise it rediscovers, because the list
+            // may have been narrowed before, or because the first discovery lacked the service:
+            // seen once right after the peer registered it. Subscriptions on services that stay
+            // are set up again.
             dev.saved_subscriptions.capture(dev.characteristics[0..dev.characteristics_len]);
             dev.clearSubscriptions();
-            dev.releaseGatt();
-            const result = gatt_mod.discoverServicesFiltered(self, dev, filter_uuids);
+            const narrowed = if (dev.gatt_fresh.load(.acquire)) dev.narrowGatt(filter_uuids) else BleError.ServiceNotFound;
+            const result = narrowed catch |err| switch (err) {
+                BleError.ServiceNotFound => blk: {
+                    dev.releaseGatt();
+                    break :blk gatt_mod.discoverServicesFiltered(self, dev, filter_uuids);
+                },
+                else => err,
+            };
             self.restoreSubscriptions(dev);
             return result;
         }
@@ -630,10 +656,11 @@ pub fn WindowsBackendWithConfig(comptime pool_config: PoolConfig) type {
         }
 
         fn onCharacteristicValueChanged(char_ctx: *anyopaque, args: *bindings.IGattValueChangedEventArgs) callconv(.c) void {
-            const slot: *WinCharacteristicSlot = @ptrCast(@alignCast(char_ctx));
+            const handler: *bindings.GattValueChangedHandler = @ptrCast(@alignCast(char_ctx));
+            const slot: *WinCharacteristicSlot = @ptrCast(@alignCast(handler.owner orelse return));
             const dev_ptr = slot.parent_device orelse return;
             const dev: *DeviceContext = @ptrCast(@alignCast(dev_ptr));
-            gatt_mod.handleCharacteristicValueChanged(slot, dev, args);
+            gatt_mod.handleCharacteristicValueChanged(slot, handler, dev, args);
         }
 
         pub fn subscribeNotifications(ctx: *anyopaque, dev_handle: *anyopaque, char: CharacteristicSelector, cb: NotificationCallback, user_data: ?*anyopaque) BleError!void {

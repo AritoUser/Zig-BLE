@@ -39,6 +39,9 @@ pub fn discoverServicesFiltered(backend: anytype, dev: anytype, filter_uuids: []
     const d3 = dev.ble_device3 orelse return BleError.NotConnected;
 
     var svcs_op: ?*bindings.IAsyncOperationGeneric = null;
+    // From the peer unless the application asked for the cache: Windows' cache keeps services
+    // the peer has removed since (A11). After a full discovery, a filtered one narrows the
+    // pools in memory instead (`narrowGatt`).
     const cache_mode: bindings.BluetoothCacheMode = if (backend.use_cached_services) .Cached else .Uncached;
     if (d3.lpVtbl.GetGattServicesWithCacheModeAsync(d3, cache_mode, &svcs_op) < 0 or svcs_op == null) {
         return BleError.GattError;
@@ -87,7 +90,10 @@ pub fn discoverServicesFiltered(backend: anytype, dev: anytype, filter_uuids: []
                 continue;
             }
         }
-        try dev.addService(svc);
+        dev.addService(svc_uuid, svc) catch |err| {
+            logServiceList(sv, svc_count, cache_mode, dev.services_len, dev.characteristics_len);
+            return err;
+        };
         matched_services += 1;
 
         var svc3: ?*bindings.IGattDeviceService3 = null;
@@ -109,12 +115,34 @@ pub fn discoverServicesFiltered(backend: anytype, dev: anytype, filter_uuids: []
             // A service whose characteristics cannot be read (Windows denies access to HID, for
             // example) is skipped with a warning instead of failing the whole connection.
             discoverCharacteristics(backend, dev, s3, svc_uuid, cache_mode) catch |err| switch (err) {
-                BleError.PoolExhausted => return err,
+                BleError.PoolExhausted => {
+                    logServiceList(sv, svc_count, cache_mode, dev.services_len, dev.characteristics_len);
+                    return err;
+                },
                 else => log.warn("Skipping characteristics of service {f}: {s}", .{ svc_uuid, @errorName(err) }),
             };
         }
     }
     if (filter_uuids.len > 0 and matched_services == 0) return BleError.ServiceNotFound;
+    if (cache_mode == .Uncached and filter_uuids.len == 0) dev.gatt_fresh.store(true, .release);
+}
+
+/// A11: a filtered discovery overflowed the pool once, which needs the same service many times
+/// over. The list with its attribute handles shows whether Windows returned copies.
+fn logServiceList(sv: *bindings.IVectorViewGeneric, svc_count: u32, cache_mode: bindings.BluetoothCacheMode, services_len: anytype, chars_len: anytype) void {
+    log.warn("Discovery pool exhausted ({s}): {d} services from Windows, {d} kept, {d} characteristics", .{ @tagName(cache_mode), svc_count, services_len, chars_len });
+    var i: u32 = 0;
+    while (i < svc_count) : (i += 1) {
+        var raw: ?*anyopaque = null;
+        if (sv.lpVtbl.GetAt(sv, i, &raw) < 0 or raw == null) continue;
+        const svc: *bindings.IGattDeviceService = @ptrCast(@alignCast(raw.?));
+        defer _ = svc.lpVtbl.Release(svc);
+        var guid: GUID = undefined;
+        var handle: u16 = 0;
+        const uuid = if (svc.lpVtbl.get_Uuid(svc, &guid) >= 0) helpers.guidToUuid(guid) else UUID.from16(0);
+        _ = svc.lpVtbl.get_AttributeHandle(svc, &handle);
+        log.warn("  service {d}: {f} handle 0x{x:0>4}", .{ i, uuid, handle });
+    }
 }
 
 fn discoverCharacteristics(backend: anytype, dev: anytype, s3: *bindings.IGattDeviceService3, svc_uuid: UUID, cache_mode: bindings.BluetoothCacheMode) BleError!void {
@@ -284,13 +312,15 @@ pub fn writeCharacteristic(backend: anytype, dev: anytype, char: CharacteristicS
     }
 }
 
-pub fn handleCharacteristicValueChanged(slot: *WinCharacteristicSlot, dev: anytype, args: *bindings.IGattValueChangedEventArgs) void {
+pub fn handleCharacteristicValueChanged(slot: *WinCharacteristicSlot, handler: *const bindings.GattValueChangedHandler, dev: anytype, args: *bindings.IGattValueChangedEventArgs) void {
     const backend = dev.parent_backend orelse return;
     if (backend.is_closed.load(.acquire)) return;
     // Runs on a WinRT thread: copy the callback under `state_mutex`, call it without the lock.
     const cb, const user_data = blk: {
         backend.state_mutex.lock();
         defer backend.state_mutex.unlock();
+        // A late call for an earlier subscription, perhaps of another characteristic since.
+        if (slot.value_changed_handler.load(.acquire) != handler) return;
         break :blk .{ slot.notify_cb orelse return, slot.notify_user_data };
     };
 
@@ -341,22 +371,25 @@ pub fn subscribeNotifications(
         slot.notify_user_data = user_data;
     }
 
-    slot.value_changed_handler = .{
-        .char_ctx = @ptrCast(slot),
-        .on_changed = value_changed_fn,
-    };
-
     const was_subscribed = slot.is_subscribed;
     if (!was_subscribed) {
-        const add_hr = ch.lpVtbl.add_ValueChanged(ch, @ptrCast(&slot.value_changed_handler), &slot.value_changed_token);
-        if (add_hr < 0) return BleError.NotificationFailed;
+        const handler = bindings.events.create(bindings.GattValueChangedHandler, .{
+            .char_ctx = undefined,
+            .on_changed = value_changed_fn,
+            .owner = @ptrCast(slot),
+        }) catch return BleError.OutOfMemory;
+        handler.char_ctx = @ptrCast(handler);
+        slot.value_changed_handler.store(handler, .release);
+        const add_hr = ch.lpVtbl.add_ValueChanged(ch, @ptrCast(handler), &slot.value_changed_token);
+        if (add_hr < 0) {
+            slot.dropValueChangedHandler();
+            return BleError.NotificationFailed;
+        }
         slot.is_subscribed = true;
     }
     // A subscription the peer refused must not stay registered: it would count as active.
     errdefer if (!was_subscribed) {
-        _ = ch.lpVtbl.remove_ValueChanged(ch, slot.value_changed_token);
-        slot.is_subscribed = false;
-        slot.value_changed_token = 0;
+        slot.dropValueChangedHandler();
         backend.state_mutex.lock();
         defer backend.state_mutex.unlock();
         slot.notify_cb = null;
@@ -389,16 +422,7 @@ pub fn unsubscribeNotifications(backend: anytype, dev: anytype, char: Characteri
     const slot = dev.findCharacteristic(char) orelse return;
     const ch = slot.char_ptr orelse return;
 
-    slot.value_changed_handler.deactivate();
-
-    if (slot.is_subscribed and slot.value_changed_token != 0) {
-        const rem_hr = ch.lpVtbl.remove_ValueChanged(ch, slot.value_changed_token);
-        if (rem_hr < 0) {
-            log.warn("WinRT remove_ValueChanged returned HRESULT 0x{X:0>8}", .{@as(u32, @bitCast(rem_hr))});
-        }
-        slot.is_subscribed = false;
-        slot.value_changed_token = 0;
-    }
+    slot.dropValueChangedHandler();
 
     {
         backend.state_mutex.lock();
@@ -556,7 +580,7 @@ pub fn exchangeMtu(backend: anytype, dev: anytype, target_mtu: u16) BleError!u16
     // 3. Fallback: open a session now (it is kept for later calls and released on disconnect)
     if (dev.gatt_session == null) {
         if (dev.ble_device) |ble_dev| {
-            dev.gatt_session = try openGattSession(ble_dev, backend.timeouts.mtu_exchange_ms);
+            dev.gatt_session = try openGattSession(ble_dev, backend.timeouts.mtu_exchange_ms, backend.maintain_connection);
             if (dev.gatt_session) |sess| {
                 var max_pdu: u16 = 0;
                 if (sess.lpVtbl.get_MaxPduSize(sess, &max_pdu) >= 0 and max_pdu >= 23) {
@@ -570,10 +594,11 @@ pub fn exchangeMtu(backend: anytype, dev: anytype, target_mtu: u16) BleError!u16
     return BleError.MtuExchangeFailed;
 }
 
-/// Opens the device's `GattSession` with `MaintainConnection = true`. Windows has no explicit
-/// connect: the link belongs to the GATT sessions that want it, and without this flag Windows
-/// drops it after a few idle seconds. Returns null if the device offers no session.
-pub fn openGattSession(ble_dev: *bindings.IBluetoothLEDevice, timeout_ms: u32) BleError!?*bindings.IGattSession {
+/// Opens the device's `GattSession`, with `MaintainConnection = true` when `maintain` is set.
+/// Windows has no explicit connect: the link belongs to the GATT sessions that want it, and
+/// without this flag Windows drops it after a few idle seconds. Returns null if the device
+/// offers no session.
+pub fn openGattSession(ble_dev: *bindings.IBluetoothLEDevice, timeout_ms: u32, maintain: bool) BleError!?*bindings.IGattSession {
     if (builtin.os.tag != .windows) return BleError.NotSupported;
 
     var dev4: ?*bindings.IBluetoothLEDevice4 = null;
@@ -599,6 +624,7 @@ pub fn openGattSession(ble_dev: *bindings.IBluetoothLEDevice, timeout_ms: u32) B
     const sess_raw = (try helpers.awaitAsync(sess_op.?, timeout_ms)) orelse return null;
     const sess: *bindings.IGattSession = @ptrCast(@alignCast(sess_raw));
 
+    if (!maintain) return sess;
     var can_maintain: u8 = 0;
     if (sess.lpVtbl.get_CanMaintainConnection(sess, &can_maintain) >= 0 and can_maintain != 0) {
         if (sess.lpVtbl.put_MaintainConnection(sess, 1) < 0) {

@@ -52,6 +52,12 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const ble = @import("Zig_BLE");
+const build_options = @import("build_options");
+
+pub const std_options: std.Options = .{
+    // With `-Dcrash-dumps` a crash reaches Windows Error Reporting, which can write a dump.
+    .enable_segfault_handler = !build_options.crash_dumps,
+};
 
 const UUID = ble.UUID;
 const Native = switch (builtin.os.tag) {
@@ -73,13 +79,14 @@ const default_peripheral_seconds = 300;
 
 const usage =
     \\Usage: ble-hardware-check [<address>|auto [--service <uuid>] [--resubscribe | --soak <minutes>
-    \\                           | --suite [rounds] | --disconnect
+    \\                           | --suite [rounds] | --disconnect | --idle <seconds>
     \\                           | --multi <address> [<address> ...]
     \\                           | --write <uuid> <hex> [--no-response] | --write-len <uuid> <bytes>
     \\                           | --write-desc <char-uuid> <descriptor-uuid> <hex> | --pair | --await-pair | --unpair]]
     \\       ble-hardware-check --peripheral [seconds] [--secure] [--io <capability>]
     \\       --io none|display|yesno|keyboard|keyboarddisplay (before the mode)
     \\       --answers <file>: answers to the pairing prompts, one per line (before the mode)
+    \\       --no-maintain: Windows, open the GATT session without MaintainConnection (before the mode)
     \\
 ;
 
@@ -87,6 +94,7 @@ const Action = union(enum) {
     inspect,
     resubscribe,
     disconnect,
+    idle: u32,
     multi,
     soak: u32,
     suite: u32,
@@ -110,6 +118,8 @@ var io_capability: ble.IoCapability = .keyboard_display;
 var daemon_restarted: std.atomic.Value(bool) = .init(false);
 /// `--answers`: file the pairing prompts read their answers from, and how many lines are used up.
 var answers_path: ?[]const u8 = null;
+/// `--no-maintain`: Windows opens the GATT session without `MaintainConnection` (B12).
+var maintain_connection = true;
 var answers_used: usize = 0;
 /// `--multi`: the devices to hold connected next to the target.
 var extra_targets: [7]ble.Address = undefined;
@@ -460,6 +470,33 @@ fn checkMulti(adapter: *ble.UnifiedAdapter, addr: ble.Address) !bool {
 /// Uses a connection, disconnects and waits until the peer advertises again. A peripheral with a
 /// single advertising set (BlueZ) stays silent while the link is up, so this shows that
 /// `disconnect` really ended the link. A peer that advertises while connected passes trivially.
+/// B12: connects, reads once, subscribes to nothing and stays idle. Passes when the link is
+/// still up at the end and a read works. With `--no-maintain` on Windows this shows whether
+/// `MaintainConnection` is what keeps an idle link.
+fn checkIdle(adapter: *ble.UnifiedAdapter, addr: ble.Address, seconds: u32) !bool {
+    var dev = try connect(adapter, addr);
+    defer drop(&dev);
+    _ = try visitCharacteristics(&dev, false);
+    print("Idle for {d} s, MaintainConnection {s} ...", .{ seconds, if (maintain_connection) "on" else "off" });
+    const started = std.Io.Timestamp.now(io, .awake);
+    var dropped_after: ?i64 = null;
+    for (0..seconds) |_| {
+        _ = try hold(adapter, 1);
+        if (dropped_after == null and !dev.isConnected()) {
+            dropped_after = started.durationTo(std.Io.Timestamp.now(io, .awake)).toSeconds();
+        }
+    }
+    var buf: [512]u8 = undefined;
+    const read_ok = if (dev.readCharacteristic(echo_char, &buf)) |_| true else |err| blk: {
+        print("Read after the idle time: {s}", .{@errorName(err)});
+        break :blk false;
+    };
+    if (dropped_after) |after| {
+        print("idle: link dropped after {d} s, read afterwards {s}", .{ after, if (read_ok) "ok" else "failed" });
+    } else print("idle: link held {d} s, read afterwards {s}", .{ seconds, if (read_ok) "ok" else "failed" });
+    return dropped_after == null and read_ok;
+}
+
 fn checkDisconnect(adapter: *ble.UnifiedAdapter, addr: ble.Address) !bool {
     var dev = try connect(adapter, addr);
     _ = try visitCharacteristics(&dev, true);
@@ -521,12 +558,29 @@ fn handleCount() ?u32 {
     return count;
 }
 
-fn soakCycle(adapter: *ble.UnifiedAdapter, addr: ble.Address) !usize {
-    try scanFor(adapter, addr, scan_for_seconds);
-    var dev = try adapter.connect(addr, connect_timeout_ms);
+/// `addr` is the address of the last cycle that connected. With `auto` the peer may have
+/// changed its random address since then; a stale `addr` would make `locate` wait 5 s for
+/// it, and the address it falls back to can change in that time.
+fn soakCycle(adapter: *ble.UnifiedAdapter, addr: *ble.Address) !usize {
+    const target = try locate(adapter, addr.*, scan_for_seconds);
+    // With a timestamp, so a failed cycle can be found in an HCI trace.
+    print("{d} connect {f}", .{ std.Io.Timestamp.now(io, .real).toSeconds(), target });
+    const t_connect = std.Io.Timestamp.now(io, .awake);
+    var dev = try adapter.connect(target, connect_timeout_ms);
     defer drop(&dev);
+    addr.* = target;
+    const t_connected = std.Io.Timestamp.now(io, .awake);
     if (service_filter) |uuid| try dev.discoverServicesFiltered(&.{uuid});
+    const t_discovered = std.Io.Timestamp.now(io, .awake);
     _ = try visitCharacteristics(&dev, true);
+    const t_ready = std.Io.Timestamp.now(io, .awake);
+    // Time to a usable link, per step, so the soak logs yield a latency distribution.
+    print("ready in {d} ms: connect {d}, discover {d}, read and subscribe {d}", .{
+        t_connect.durationTo(t_ready).toMilliseconds(),
+        t_connect.durationTo(t_connected).toMilliseconds(),
+        t_connected.durationTo(t_discovered).toMilliseconds(),
+        t_discovered.durationTo(t_ready).toMilliseconds(),
+    });
     const notifications = try hold(adapter, soak_hold_seconds);
     if (!dev.isConnected()) return error.ConnectionLost;
     return notifications;
@@ -539,11 +593,12 @@ fn soak(adapter: *ble.UnifiedAdapter, addr: ble.Address, minutes: u32) !void {
     var failures: usize = 0;
     var notifications: usize = 0;
     const handles_at_start = handleCount();
+    var target = addr;
 
     print("Soak test for {d} min. On Linux, `sudo systemctl restart bluetooth` during the run tests the recovery.", .{minutes});
     while (start.durationTo(std.Io.Timestamp.now(io, .awake)).toSeconds() < end_seconds) {
         cycles += 1;
-        if (soakCycle(adapter, addr)) |count| {
+        if (soakCycle(adapter, &target)) |count| {
             notifications += count;
         } else |err| {
             failures += 1;
@@ -981,6 +1036,19 @@ fn onCounterNotifyState(_: *ble.ServerCharacteristic, enabled: bool, _: ?*anyopa
     print("  counter notifications {s}", .{if (enabled) "enabled" else "disabled"});
 }
 
+/// The first adapter BlueZ lists, as the peripheral uses it. A USB adapter that resets comes
+/// back under the next free index (hci1 on 2026-11-16), so a fixed 0 would miss it.
+fn adapterIndex() !u8 {
+    if (builtin.os.tag != .linux) return 0;
+    var conn = try ble.Connection.initSystem();
+    defer conn.deinit();
+    const adapter = (try ble.Adapter.findDefault(&conn)) orelse return error.AdapterNotFound;
+    const path = adapter.getObjectPath();
+    const prefix = "/org/bluez/hci";
+    if (!std.mem.startsWith(u8, path, prefix)) return error.AdapterNotFound;
+    return std.fmt.parseInt(u8, path[prefix.len..], 10);
+}
+
 fn runPeripheral(seconds: u32, secure: bool) !void {
     var conn: ble.Connection = if (builtin.os.tag == .linux) try ble.Connection.initSystem() else .{};
     defer conn.deinit();
@@ -1108,11 +1176,16 @@ fn parseAction(args: anytype, hex_buf: []u8) !Action {
             io_capability = try parseIoCapability(args.next() orelse return error.InvalidArguments);
         } else if (std.mem.eql(u8, arg, "--answers")) {
             answers_path = args.next() orelse return error.InvalidArguments;
+        } else if (std.mem.eql(u8, arg, "--no-maintain")) {
+            maintain_connection = false;
         } else break;
         arg = args.next() orelse return .inspect;
     }
     if (std.mem.eql(u8, arg, "--resubscribe")) return .resubscribe;
     if (std.mem.eql(u8, arg, "--disconnect")) return .disconnect;
+    if (std.mem.eql(u8, arg, "--idle")) {
+        return .{ .idle = try std.fmt.parseInt(u32, args.next() orelse return error.InvalidArguments, 10) };
+    }
     if (std.mem.eql(u8, arg, "--multi")) {
         while (args.next()) |extra| {
             if (extra_targets_len == extra_targets.len) return error.InvalidArguments;
@@ -1196,9 +1269,10 @@ pub fn main(init: std.process.Init) !void {
     }
 
     const backend = native.asBackend();
-    try backend.openAdapter(0);
+    try backend.openAdapter(try adapterIndex());
     defer native.deinit();
     native.setConnectionEventCallback(Queue.onConnectionEvent, &queue);
+    if (builtin.os.tag == .windows) native.maintain_connection = maintain_connection;
     if (builtin.os.tag == .linux) native.setDaemonRestartCallback(onDaemonRestart, null);
 
     var adapter = ble.UnifiedAdapter.init(backend);
@@ -1220,6 +1294,7 @@ pub fn main(init: std.process.Init) !void {
         .inspect => _ = try checkDevice(&adapter, addr),
         .resubscribe => _ = try checkResubscribe(&adapter, addr),
         .disconnect => _ = try checkDisconnect(&adapter, addr),
+        .idle => |seconds| if (!try checkIdle(&adapter, addr, seconds)) return error.CheckFailed,
         .multi => if (!try checkMulti(&adapter, addr)) return error.CheckFailed,
         .soak => |minutes| try soak(&adapter, addr, minutes),
         .suite => unreachable,

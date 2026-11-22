@@ -116,6 +116,58 @@ test "WindowsBackend ConnectionStatusChanged cleans up subscriptions and invokes
     try std.testing.expectEqual(@as(usize, 1), tracker.disconnected_count);
 }
 
+test "WindowsBackend ignores a connection status report from an earlier connection's handler" {
+    var win = WindowsBackend.init();
+    defer win.deinit();
+
+    const dev = try win.allocateDeviceSlot(try Address.parse("AA:BB:CC:DD:EE:02"));
+    dev.is_connected.store(true, .release);
+    const Noop = struct {
+        fn onStatus(_: *anyopaque, _: ?*bindings.IBluetoothLEDevice) callconv(.c) void {}
+    };
+    const stale = try bindings.events.create(bindings.ConnectionStatusChangedHandler, .{ .dev_ctx = undefined, .on_status_changed = Noop.onStatus, .owner = @ptrCast(dev) });
+    defer bindings.events.drop(bindings.ConnectionStatusChangedHandler, stale);
+    const current = try bindings.events.create(bindings.ConnectionStatusChangedHandler, .{ .dev_ctx = undefined, .on_status_changed = Noop.onStatus, .owner = @ptrCast(dev) });
+    dev.conn_status_handler.store(current, .release);
+
+    dev.handleConnectionStatusTransition(false, stale);
+    try std.testing.expect(dev.is_connected.load(.acquire));
+    dev.handleConnectionStatusTransition(false, current);
+    try std.testing.expect(!dev.is_connected.load(.acquire));
+
+    dev.conn_status_handler.store(null, .release);
+    bindings.events.drop(bindings.ConnectionStatusChangedHandler, current);
+}
+
+test "WinRT event handler lives until its last reference and stays silent once dropped" {
+    const Probe = struct {
+        var calls: usize = 0;
+        var freed: usize = 0;
+        fn onChanged(_: *anyopaque, _: *bindings.IGattValueChangedEventArgs) callconv(.c) void {
+            calls += 1;
+        }
+        fn destroy(h: *bindings.GattValueChangedHandler) void {
+            freed += 1;
+            std.heap.page_allocator.destroy(h);
+        }
+    };
+    const h = try bindings.events.create(bindings.GattValueChangedHandler, .{ .char_ctx = undefined, .on_changed = Probe.onChanged });
+    h.destroy = Probe.destroy;
+    const vtbl = h.lpVtbl;
+
+    _ = vtbl.AddRef(h); // WinRT's reference from add_ValueChanged
+    bindings.events.drop(bindings.GattValueChangedHandler, h); // unsubscribed
+    try std.testing.expectEqual(@as(usize, 0), Probe.freed);
+
+    // A late event after the unsubscribe: still valid memory, but no callback.
+    var args: usize = 0;
+    _ = vtbl.Invoke(h, null, @ptrCast(@alignCast(&args)));
+    try std.testing.expectEqual(@as(usize, 0), Probe.calls);
+
+    _ = vtbl.Release(h); // WinRT lets go
+    try std.testing.expectEqual(@as(usize, 1), Probe.freed);
+}
+
 test "WindowsBackend evaluatePairingCeremony supports Passkey and Numeric Comparison callbacks" {
     const PairTester = struct {
         last_numeric: ?u32 = null,
@@ -182,6 +234,44 @@ test "WinRT device context keeps duplicate characteristic UUIDs apart" {
     try std.testing.expectEqual(&dev.characteristics[2], dev.findCharacteristic(.{ .uuid = report, .service = hid, .instance = 1 }).?);
     try std.testing.expect(dev.findCharacteristic(.{ .uuid = report, .instance = 2 }) == null);
     try std.testing.expect(dev.findCharacteristic(.inService(UUID.from16(0x180F), report)) == null);
+}
+
+test "WinRT device context narrows a full discovery to the filtered services in memory" {
+    var win = WindowsBackend.init();
+    defer win.deinit();
+
+    const gap = UUID.from16(0x1800);
+    const hrs = UUID.from16(0x180D);
+    const bas = UUID.from16(0x180F);
+    var dev = try win.allocateDeviceSlot(try Address.parse("AA:BB:CC:DD:EE:03"));
+    dev.service_uuids[0] = gap;
+    dev.service_uuids[1] = hrs;
+    dev.service_uuids[2] = bas;
+    dev.services_len = 3;
+    dev.characteristics[0] = .{ .uuid = UUID.from16(0x2A00), .service_uuid = gap };
+    dev.characteristics[1] = .{ .uuid = UUID.from16(0x2A37), .service_uuid = hrs };
+    dev.characteristics[2] = .{ .uuid = UUID.from16(0x2A19), .service_uuid = bas };
+    dev.characteristics[3] = .{ .uuid = UUID.from16(0x2A38), .service_uuid = hrs };
+    dev.characteristics_len = 4;
+    dev.gatt_fresh.store(true, .release);
+
+    // No filter keeps everything, and the list stays complete.
+    try dev.narrowGatt(&.{});
+    try std.testing.expectEqual(@as(u8, 4), dev.characteristics_len);
+    try std.testing.expect(dev.gatt_fresh.load(.acquire));
+
+    try dev.narrowGatt(&.{hrs});
+    try std.testing.expectEqual(@as(u8, 1), dev.services_len);
+    try std.testing.expect(dev.service_uuids[0].eql(hrs));
+    try std.testing.expectEqual(@as(u8, 2), dev.characteristics_len);
+    try std.testing.expect(dev.characteristics[0].uuid.eql(UUID.from16(0x2A37)));
+    try std.testing.expect(dev.characteristics[1].uuid.eql(UUID.from16(0x2A38)));
+    try std.testing.expect(dev.characteristics[2].uuid.eql(UUID.from16(0)));
+    try std.testing.expect(!dev.gatt_fresh.load(.acquire));
+
+    try std.testing.expectError(BleError.ServiceNotFound, dev.narrowGatt(&.{bas}));
+    try std.testing.expectEqual(@as(u8, 0), dev.services_len);
+    try std.testing.expectEqual(@as(u8, 0), dev.characteristics_len);
 }
 
 test "WinRT connection status callbacks report no disconnect reason" {

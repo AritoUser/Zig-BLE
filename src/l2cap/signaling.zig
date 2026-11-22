@@ -158,7 +158,7 @@ pub const CommandRejectRsp = struct {
         if (raw[0] != @intFromEnum(SignalingOpcode.command_reject_rsp)) return L2capSignalingError.InvalidOpcode;
 
         const id = raw[1];
-        const payload_len = std.mem.readInt(u16, raw[2..4], .little);
+        const payload_len: usize = std.mem.readInt(u16, raw[2..4], .little);
         if (raw.len < 4 + payload_len or payload_len < 2) return L2capSignalingError.InvalidLength;
 
         const reason_raw = std.mem.readInt(u16, raw[4..6], .little);
@@ -537,8 +537,11 @@ pub const CreditBasedConnReq = struct {
         const len = std.mem.readInt(u16, raw[2..4], .little);
         if (len < 10 or (len - 8) % 2 != 0) return L2capSignalingError.InvalidLength;
 
-        const count = @as(u8, @intCast((len - 8) / 2));
-        if (count == 0 or count > 5) return L2capSignalingError.InvalidParameter;
+        // In u16: a length from the peer must not overflow the cast before the range check.
+        const count_wide = (len - 8) / 2;
+        if (count_wide == 0 or count_wide > 5) return L2capSignalingError.InvalidParameter;
+        if (raw.len < 4 + @as(usize, len)) return L2capSignalingError.BufferTooShort;
+        const count: u8 = @intCast(count_wide);
 
         var req = CreditBasedConnReq{
             .identifier = raw[1],
@@ -593,8 +596,11 @@ pub const CreditBasedConnRsp = struct {
         const len = std.mem.readInt(u16, raw[2..4], .little);
         if (len < 8 or (len - 8) % 2 != 0) return L2capSignalingError.InvalidLength;
 
-        const count = @as(u8, @intCast((len - 8) / 2));
-        if (count > 5) return L2capSignalingError.InvalidParameter;
+        // In u16: a length from the peer must not overflow the cast before the range check.
+        const count_wide = (len - 8) / 2;
+        if (count_wide > 5) return L2capSignalingError.InvalidParameter;
+        if (raw.len < 4 + @as(usize, len)) return L2capSignalingError.BufferTooShort;
+        const count: u8 = @intCast(count_wide);
 
         var rsp = CreditBasedConnRsp{
             .identifier = raw[1],
@@ -651,8 +657,11 @@ pub const CreditBasedReconfigureReq = struct {
         const len = std.mem.readInt(u16, raw[2..4], .little);
         if (len < 6 or (len - 4) % 2 != 0) return L2capSignalingError.InvalidLength;
 
-        const count = @as(u8, @intCast((len - 4) / 2));
-        if (count == 0 or count > 5) return L2capSignalingError.InvalidParameter;
+        // In u16: a length from the peer must not overflow the cast before the range check.
+        const count_wide = (len - 4) / 2;
+        if (count_wide == 0 or count_wide > 5) return L2capSignalingError.InvalidParameter;
+        if (raw.len < 4 + @as(usize, len)) return L2capSignalingError.BufferTooShort;
+        const count: u8 = @intCast(count_wide);
 
         var req = CreditBasedReconfigureReq{
             .identifier = raw[1],
@@ -981,4 +990,15 @@ test "Full L2CAP Frame encode/decode" {
     try std.testing.expectEqual(@as(u16, 8), decoded.header.length);
     try std.testing.expect(decoded.pdu == .le_flow_control_credit);
     try std.testing.expectEqual(@as(u16, 100), decoded.pdu.le_flow_control_credit.credits);
+}
+
+test "credit based signaling parsers reject oversized and truncated lengths" {
+    // Found by `zig build test --fuzz`: the CID count was cast to u8 before its range check,
+    // and the PDU length was not checked against the buffer.
+    var reconf = [_]u8{ @intFromEnum(SignalingOpcode.credit_based_reconfigure_req), 1, 0x04, 0x02, 0, 0, 0, 0, 0, 0 };
+    try std.testing.expectError(L2capSignalingError.InvalidParameter, CreditBasedReconfigureReq.parse(&reconf));
+    // Claims 5 CIDs (len 14), but the buffer holds only one.
+    reconf[2] = 14;
+    reconf[3] = 0;
+    try std.testing.expectError(L2capSignalingError.BufferTooShort, CreditBasedReconfigureReq.parse(&reconf));
 }
