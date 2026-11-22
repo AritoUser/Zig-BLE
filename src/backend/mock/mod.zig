@@ -372,6 +372,11 @@ pub const MockController = struct {
         dev.bond_state = .not_bonded;
     }
 
+    pub fn removeBond(ctx: *anyopaque, addr: Address) BleError!void {
+        const self: *MockController = @ptrCast(@alignCast(ctx));
+        if (self.findDeviceByAddress(addr)) |dev| dev.bond_state = .not_bonded;
+    }
+
     pub fn getBondState(ctx: *anyopaque, dev_handle: *anyopaque) types.BondState {
         _ = ctx;
         const dev: *MockDevice = @ptrCast(@alignCast(dev_handle));
@@ -423,6 +428,7 @@ pub const MockController = struct {
         .exchangeMtu = exchangeMtu,
         .pairDevice = pairDevice,
         .unpairDevice = unpairDevice,
+        .removeBond = removeBond,
         .getBondState = getBondState,
         .getCharacteristics = getCharacteristics,
         .readDescriptor = readDescriptor,
