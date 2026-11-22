@@ -62,7 +62,7 @@ Linux: BlueZ 5.82, Realtek-USB-Adapter; Gegenstelle der jeweils andere Rechner.
 | 5 | Schreiben mit Antwort | `… <addr> --write 5a1e0002-… 0102` | `After: 0102 (matches)` | ✅ | ✅ |
 | 6 | Schreiben ohne Antwort | `… --write 5a1e0002-… 0304 --no-response` | `After: 0304 (matches)` | ✅ | ✅ |
 | 7 | Pairing | `… <addr> --service <uuid> --pair` | Bond-Status `bonded`, auch nach dem Reconnect; protected liefert `paired` | ✅ | ✅ |
-| 8 | Bond entfernen | `… <addr> --service <uuid> --unpair` | beim nächsten Verbinden `not_bonded`, Windows führt das Gerät nicht mehr | ✅ | |
+| 8 | Bond entfernen | `… <addr> --unpair` (`removeBond`, ohne Verbindung) | beim nächsten Verbinden `not_bonded`, Windows führt das Gerät nicht mehr | ✅ | ✅ |
 | 9 | Peripheral: Client verbindet sich | `… --peripheral` | echo les- und schreibbar, counter zählt | ✅ | ✅ |
 | 10 | Peripheral: Pairing | `… --peripheral --secure` | Windows koppelt den Abonnenten selbst (gleicher Code auf beiden Seiten), danach liefert protected `paired` | ✅ | ✅ |
 | 11 | Langzeit: Scannen, Verbinden, Slots | `… <addr> --soak 480` | Kein Absturz, jede Fehlrunde erholt sich im nächsten Zyklus, Speicher und Handles steigen nicht (V2_BLOCKERS B5) | ✅ | ✅ |
@@ -191,9 +191,37 @@ behoben).
   wenn es scheitert.
 - **W:** In einem früheren Lauf meldete Windows nach fünf Runden für einige Minuten
   `OperationAlreadyInProgress` (A8); gewertet ist der Wiederholungslauf.
-- Linux kann einen Bond nur über eine Verbindung entfernen, die zum gekoppelten PC nicht mehr
-  zustande kommt. Das Skript nimmt dafür `CENTRAL_FORGET` (unter BlueZ `Adapter1.RemoveDevice`)
-  und für das Windows-Peripheral `PERIPHERAL_FORGET`.
+- `--unpair` entfernte den Bond früher über eine Verbindung, die zum gekoppelten PC unter Linux
+  nicht mehr zustande kommt; dafür gab es `CENTRAL_FORGET`. Seit 2026-11-22 nimmt `--unpair`
+  `UnifiedAdapter.removeBond` und verbindet nicht mehr.
+
+### Erneutes Koppeln, nachdem eine Seite vergessen hat (B3)
+
+Mit `STALE=central|peripheral` entfernt das Skript nach jeder Runde nur den Bond der anderen Seite,
+jede weitere Runde beginnt also mit einem Bond, den die Gegenstelle nicht mehr hat. `STALE_FORGET`
+ist der Befehl, mit dem die Seite mit dem alten Bond ihn vor der Runde entfernt, so wie es eine
+Anwendung tut (`ble-hardware-check <addr der Gegenstelle> --unpair`, also `removeBond`).
+
+```bash
+STALE=peripheral STALE_FORGET="/home/user/ble-hardware-check <addr des PCs> --unpair" \
+  scripts/hardware_pairing.sh local numeric 10
+```
+
+- **Ohne Eingriff** (2026-11-22, je von Hand, `btmon` auf dem Host):
+  - Windows-Central behält: Windows startet beim Verbinden die Verschlüsselung mit dem alten
+    Schlüssel, BlueZ antwortet `LTK Request Neg Reply`, Windows trennt und versucht es immer
+    wieder; Zig-BLE meldet `ConnectionFailed`.
+  - Linux-Peripheral behält: BlueZ schickt einen Security Request, Windows koppelt darauf selbst,
+    ohne die Anwendung zu fragen, und bestätigt nie; nach 30 s trennt BlueZ. `--pair` kollidiert
+    damit: 1/10 (`STALE=peripheral` ohne `STALE_FORGET`).
+  - Linux-Central behält: `Device1.Connect` scheitert (`ConnectionFailed`).
+  - Windows-Peripheral behält: Windows schickt einen Security Request, Linux koppelt neu, Windows
+    gibt das Pairing an seinen eigenen Dialog und bestätigt nie; nach 30 s ist die Verbindung weg.
+    `pairSubscribers` hält den alten Bond für gültig und meldet sofort „paired“.
+- **Mit `removeBond` auf der Seite, die den Bond behalten hat** (2026-11-22/23, Numeric
+  Comparison): W-Central, Peripheral behält 10/10; W-Central behält 10/10; L-Central behält 10/10;
+  L-Central, Windows-Peripheral behält 10/10. Kein Neuversuch nach einem Verbindungsverlust,
+  `removeBond` gelang vor jeder Runde ohne Verbindung.
 
 ## Langzeittest
 

@@ -47,6 +47,8 @@ pub const BackendVTable = struct {
     pairDevice: ?*const fn (ctx: *anyopaque, dev_handle: *anyopaque, io_cap: types.IoCapability) BleError!void = null,
     unpairDevice: ?*const fn (ctx: *anyopaque, dev_handle: *anyopaque) BleError!void = null,
     getBondState: ?*const fn (ctx: *anyopaque, dev_handle: *anyopaque) types.BondState = null,
+    /// Removes the bond with `addr` on this computer without connecting (v2.0.0).
+    removeBond: ?*const fn (ctx: *anyopaque, addr: Address) BleError!void = null,
 
     // High-Throughput Linux SCM_RIGHTS FD Handover (v1.1.0)
     acquireNotifyFd: ?*const fn (ctx: *anyopaque, dev_handle: *anyopaque, char: CharacteristicSelector, out_mtu: *u16) BleError!std.posix.fd_t = null,
@@ -157,6 +159,11 @@ pub const Backend = struct {
 
     pub inline fn unpairDevice(self: Backend, dev_handle: *anyopaque) BleError!void {
         if (self.vtable.unpairDevice) |f| return f(self.ptr, dev_handle);
+        return types.BleError.NotSupported;
+    }
+
+    pub inline fn removeBond(self: Backend, addr: Address) BleError!void {
+        if (self.vtable.removeBond) |f| return f(self.ptr, addr);
         return types.BleError.NotSupported;
     }
 

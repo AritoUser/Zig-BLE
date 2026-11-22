@@ -24,6 +24,23 @@ backend. Error names refer to `BleError`.
 - Use `getCharacteristics()` to list all characteristics, and a `CharacteristicSelector`
   (`.{ .uuid = ..., .service = ..., .instance = n }`) to address the others.
 
+**One side forgot the bond**
+- When only one side removed the bond (`unpair`, a reset, the system settings), the side that
+  still has it keeps using the old keys, and the peer cannot answer them:
+  - The central kept it: it starts encryption with the old key, the peripheral has none, and
+    the link ends right away. Windows reports `ConnectionFailed`; BlueZ `ConnectionFailed`.
+  - The peripheral kept it: it asks the central for encryption, and the central's system
+    starts a pairing of its own. A Windows peripheral hands that pairing to its own dialog and
+    the link drops after 30 s. Against a BlueZ peripheral, Windows as central pairs in the
+    background without asking the application; `pair` from the application then collides
+    with it (1 of 10 attempts bonded in our test).
+- Neither platform tells the application which case it is. On a failed `connect` to a device
+  that is bonded on this computer, the backend logs a warning.
+- Recovery: on the side that still has the bond, call `UnifiedAdapter.removeBond(addr)`. It
+  needs no connection (unlike `UnifiedDevice.unpair`), which is what makes it usable here. Then
+  pair again. On BlueZ, `addr` may be the identity address or the random address the device
+  had when it paired.
+
 **Disconnect reason**
 - `ConnectionEvent.disconnected.reason_code` is the HCI reason (0x08 timeout, 0x13 remote,
   0x16 local, 0x05 authentication).

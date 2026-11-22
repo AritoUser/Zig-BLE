@@ -26,6 +26,12 @@
 #                      bond there, e.g. "bluetoothctl remove AA:BB:CC:DD:EE:FF" (optional)
 #   CENTRAL_FORGET     command run on the central's computer instead of `--unpair`, for a
 #                      central that cannot connect to a bonded peer again (optional)
+#   STALE              central | peripheral: re-pairing after one side forgot (B3). After every
+#                      round only the other side removes its bond, so each later round starts
+#                      with a bond on STALE's side that the peer no longer has.
+#   STALE_FORGET       command run on STALE's computer before each such round, the way an
+#                      application recovers, e.g. "ble-hardware-check <peer addr> --unpair".
+#                      Without it the round shows whether pairing recovers on its own.
 #
 # The central removes its own bond with `--unpair` after every round. Both programs CHANGE the
 # bond state of both computers; use it only between computers of your own.
@@ -141,7 +147,14 @@ answer_prompts() {
 
 passed=0
 total_retries=0
+stale=${STALE:-}
+case $stale in ''|central|peripheral) ;; *) echo "STALE: central or peripheral" >&2; exit 2 ;; esac
 for round in $(seq 1 "$rounds"); do
+  if [ -n "$stale" ] && [ "$round" -gt 1 ] && [ -n "${STALE_FORGET:-}" ]; then
+    s=c; [ "$stale" = peripheral ] && s=p
+    if [ "$(where $s)" = local ]; then stale_out=$(sh -c "$STALE_FORGET" 2>&1); else stale_out=$($PEER_SSH "$STALE_FORGET" 2>&1); fi
+    printf '%s\n' "$stale_out" | grep -q '^Unpaired' || echo "note: STALE_FORGET failed before round $round: $(printf '%s' "$stale_out" | tail -2)"
+  fi
   unset code_c code_p passkey
   codes_c=0; codes_p=0; confirmed=0; waited=0; shown=0; entered=0; same_all=yes
   handled_c=0; handled_p=0
@@ -182,10 +195,13 @@ for round in $(seq 1 "$rounds"); do
     echo "--- full logs: $keep.*.log"
   fi
 
-  # Remove the bond on both sides so the next round pairs from scratch.
+  # Remove the bond on both sides so the next round pairs from scratch, or with STALE only on
+  # the other side.
   unpair_addr=$addr
   [ "$unpair_addr" = auto ] && unpair_addr=$(printf '%s\n' "$c_log" | grep -o 'Connecting to [0-9A-F:]*' | tail -1 | cut -d' ' -f3)
-  if [ -n "${CENTRAL_FORGET:-}" ]; then
+  if [ "$stale" = central ]; then
+    :
+  elif [ -n "${CENTRAL_FORGET:-}" ]; then
     if [ "$central" = local ]; then sh -c "$CENTRAL_FORGET" > /dev/null 2>&1; else $PEER_SSH "$CENTRAL_FORGET" > /dev/null 2>&1; fi
   elif [ "$central" = local ]; then
     "$LOCAL_BIN" "$unpair_addr" --service "$service" --unpair > "$work/unpair.log" 2>&1
@@ -195,7 +211,7 @@ for round in $(seq 1 "$rounds"); do
   stop_side p
   # A bond left on the peripheral makes every later round fail at connecting, so try again and
   # say so. The command also fails when there is no bond to remove, e.g. after a failed pairing.
-  if [ -n "${PERIPHERAL_FORGET:-}" ]; then
+  if [ -n "${PERIPHERAL_FORGET:-}" ] && [ "$stale" != peripheral ]; then
     for attempt in 1 2 3; do
       if [ "$(where p)" = local ]; then forget_out=$(sh -c "$PERIPHERAL_FORGET" 2>&1); else forget_out=$($PEER_SSH "$PERIPHERAL_FORGET" 2>&1); fi
       forget_rc=$?

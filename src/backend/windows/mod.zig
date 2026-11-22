@@ -412,6 +412,11 @@ pub fn WindowsBackendWithConfig(comptime pool_config: PoolConfig) type {
                 disc_res = self.discoverUnlocked(dev_slot, deadline);
             }
             disc_res catch |err| {
+                // A peer that lost its bond refuses the keys Windows still has, and Windows gives
+                // up the link each time before any GATT request (B3).
+                if (dev_slot.ble_device) |ble_dev| if (pairing_mod.queryWinRtBondState(ble_dev) == .bonded) {
+                    log.warn("{f} is bonded on this computer and does not connect; if it lost its bond, call removeBond and pair again", .{addr});
+                };
                 dev_slot.connection_state.store(.disconnected, .release);
                 dev_slot.releaseAll();
                 return err;
@@ -752,6 +757,37 @@ pub fn WindowsBackendWithConfig(comptime pool_config: PoolConfig) type {
             return pairing_mod.unpairDevice(self, dev);
         }
 
+        pub fn removeBond(ctx: *anyopaque, addr: Address) BleError!void {
+            if (builtin.os.tag != .windows) return BleError.NotSupported;
+            const self: *Self = @ptrCast(@alignCast(ctx));
+            self.mutex.lock();
+            defer self.mutex.unlock();
+            if (self.is_closed.load(.acquire)) return BleError.InvalidState;
+            try self.ensureWinRtInitialized();
+
+            const class_hstr = try helpers.createHStringComptime("Windows.Devices.Bluetooth.BluetoothLEDevice");
+            defer helpers.deleteHString(class_hstr);
+            var statics: ?*bindings.IBluetoothLEDeviceStatics = null;
+            if (Combase.RoGetActivationFactory(class_hstr, &bindings.IID_IBluetoothLEDeviceStatics, @ptrCast(&statics)) < 0 or statics == null) {
+                return BleError.PairingFailed;
+            }
+            const st = statics.?;
+            defer _ = st.lpVtbl.Release(st);
+
+            // Creating the WinRT object does not connect. A device Windows has neither seen nor
+            // paired is not found: then there is no bond to remove.
+            const ble_dev = fromBluetoothAddress(st, addr, self.knownAddressType(addr), self.timeouts.pair_ms) catch |err| switch (err) {
+                BleError.DeviceNotFound => return,
+                else => return err,
+            };
+            defer _ = ble_dev.lpVtbl.Release(ble_dev);
+            try pairing_mod.unpairBleDevice(ble_dev, addr, self.timeouts.pair_ms);
+            if (self.findDeviceByAddress(addr)) |dev| {
+                dev.bond_state = .not_bonded;
+                dev.bond_changed = true;
+            }
+        }
+
         pub fn getBondState(ctx: *anyopaque, dev_handle: *anyopaque) types.BondState {
             const self: *Self = @ptrCast(@alignCast(ctx));
             self.mutex.lock();
@@ -785,6 +821,7 @@ pub fn WindowsBackendWithConfig(comptime pool_config: PoolConfig) type {
             .pairDevice = pairDevice,
             .unpairDevice = unpairDevice,
             .getBondState = getBondState,
+            .removeBond = removeBond,
             .getCharacteristics = getCharacteristics,
             .processEvents = processEvents,
             .readDescriptor = readDescriptor,

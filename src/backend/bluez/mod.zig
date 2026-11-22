@@ -446,7 +446,7 @@ pub const BluezBackend = struct {
         dev.connectWithTimeout(eff_timeout) catch |err| {
             log.err("BlueZ Device1.Connect failed for {s}: {s}", .{ dev_slot.getPath(), @errorName(err) });
             if (err == error.Failed and (dev.isPaired() catch false)) {
-                log.warn("A bonded dual-mode device may have been connected over BR/EDR; see docs/TROUBLESHOOTING.md", .{});
+                log.warn("{s} is bonded and does not connect: it may have lost its bond (call removeBond and pair again) or have been connected over BR/EDR; see docs/TROUBLESHOOTING.md", .{dev_slot.getPath()});
             }
             // Our call timed out, but BlueZ keeps trying to connect; Disconnect cancels that
             // attempt, which would otherwise hold the controller.
@@ -966,6 +966,45 @@ pub const BluezBackend = struct {
         dev_slot.connection_state.store(.disconnected, .release);
     }
 
+    pub fn removeBond(ctx: *anyopaque, addr: Address) BleError!void {
+        if (builtin.os.tag != .linux) return BleError.NotSupported;
+        const self: *BluezBackend = @ptrCast(@alignCast(ctx));
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        if (self.is_closed.load(.acquire)) return BleError.InvalidState;
+        const conn_ptr = if (self.conn) |*c| c else return BleError.AdapterNotFound;
+        var path_buf: [96]u8 = undefined;
+        // By `Address`, which BlueZ changes to the identity address after pairing; else by the
+        // object path, which keeps the random address the device had (B13).
+        const by_address = self.findDevicePath(conn_ptr, addr, &path_buf);
+        const d_path = by_address orelse BlueZ.buildDevicePath(&path_buf, self.getAdapterPath(), addr);
+
+        var msg = dbus.Connection.createMethodCall(
+            BlueZ.service_name,
+            self.getAdapterPath(),
+            BlueZ.Adapter1.interface_name,
+            BlueZ.Adapter1.Methods.RemoveDevice,
+        ) catch return BleError.IoError;
+        defer msg.deinit();
+        var z_buf: [path_buf.len + 1]u8 = undefined;
+        @memcpy(z_buf[0..d_path.len], d_path);
+        z_buf[d_path.len] = 0;
+        var b = msg.builder();
+        b.appendObjectPath(z_buf[0..d_path.len :0]) catch return BleError.IoError;
+        var reply = conn_ptr.sendMessage(&msg, std.math.lossyCast(i32, self.timeouts.pair_ms)) catch {
+            // BlueZ does not know the device at all: there is no bond to remove.
+            if (by_address == null) return;
+            return BleError.IoError;
+        };
+        defer reply.deinit();
+        if (self.findDeviceByPath(d_path)) |dev_slot| {
+            dev_slot.clearSubscriptions();
+            dev_slot.is_connected = false;
+            dev_slot.connection_state.store(.disconnected, .release);
+        }
+    }
+
     pub fn getBondState(ctx: *anyopaque, dev_handle: *anyopaque) types.BondState {
         if (builtin.os.tag != .linux) return .not_bonded;
         const self: *BluezBackend = @ptrCast(@alignCast(ctx));
@@ -1027,6 +1066,7 @@ pub const BluezBackend = struct {
         .exchangeMtu = exchangeMtu,
         .pairDevice = pairDevice,
         .unpairDevice = unpairDevice,
+        .removeBond = removeBond,
         .getBondState = getBondState,
         .acquireNotifyFd = acquireNotifyFd,
         .getCharacteristics = getCharacteristics,

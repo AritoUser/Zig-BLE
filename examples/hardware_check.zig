@@ -1001,10 +1001,10 @@ fn checkAwaitPair(adapter: *ble.UnifiedAdapter, addr: ble.Address) !void {
     }
 }
 
+/// Without connecting: a peer that lost its bond refuses the keys this side has, so a connect
+/// would fail (B3).
 fn checkUnpair(adapter: *ble.UnifiedAdapter, addr: ble.Address) !void {
-    var dev = try connect(adapter, addr);
-    defer drop(&dev);
-    try dev.unpair();
+    try adapter.removeBond(addr);
     print("Unpaired.", .{});
 }
 

@@ -283,7 +283,14 @@ fn linkWentDown(ble_dev: *bindings.IBluetoothLEDevice) bool {
 pub fn unpairDevice(backend: anytype, dev: anytype) BleError!void {
     if (builtin.os.tag != .windows) return BleError.NotSupported;
     const ble_dev = dev.ble_device orelse return BleError.NotConnected;
+    try unpairBleDevice(ble_dev, dev.address, backend.timeouts.pair_ms);
+    dev.bond_state = .not_bonded;
+    dev.bond_changed = true;
+}
 
+/// Removes the LE bond of `ble_dev` and the BR/EDR bond with the same address. Needs no link:
+/// the bond lives in Windows' device store.
+pub fn unpairBleDevice(ble_dev: *bindings.IBluetoothLEDevice, address: types.Address, timeout_ms: u32) BleError!void {
     var dev2: ?*bindings.IBluetoothLEDevice2 = null;
     if (ble_dev.lpVtbl.QueryInterface(ble_dev, &bindings.IID_IBluetoothLEDevice2, @ptrCast(&dev2)) < 0 or dev2 == null) {
         return BleError.PairingFailed;
@@ -298,12 +305,10 @@ pub fn unpairDevice(backend: anytype, dev: anytype) BleError!void {
     const info = dev_info.?;
     defer _ = info.lpVtbl.Release(info);
 
-    try unpairDeviceInformation(info, backend.timeouts.pair_ms);
+    try unpairDeviceInformation(info, timeout_ms);
     // Pairing a dual-mode device over LE also bonds BR/EDR (cross-transport key derivation).
     // That bond is a separate Windows device; left alone, Windows keeps connecting to it.
-    try unpairClassic(helpers.addressToU64(dev.address), backend.timeouts.pair_ms);
-    dev.bond_state = .not_bonded;
-    dev.bond_changed = true;
+    try unpairClassic(helpers.addressToU64(address), timeout_ms);
 }
 
 fn unpairClassic(address: u64, timeout_ms: u32) BleError!void {

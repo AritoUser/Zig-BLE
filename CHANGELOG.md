@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+* `UnifiedAdapter.removeBond(addr)` removes the bond with a device without connecting to it (Windows, BlueZ, mock); it succeeds when there is none. When only one side forgot a bond, the side that kept it cannot connect any more (it uses keys the peer no longer has), so `UnifiedDevice.unpair`, which needs a connection, could not help. Remove the stale bond with `removeBond` and pair again: verified 10/10 in all four cases between Windows and Linux (B3). On BlueZ, `addr` may be the identity address or the random address the device paired under.
+
+### Changed
+* A failed `connect` to a device that is bonded on this computer logs a warning that the peer may have lost its bond. Neither Windows nor BlueZ tells the application that this is the cause.
+* `ble-hardware-check --unpair` uses `removeBond` and no longer connects. `scripts/hardware_pairing.sh` can leave the bond on one side between rounds (`STALE`, `STALE_FORGET`).
+
 ## [2.0.0-rc.1] - 2026-11-22
 
 Release candidate for v2.0.0. Same features as v1.3.2, now working and verified on real hardware: Windows 11 and Linux (BlueZ 5.82) against each other in both roles, the GATT suite and all four pairing methods 10/10 on at least two days, 8-hour soak tests with flat memory and handles (`docs/HARDWARE_TESTS.md`). Still open before v2.0.0: re-pairing after only the peripheral forgot the bond (B3), a `bluetoothd` restart during a connection (B6), going out of range (B7), several devices at once (B10), `MaintainConnection` over a longer idle time (B12) and a rare `OperationAlreadyInProgress` on Windows (A8); see `docs/V2_BLOCKERS.md`. Raw HCI, UART and EATT stay experimental; macOS is not supported. Breaking changes are marked **Breaking** below.

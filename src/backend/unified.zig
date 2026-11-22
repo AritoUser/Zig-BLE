@@ -178,6 +178,14 @@ pub const UnifiedAdapter = struct {
         return self.backend.processEvents(timeout_ms);
     }
 
+    /// Removes the bond with `addr` on this computer, without connecting; succeeds when there is
+    /// none. A peer that lost its bond refuses the keys this side still has, so connecting to
+    /// it fails; remove the bond here and pair again. `UnifiedDevice.unpair` does the same over
+    /// a connection.
+    pub fn removeBond(self: *UnifiedAdapter, addr: Address) BleError!void {
+        return self.backend.removeBond(addr);
+    }
+
     pub fn connect(self: *UnifiedAdapter, addr: Address, timeout_ms: u32) BleError!UnifiedDevice {
         const eff_timeout = if (timeout_ms == 0) self.timeouts.connect_ms else timeout_ms;
         const handle = try self.backend.connectDevice(addr, eff_timeout);
@@ -397,6 +405,23 @@ test "UnifiedDevice.pair starts over when the link breaks off, but not after a r
     try std.testing.expectError(BleError.PairingFailed, dev.pair(.display_yes_no));
     try std.testing.expectEqual(@as(u8, 1), peer.pair_attempts);
     try dev.disconnect();
+}
+
+test "UnifiedAdapter.removeBond works without a connection and for unknown devices" {
+    const mock_mod = @import("mock/mod.zig");
+    var mock = mock_mod.MockController.init();
+    var adapter = UnifiedAdapter.init(mock.asBackend());
+    try adapter.setPowered(true);
+
+    const addr = Address{ .bytes = [_]u8{ 0x11, 0x22, 0x33, 0x44, 0x55, 0x9C } };
+    _ = try mock.addDevice(.{ .address = addr });
+    var dev = try adapter.connect(addr, 1000);
+    try dev.pair(.display_yes_no);
+    try dev.disconnect();
+
+    try adapter.removeBond(addr);
+    try std.testing.expectEqual(types.BondState.not_bonded, dev.getBondState());
+    try adapter.removeBond(.{ .bytes = [_]u8{ 0x11, 0x22, 0x33, 0x44, 0x55, 0x9D } });
 }
 
 test "UnifiedDevice discoverServicesFiltered" {
