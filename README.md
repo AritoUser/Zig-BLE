@@ -1,9 +1,9 @@
-# Zig-BLE v1.3.2
+# Zig-BLE v2.0.0-rc.1
 
 A Bluetooth Low Energy (BLE) library written entirely in Zig (0.17.0+). It works through the native Bluetooth stacks of **Windows 11 (WinRT)** and **Linux (BlueZ)** and ships with a platform-independent toolkit of BLE protocol parsers and encoders, cryptographic functions and SIG profiles.
 
 [![CI](https://github.com/AritoUser/Zig-BLE/actions/workflows/ci.yml/badge.svg)](https://github.com/AritoUser/Zig-BLE/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/badge/Release-v1.3.2-brightgreen.svg)](https://github.com/AritoUser/Zig-BLE/releases)
+[![Release](https://img.shields.io/badge/Release-v2.0.0--rc.1-orange.svg)](https://github.com/AritoUser/Zig-BLE/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 ---
@@ -155,8 +155,13 @@ Total Interrogation Time:    3236.92 ms (~3.2 seconds for full device profile)
 Add `zig_ble` to your `build.zig.zon`:
 
 ```sh
-zig fetch --save git+https://github.com/AritoUser/Zig-BLE.git
+zig fetch --save git+https://github.com/AritoUser/Zig-BLE.git#v2.0.0-rc.1
 ```
+
+`v2.0.0-rc.1` is a release candidate: Windows and Linux are verified on hardware for scanning,
+GATT, notifications, indications, pairing, the peripheral role and 8-hour soak tests; a few
+tests are still open before v2.0.0 (`docs/V2_BLOCKERS.md`). It has breaking changes against
+v1.3.2, listed in `CHANGELOG.md`.
 
 Or reference locally in `build.zig.zon`:
 
@@ -289,7 +294,7 @@ pub fn main(init: std.process.Init) !void {
 
 A qualitative comparison of how the libraries are built, not a performance measurement. No benchmarks were run on the other libraries with the same data, so this table deliberately contains no throughput numbers.
 
-| Criterion | **Zig-BLE v1.3.2** | **Rust (`btleplug`)** | **C++ (`SimpleBLE`)** | **Embedded C (`NimBLE`)** | **Python (`bleak`)** |
+| Criterion | **Zig-BLE v2.0.0-rc.1** | **Rust (`btleplug`)** | **C++ (`SimpleBLE`)** | **Embedded C (`NimBLE`)** | **Python (`bleak`)** |
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | **Language** | Zig 0.17+ | Rust | C++17 | C99 | Python 3.8+ |
 | **Needs `libc` (Linux)** | No (own D-Bus wire client) | Yes (indirectly) | Yes | Partly | Yes (Python runtime) |

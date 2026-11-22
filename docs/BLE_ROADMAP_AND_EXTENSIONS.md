@@ -1,6 +1,6 @@
 # Zig-BLE: Roadmap und Release-Matrix
 
-> **Aktueller Release:** v1.3.2
+> **Aktueller Release:** v2.0.0-rc.1 (Release Candidate, 2026-11-22)
 > **Nächstes Release:** v2.0.0, die vorhandenen Funktionen, auf Windows und Linux auf echter Hardware geprüft. Keine neuen Funktionen. Was dafür fehlt, steht in [V2_BLOCKERS.md](V2_BLOCKERS.md).
 > **Danach:** v3 mit eigenem Host-Stack (Abschnitt 4), dann Ideen ohne Versionsnummer (Abschnitt 5).
 > **Compiler:** Zig 0.17.0+
@@ -177,6 +177,7 @@ ist und sich auf Hardware testen lässt.
 | Version | Inhalt | Status |
 | :--- | :--- | :--- |
 | v1.0.0 – v1.3.2 | siehe Abschnitt 2 | veröffentlicht (Windows-Scan und -GATT in v1.3.0–v1.3.2 defekt, siehe CHANGELOG) |
+| v2.0.0-rc.1 | Release Candidate: die vorhandenen Funktionen auf Hardware geprüft, bis auf die offenen Punkte in V2_BLOCKERS | veröffentlicht 2026-11-22 |
 | v2.0.0 | die vorhandenen Funktionen, auf Windows und Linux auf echter Hardware geprüft | in Arbeit ([V2_BLOCKERS.md](V2_BLOCKERS.md)) |
 | v3 | eigener Host-Stack: Linux Raw HCI, dann UART-Controller | geplant |
 | ohne Version | Ideen aus Abschnitt 5 | Idee |
