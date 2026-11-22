@@ -59,7 +59,7 @@ Linux: BlueZ 5.82, Realtek-USB-Adapter; Gegenstelle der jeweils andere Rechner.
 | 4 | Auto-Resubscribe | `… <addr> --service <uuid> --resubscribe` | CCCD der Gegenstelle nach dem Reconnect wieder `0100`, Notifications kommen | ✅ | ✅ |
 | 5 | Schreiben mit Antwort | `… <addr> --write 5a1e0002-… 0102` | `After: 0102 (matches)` | ✅ | ✅ |
 | 6 | Schreiben ohne Antwort | `… --write 5a1e0002-… 0304 --no-response` | `After: 0304 (matches)` | ✅ | ✅ |
-| 7 | Pairing | `… <addr> --service <uuid> --pair` | Bond-Status `bonded`, auch nach dem Reconnect; protected liefert `paired` | ✅ | ⚠️ |
+| 7 | Pairing | `… <addr> --service <uuid> --pair` | Bond-Status `bonded`, auch nach dem Reconnect; protected liefert `paired` | ✅ | ✅ |
 | 8 | Bond entfernen | `… <addr> --service <uuid> --unpair` | beim nächsten Verbinden `not_bonded`, Windows führt das Gerät nicht mehr | ✅ | |
 | 9 | Peripheral: Client verbindet sich | `… --peripheral` | echo les- und schreibbar, counter zählt | ✅ | ✅ |
 | 10 | Peripheral: Pairing | `… --peripheral --secure` | Windows koppelt den Abonnenten selbst (gleicher Code auf beiden Seiten), danach liefert protected `paired` | ✅ | ✅ |
@@ -73,8 +73,9 @@ Anmerkungen:
 - **4 unter Windows:** Bis 2026-11-11 trennte Windows vor dem Reconnect nicht wirklich (A4). Seit dem Fix wartet die Prüfung, bis das Peripheral wieder Advertising sendet; 10/10 im Sammellauf.
 - **9 unter Windows:** Lesen, Schreiben und Notifications gehen, 10/10 Runden mit 28–29 Notifications in 30 s. Die früheren Hänger kamen vom Linux-Kernel, nicht von Windows (siehe A1/A2 in `V2_BLOCKERS.md`).
 - **7, 8, 10:** Alle vier Pairing-Methoden laufen für W 10/10 an zwei Tagen (siehe Pairing).
-  **7 L:** Linux koppelt als Central, der Reconnect danach scheitert am Kernel (B13 (3b),
-  bekannte Einschränkung). **8 L** ist nicht eigens geprüft; die Pairing-Läufe entfernen den Bond
+  **7 L:** Linux koppelt als Central, alle vier Methoden 10/10 an zwei Tagen; der Reconnect danach
+  scheitert am Kernel (B13 (3b)) und zählt als bekannte Einschränkung nicht (entschieden
+  2026-11-21). **8 L** ist nicht eigens geprüft; die Pairing-Läufe entfernen den Bond
   unter Linux über `Adapter1.RemoveDevice`.
 - **11:** gemessen mit `scripts/hardware_soak.sh`, siehe Langzeittest.
 - **8 unter Windows:** Eine LE-Kopplung mit einem Dual-Mode-Gerät legt auch eine Classic-Kopplung
@@ -119,6 +120,9 @@ Linux-Peripheral, L = Linux als Central gegen das Windows-Peripheral:
   Verbindungsfehler in beiden Läufen. Damit ist der Sammellauf an zwei Tagen grün.
 - **2026-11-15, W nach der Umstellung der WinRT-Handler auf Heap-Objekte** (Notifications,
   Verbindungsstatus, Scan): alle zehn Prüfungen 10/10, kein Absturz (Build mit `-Dcrash-dumps`).
+- **2026-11-21/22, beide Richtungen mit dem Stand von PR #7** (Heap-Handler, A11-Fix, `630b82f`):
+  W und L alle zehn Prüfungen 10/10, kein Verbindungs-Timeout. Damit ist der Sammellauf an einem
+  dritten Tag grün, nach A6 der zweite weitere Lauf ohne Timeout.
 
 ## Pairing
 
