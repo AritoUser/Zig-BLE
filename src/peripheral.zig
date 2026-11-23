@@ -51,6 +51,20 @@ pub const Peripheral = struct {
     thread: ?std.Thread = null,
     should_stop: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
 
+    /// Linux: `bluetoothd` restarted and forgot the GATT application, advertisement and agent;
+    /// `step` registers them again from this time on (ms, monotonic), retrying until
+    /// `reregister_deadline_ms`. 0: nothing pending.
+    reregister_at_ms: i64 = 0,
+    reregister_deadline_ms: i64 = 0,
+    /// Unique bus name of the last `bluetoothd` seen taking `org.bluez`.
+    bluez_owner: [64]u8 = undefined,
+    bluez_owner_len: u8 = 0,
+
+    /// How long `step` keeps trying to register again after `bluetoothd` restarted. The new
+    /// daemon lists the adapter only after it has set it up.
+    pub const reregister_timeout_ms: i64 = 10_000;
+    const reregister_retry_ms: i64 = 500;
+
     pub fn init(
         conn: *Connection,
         adapter_path: [:0]const u8,
@@ -105,7 +119,58 @@ pub const Peripheral = struct {
             };
         }
 
+        // 4. Notice when bluetoothd restarts: it forgets everything registered above.
+        if (builtin.os.tag == .linux) {
+            self.conn.addMatch("type='signal',interface='org.freedesktop.DBus',member='NameOwnerChanged',arg0='org.bluez'") catch |err| {
+                log.warn("Peripheral: no NameOwnerChanged match ({s}); a bluetoothd restart goes unnoticed", .{@errorName(err)});
+            };
+        }
+
         self.is_running.store(true, .release);
+    }
+
+    /// Whether `msg` says that a new `bluetoothd` took the `org.bluez` name. The same change can
+    /// arrive twice (seen through `xdg-dbus-proxy`), so an owner already seen does not count.
+    fn isBluezRestart(self: *Peripheral, msg: *const Message) bool {
+        if (msg.getMessageType() != 4) return false; // signal
+        const iface = msg.getInterface() orelse return false;
+        const member = msg.getMember() orelse return false;
+        if (!std.mem.eql(u8, iface, "org.freedesktop.DBus") or !std.mem.eql(u8, member, "NameOwnerChanged")) return false;
+        var it = msg.iterator();
+        const name = it.getString() orelse return false;
+        _ = it.getString() orelse return false;
+        const new_owner = it.getString() orelse return false;
+        if (!std.mem.eql(u8, name, "org.bluez") or new_owner.len == 0) return false;
+        if (std.mem.eql(u8, new_owner, self.bluez_owner[0..self.bluez_owner_len])) return false;
+        const len = @min(new_owner.len, self.bluez_owner.len);
+        @memcpy(self.bluez_owner[0..len], new_owner[0..len]);
+        self.bluez_owner_len = @intCast(len);
+        return true;
+    }
+
+    /// Registers the GATT application, advertisement and agent with a new `bluetoothd`. The old
+    /// daemon took them, and the clients' subscriptions, with it.
+    fn reregister(self: *Peripheral) !void {
+        self.gatt_app.is_registered = false;
+        self.advertisement.is_registered = false;
+        self.agent.is_registered = false;
+        for (self.gatt_app.services[0..self.gatt_app.service_count]) |*svc| {
+            for (svc.characteristics[0..svc.char_count]) |*ch| {
+                if (!ch.is_notifying) continue;
+                ch.is_notifying = false;
+                if (ch.notify_handler) |nf| nf(ch, false, ch.user_data);
+            }
+        }
+        try self.gatt_app.register();
+        self.advertisement.register() catch |err| {
+            self.gatt_app.unregister() catch {};
+            return err;
+        };
+        if (self.enable_agent) {
+            self.agent.register() catch |err| {
+                log.warn("Peripheral agent.register after the bluetoothd restart failed: {s}", .{@errorName(err)});
+            };
+        }
     }
 
     fn threadWorker(self: *Peripheral) void {
@@ -145,6 +210,14 @@ pub const Peripheral = struct {
         while (self.conn.popMessage()) |msg| {
             defer msg.deinit();
 
+            if (self.isBluezRestart(&msg)) {
+                log.info("bluetoothd restarted; registering the peripheral again", .{});
+                const now = wire.getMonotonicMs();
+                self.reregister_at_ms = now;
+                self.reregister_deadline_ms = now + reregister_timeout_ms;
+                continue;
+            }
+
             // 1. Forward to GATT server
             const gatt_handled = self.gatt_app.processMessage(&msg) catch |err| blk: {
                 log.warn("Peripheral gatt_app.processMessage error: {s}", .{@errorName(err)});
@@ -166,6 +239,21 @@ pub const Peripheral = struct {
                     break :blk false;
                 };
                 if (agent_handled) continue;
+            }
+        }
+
+        if (self.reregister_at_ms != 0 and wire.getMonotonicMs() >= self.reregister_at_ms) {
+            if (self.reregister()) |_| {
+                self.reregister_at_ms = 0;
+                log.info("Peripheral registered again after the bluetoothd restart", .{});
+            } else |err| {
+                const now = wire.getMonotonicMs();
+                if (now >= self.reregister_deadline_ms) {
+                    self.reregister_at_ms = 0;
+                    log.err("Peripheral could not register again after the bluetoothd restart: {s}", .{@errorName(err)});
+                    return err;
+                }
+                self.reregister_at_ms = now + reregister_retry_ms;
             }
         }
     }

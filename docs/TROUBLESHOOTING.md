@@ -101,8 +101,12 @@ backend. Error names refer to `BleError`.
 
 **`bluetoothd` restarts**
 - All connections are reported as disconnected.
-- Register `setDaemonRestartCallback` and call `recoverAfterDaemonRestart`, then scan and
-  connect again.
+- Central: register `setDaemonRestartCallback` and call `recoverAfterDaemonRestart`, then scan
+  and connect again.
+- Peripheral: the new daemon knows nothing of the GATT application, advertisement and agent.
+  `Peripheral.step` registers them again by itself, retrying for up to 10 s until the adapter
+  is back; client subscriptions end, and the notify callback reports them as off. If it does
+  not succeed in time, `step` returns the error.
 
 ## Windows (WinRT)
 

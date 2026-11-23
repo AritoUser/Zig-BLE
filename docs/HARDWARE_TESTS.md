@@ -66,7 +66,7 @@ Linux: BlueZ 5.82, Realtek-USB-Adapter; Gegenstelle der jeweils andere Rechner.
 | 9 | Peripheral: Client verbindet sich | `… --peripheral` | echo les- und schreibbar, counter zählt | ✅ | ✅ |
 | 10 | Peripheral: Pairing | `… --peripheral --secure` | Windows koppelt den Abonnenten selbst (gleicher Code auf beiden Seiten), danach liefert protected `paired` | ✅ | ✅ |
 | 11 | Langzeit: Scannen, Verbinden, Slots | `… <addr> --soak 480` | Kein Absturz, jede Fehlrunde erholt sich im nächsten Zyklus, Speicher und Handles steigen nicht (V2_BLOCKERS B5) | ✅ | ✅ |
-| 12 | Neustart von `bluetoothd` | während 11: `sudo systemctl restart bluetooth` | `Recovered.`, danach laufen die Zyklen weiter | – | |
+| 12 | Neustart von `bluetoothd` | während 11: `sudo systemctl restart bluetooth` | `Recovered.` (Central) bzw. `Peripheral registered again` (Peripheral), danach laufen die Zyklen weiter | – | ✅ |
 
 Anmerkungen:
 
@@ -84,7 +84,7 @@ Anmerkungen:
   an. `unpair` entfernt jetzt beide (vorher blieb die Classic-Hälfte, und Windows versuchte weiter,
   das Gerät über Classic zu erreichen). Die Gegenstelle behält ihre Schlüssel; unter BlueZ
   entfernt `Adapter1.RemoveDevice` sie.
-- **12** braucht Root auf dem Rechner mit `bluetoothd`.
+- **12** braucht Root auf dem Rechner mit `bluetoothd`. 2026-11-23: je 10 Neustarts im Abstand von 90 s während eines Soaks, Linux als Central und als Peripheral, je 10/10 erholt; pro Neustart höchstens ein Fehlzyklus, fds und Speicher flach (B6 in `V2_BLOCKERS.md`). Vor dem Fix blieb ein Linux-Peripheral nach dem ersten Neustart ohne GATT-Dienst und Advertising.
 
 ## Sammellauf
 
