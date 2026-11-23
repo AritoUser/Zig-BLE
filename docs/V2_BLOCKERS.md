@@ -59,7 +59,7 @@ Ein Punkt ist erst erledigt, wenn:
 | # | Punkt |
 | :--- | :--- |
 | D1 | Der Stand für v2 ist in `main`, CI grün. `test/hardware-linux-pairing`, `test/hardware-day2` und `fix/b13-linux-reconnect` sind gemergt (PRs #3–#5); offen ist PR #7 (`test/b5-soak`, CI grün). |
-| D2 | Release Notes von v1.3.0 bis v1.3.2 korrigieren: Windows konnte dort weder scannen noch GATT nutzen |
+| D2 | ✅ **Erledigt 2026-11-23.** Release Notes von v1.3.0 bis v1.3.2 korrigiert: Windows konnte dort weder scannen noch GATT nutzen, und das BlueZ-Backend las keine D-Bus-Signale. Die drei GitHub-Releases und ihre CHANGELOG-Abschnitte tragen oben einen Korrekturhinweis; der Originaltext bleibt darunter stehen. |
 | D3 | CHANGELOG-Abschnitt „Unreleased“ als 2.0.0 abschließen, Breaking Changes vollständig aufführen |
 
 ## E. Entscheidungen

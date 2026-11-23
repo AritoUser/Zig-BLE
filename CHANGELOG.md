@@ -111,6 +111,8 @@ Release candidate for v2.0.0. Same features as v1.3.2, now working and verified 
 
 ## [1.3.2] - 2026-10-29
 
+> **Correction (2026-11-23):** this release did not work as described. On Windows the backend could neither scan nor use GATT: `startScan` failed with `IoError` because WinRT rejected the event handler (wrong delegate IIDs), and a missing `put_ProtectionLevel` slot in the `IGattCharacteristic` vtable made reads, writes and subscriptions call the wrong WinRT methods. On Linux the BlueZ backend never read D-Bus signals, so scan results, notifications and disconnects never reached the callbacks. Windows scanning was not re-checked on hardware as the release notes said. Both are fixed in v2.0.0-rc.1, the first release verified on real hardware (Windows 11 and Linux with BlueZ 5.82, see `docs/HARDWARE_TESTS.md`); use it instead.
+
 ### Changed
 * **Split large modules into submodules** (no file above 1,000 lines). The original files remain as facades that re-export the same public declarations, so imports keep working:
   * `src/backend/windows/bindings.zig` → `bindings/` (`types`, `iids`, `combase`, `events`, `bthprops`, `interfaces/`)
@@ -124,6 +126,8 @@ Release candidate for v2.0.0. Same features as v1.3.2, now working and verified 
 * `BleError` is unchanged and contains only errors a backend can return.
 
 ## [1.3.1] - 2026-10-29
+
+> **Correction (2026-11-23):** this release did not work as described. On Windows the backend could neither scan nor use GATT: `startScan` failed with `IoError` because WinRT rejected the event handler (wrong delegate IIDs), and a missing `put_ProtectionLevel` slot in the `IGattCharacteristic` vtable made reads, writes and subscriptions call the wrong WinRT methods. On Linux the BlueZ backend never read D-Bus signals, so scan results, notifications and disconnects never reached the callbacks. The release notes called scanning and GATT on Windows verified on hardware; they were not. Both are fixed in v2.0.0-rc.1, the first release verified on real hardware (Windows 11 and Linux with BlueZ 5.82, see `docs/HARDWARE_TESTS.md`); use it instead.
 
 ### Fixed
 * **BlueZ backend did not compile for Linux**: `Connection.initSystem` call signature, D-Bus timeout type (`u32` → `i32`), `WriteType` member names and the GATT discovery visitor (`parseManagedObjects` instead of the non-existent `walkManagedObjects`). Cross-compiling the executables did not catch this because none of them references the backend; `zig build test -Dtarget=x86_64-linux-gnu` now compiles.
@@ -139,6 +143,8 @@ Release candidate for v2.0.0. Same features as v1.3.2, now working and verified 
 * `examples/read_real_phone_gatt.zig` takes the GAP service interface path as an argument instead of a hard-coded device path.
 
 ## [1.3.0] - 2026-10-28
+
+> **Correction (2026-11-23):** this release did not work as described and was not production-ready. On Windows the backend could neither scan nor use GATT: `startScan` failed with `IoError` because WinRT rejected the event handler (wrong delegate IIDs), and a missing `put_ProtectionLevel` slot in the `IGattCharacteristic` vtable made reads, writes and subscriptions call the wrong WinRT methods. On Linux the BlueZ backend never read D-Bus signals, so scan results, notifications and disconnects never reached the callbacks. In addition, the BlueZ backend did not compile for Linux (fixed in 1.3.1), and the CI for macOS was red. Both are fixed in v2.0.0-rc.1, the first release verified on real hardware (Windows 11 and Linux with BlueZ 5.82, see `docs/HARDWARE_TESTS.md`); use it instead.
 
 ### Major Release: Production Readiness & Full Protocol Engine (P0/P1/P2)
 This milestone release fulfills all 37 requirements from `docs/PRODUCTION_READINESS.md`, transforming Zig-BLE into an audited, fully verified, production-ready Bluetooth Low Energy library:
